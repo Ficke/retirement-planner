@@ -1,0 +1,19 @@
+# Production environment configuration
+
+project_id  = "retire-plan-prod"
+region      = "us-central1"
+environment = "production"
+
+service_name = "retire-plan"
+cloud_run_image = "us-central1-docker.pkg.dev/retire-plan-prod/retire-plan/retire-plan:latest"
+
+# Production scaling
+min_instances = 1  # Keep 1 instance warm for better performance
+max_instances = 20 # Higher limit for production traffic
+
+# Production resources
+memory_limit = "1Gi"   # More memory for production
+cpu_limit    = "2"     # More CPU for production
+
+# Enable monitoring
+# Note: Add monitoring/alerting configuration as needed

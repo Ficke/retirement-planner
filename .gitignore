@@ -1,0 +1,24 @@
+# Node/Next
+node_modules/
+.next/
+out/
+dist/
+# Env
+.env*
+!.env.example
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+# OS/Editor
+.DS_Store
+.vscode/
+.idea/
+# Tests & coverage
+coverage/
+playwright-report/
+test-results/
+# Misc
+*.local
+# OCR uploads
+uploads/

@@ -1,0 +1,33 @@
+{
+  "comment": "TODO: refresh annually - 2025 retirement account contribution limits",
+  "year": 2025,
+  "limits": {
+    "401k": {
+      "base": 23500,
+      "catchup": 7500,
+      "catchupAge": 50
+    },
+    "rothIRA": {
+      "base": 7000,
+      "catchup": 1000,
+      "catchupAge": 50,
+      "phaseoutStart": {
+        "Single": 138000,
+        "MarriedFilingJointly": 218000
+      },
+      "phaseoutEnd": {
+        "Single": 153000,
+        "MarriedFilingJointly": 228000
+      }
+    },
+    "traditionalIRA": {
+      "base": 7000,
+      "catchup": 1000,
+      "catchupAge": 50,
+      "deductibilityPhaseout": {
+        "Single": 77000,
+        "MarriedFilingJointly": 123000
+      }
+    }
+  }
+}

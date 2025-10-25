@@ -1,0 +1,118 @@
+# Google Cloud Build configuration for deploying to Cloud Run
+# This file automates the build and deployment process
+# Triggered on merge to main branch
+
+substitutions:
+  _SERVICE_NAME: retire-plan
+  _REGION: us-central1
+  _REGISTRY: us-central1-docker.pkg.dev
+  _REPOSITORY: retire-plan
+
+steps:
+  # Step 1: Install dependencies and run safety tests
+  - name: 'node:20-alpine'
+    id: 'install-deps'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        apk add --no-cache git
+        npm install -g pnpm@10
+        pnpm install --frozen-lockfile
+
+  # Step 2: Run typecheck (fails build if TypeScript errors)
+  - name: 'node:20-alpine'
+    id: 'typecheck'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        npm install -g pnpm@10
+        pnpm typecheck
+    waitFor: ['install-deps']
+
+  # Step 3: Run tests (fails build if tests fail)
+  - name: 'node:20-alpine'
+    id: 'test'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        npm install -g pnpm@10
+        pnpm test
+    waitFor: ['install-deps']
+
+  # Step 4: Build the container image for AMD64 platform
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args:
+      - 'build'
+      - '--platform'
+      - 'linux/amd64'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+      - '.'
+    waitFor: ['typecheck', 'test']
+
+  # Step 5: Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image-sha'
+    args:
+      - 'push'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
+    waitFor: ['build-image']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image-latest'
+    args:
+      - 'push'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+    waitFor: ['build-image']
+
+  # Step 6: Deploy container image to Cloud Run
+  # Note: This updates the image only. Terraform manages env vars and secrets.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+    waitFor: ['push-image-sha', 'push-image-latest']
+
+  # Step 7: Verify deployment with health check
+  - name: 'gcr.io/cloud-builders/curl'
+    id: 'health-check'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        # Wait for deployment to be ready
+        sleep 10
+        # Get the service URL
+        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --region ${_REGION} \
+          --format 'value(status.url)')
+        # Test the endpoint
+        curl -f -s -o /dev/null -w "%{http_code}" $SERVICE_URL || exit 1
+        echo "Deployment successful! Service is healthy."
+    waitFor: ['deploy']
+
+# Store images in Artifact Registry
+images:
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+
+# Build options
+options:
+  machineType: 'E2_HIGHCPU_8'  # Faster and cheaper than N1_HIGHCPU_8
+  timeout: '1200s'
+  logging: CLOUD_LOGGING_ONLY

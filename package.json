@@ -1,0 +1,26 @@
+{
+  "name": "retire-plan",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -C apps/web dev",
+    "build": "pnpm -C apps/web build",
+    "start": "pnpm -C apps/web start",
+    "lint": "pnpm -C apps/web lint",
+    "typecheck": "pnpm -C apps/web typecheck",
+    "test": "pnpm -C apps/web test",
+    "test:ui": "pnpm -C apps/web test:ui",
+    "e2e": "pnpm -C apps/web e2e",
+    "e2e:ui": "pnpm -C apps/web e2e:ui",
+    "clean": "rm -rf apps/*/node_modules apps/*/.next apps/*/dist",
+    "install:all": "pnpm install"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=8"
+  }
+}

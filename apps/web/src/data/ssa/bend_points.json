@@ -1,0 +1,21 @@
+{
+  "comment": "TODO: refresh annually - 2025 Social Security bend points for PIA calculation",
+  "year": 2025,
+  "bendPoints": [
+    { "threshold": 1174, "rate": 0.90 },
+    { "threshold": 7078, "rate": 0.32 },
+    { "threshold": null, "rate": 0.15 }
+  ],
+  "claimAgeAdjustments": {
+    "62": { "factor": 0.75, "description": "Early retirement reduction" },
+    "63": { "factor": 0.80, "description": "Early retirement reduction" },
+    "64": { "factor": 0.8667, "description": "Early retirement reduction" },
+    "65": { "factor": 0.9333, "description": "Early retirement reduction" },
+    "66": { "factor": 0.9667, "description": "Early retirement reduction" },
+    "67": { "factor": 1.0, "description": "Full retirement age" },
+    "68": { "factor": 1.08, "description": "Delayed retirement credit" },
+    "69": { "factor": 1.16, "description": "Delayed retirement credit" },
+    "70": { "factor": 1.24, "description": "Delayed retirement credit" }
+  },
+  "maxTaxableWage": 168600
+}

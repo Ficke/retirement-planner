@@ -1,0 +1,29 @@
+{
+  "comment": "TODO: refresh annually - SOA mortality table parameters for Gompertz model",
+  "year": 2025,
+  "source": "Society of Actuaries mortality tables",
+  "gompertzParameters": {
+    "male": {
+      "alpha": 0.0003,
+      "beta": 0.09,
+      "description": "Gompertz mortality parameters for males"
+    },
+    "female": {
+      "alpha": 0.0002,
+      "beta": 0.085,
+      "description": "Gompertz mortality parameters for females"
+    }
+  },
+  "lifeExpectancy": {
+    "age65": {
+      "male": 84.3,
+      "female": 86.8,
+      "unisex": 85.6
+    },
+    "age67": {
+      "male": 85.1,
+      "female": 87.5,
+      "unisex": 86.3
+    }
+  }
+}

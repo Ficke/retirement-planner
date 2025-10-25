@@ -1,0 +1,37 @@
+{
+  "comment": "Historical US market return assumptions for Monte Carlo simulation",
+  "note": "Based on historical data 1926-2024, real returns after inflation",
+  "Conservative": {
+    "name": "Conservative", 
+    "description": "Lower volatility portfolio (30% stocks, 70% bonds)",
+    "stocks": { "mean": 0.07, "vol": 0.20 },
+    "bonds": { "mean": 0.025, "vol": 0.05 },
+    "inflation": { "mean": 0.025, "vol": 0.015 },
+    "correlation": [
+      [1.0, 0.15],
+      [0.15, 1.0]
+    ]
+  },
+  "Moderate": {
+    "name": "Moderate",
+    "description": "Balanced portfolio (60% stocks, 40% bonds)", 
+    "stocks": { "mean": 0.07, "vol": 0.20 },
+    "bonds": { "mean": 0.025, "vol": 0.05 },
+    "inflation": { "mean": 0.025, "vol": 0.015 },
+    "correlation": [
+      [1.0, 0.15],
+      [0.15, 1.0]
+    ]
+  },
+  "Aggressive": {
+    "name": "Aggressive", 
+    "description": "Growth-focused portfolio (80% stocks, 20% bonds)",
+    "stocks": { "mean": 0.07, "vol": 0.20 },
+    "bonds": { "mean": 0.025, "vol": 0.05 },
+    "inflation": { "mean": 0.025, "vol": 0.015 },
+    "correlation": [
+      [1.0, 0.15],
+      [0.15, 1.0]
+    ]
+  }
+}

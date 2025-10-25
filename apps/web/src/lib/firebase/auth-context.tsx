@@ -1,0 +1,67 @@
+/**
+ * Firebase Auth Context Provider
+ * Provides authentication state and user information throughout the app
+ * Replaces NextAuth's SessionProvider
+ */
+
+'use client';
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { auth } from './config';
+
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  error: Error | null;
+}
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: true,
+  error: null,
+});
+
+/**
+ * Hook to access authentication state
+ * Replaces NextAuth's useSession()
+ */
+export function useAuth() {
+  return useContext(AuthContext);
+}
+
+/**
+ * Auth Provider component
+ * Wraps the app to provide authentication state
+ */
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    // Subscribe to auth state changes
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        setUser(user);
+        setLoading(false);
+        setError(null);
+      },
+      (error) => {
+        console.error('Auth state change error:', error);
+        setError(error);
+        setLoading(false);
+      }
+    );
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ user, loading, error }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}

@@ -1,0 +1,43 @@
+{
+  "comment": "TODO: refresh annually - 2025 California state tax brackets",
+  "year": 2025,
+  "state": "CA",
+  "standardDeduction": {
+    "Single": 5202,
+    "MarriedFilingJointly": 10404,
+    "MarriedFilingSeparately": 5202,
+    "HeadOfHousehold": 10404
+  },
+  "ordinaryBrackets": {
+    "Single": [
+      { "min": 0, "max": 10099, "rate": 0.01 },
+      { "min": 10099, "max": 23942, "rate": 0.02 },
+      { "min": 23942, "max": 37788, "rate": 0.04 },
+      { "min": 37788, "max": 52455, "rate": 0.06 },
+      { "min": 52455, "max": 66295, "rate": 0.08 },
+      { "min": 66295, "max": 338639, "rate": 0.093 },
+      { "min": 338639, "max": 406364, "rate": 0.103 },
+      { "min": 406364, "max": 677278, "rate": 0.113 },
+      { "min": 677278, "max": null, "rate": 0.123 }
+    ],
+    "MarriedFilingJointly": [
+      { "min": 0, "max": 20198, "rate": 0.01 },
+      { "min": 20198, "max": 47884, "rate": 0.02 },
+      { "min": 47884, "max": 75576, "rate": 0.04 },
+      { "min": 75576, "max": 104910, "rate": 0.06 },
+      { "min": 104910, "max": 132590, "rate": 0.08 },
+      { "min": 132590, "max": 677278, "rate": 0.093 },
+      { "min": 677278, "max": 812728, "rate": 0.103 },
+      { "min": 812728, "max": 1354556, "rate": 0.113 },
+      { "min": 1354556, "max": null, "rate": 0.123 }
+    ]
+  },
+  "ltcgBrackets": {
+    "Single": [
+      { "min": 0, "max": null, "rate": 0.0 }
+    ],
+    "MarriedFilingJointly": [
+      { "min": 0, "max": null, "rate": 0.0 }
+    ]
+  }
+}
