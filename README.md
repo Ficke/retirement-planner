@@ -1,5 +1,7 @@
 # RetirePlan 🏦
 
+[![Tests](https://github.com/Ficke/retirement-planner/actions/workflows/test.yml/badge.svg)](https://github.com/Ficke/retirement-planner/actions/workflows/test.yml)
+
 > A modern, academically-grounded retirement planning tool built with Next.js and TypeScript
 
 RetirePlan helps you model retirement outcomes using Monte Carlo simulations, progressive tax calculations, and sophisticated withdrawal strategies. Plan your financial future with confidence using real market data and proven methodologies.
@@ -25,8 +27,8 @@ RetirePlan helps you model retirement outcomes using Monte Carlo simulations, pr
 
 ```bash
 # Clone the repository
-git clone https://github.com/Ficke/retire.git
-cd retire
+git clone https://github.com/Ficke/retirement-planner.git
+cd retirement-planner
 
 # Install dependencies
 pnpm install
