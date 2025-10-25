@@ -111,8 +111,10 @@ images:
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
 
+# Build timeout (20 minutes)
+timeout: '1200s'
+
 # Build options
 options:
   machineType: 'E2_HIGHCPU_8'  # Faster and cheaper than N1_HIGHCPU_8
-  timeout: '1200s'
   logging: CLOUD_LOGGING_ONLY
