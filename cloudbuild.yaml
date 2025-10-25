@@ -28,6 +28,7 @@ steps:
       - '-c'
       - |
         npm install -g pnpm@10
+        pnpm install --frozen-lockfile
         pnpm typecheck
     waitFor: ['install-deps']
 
@@ -39,6 +40,7 @@ steps:
       - '-c'
       - |
         npm install -g pnpm@10
+        pnpm install --frozen-lockfile
         pnpm test
     waitFor: ['install-deps']
 
@@ -89,7 +91,7 @@ steps:
     waitFor: ['push-image-sha', 'push-image-latest']
 
   # Step 7: Verify deployment with health check
-  - name: 'gcr.io/cloud-builders/curl'
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'health-check'
     entrypoint: 'sh'
     args:
@@ -98,11 +100,11 @@ steps:
         # Wait for deployment to be ready
         sleep 10
         # Get the service URL
-        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+        SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
           --region ${_REGION} \
           --format 'value(status.url)')
         # Test the endpoint
-        curl -f -s -o /dev/null -w "%{http_code}" $SERVICE_URL || exit 1
+        curl -f -s -o /dev/null -w "%{http_code}" $$SERVICE_URL || exit 1
         echo "Deployment successful! Service is healthy."
     waitFor: ['deploy']
 
