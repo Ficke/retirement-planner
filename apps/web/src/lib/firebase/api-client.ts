@@ -24,7 +24,7 @@ async function waitForAuthReady(): Promise<any> {
     }
 
     // Otherwise, wait for auth state to change
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = auth.onAuthStateChanged((user: any) => {
       unsubscribe();
       resolve(user);
     });
