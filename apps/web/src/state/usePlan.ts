@@ -183,10 +183,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   updateProfile: (profileUpdates) =>
     set((state) => {
-      console.log('📝 updateProfile called with:', profileUpdates);
-      console.log('📝 Current profile salaryGrowthRate:', state.plan.profile.salaryGrowthRate);
-
-      // Update state and clear all results
+      // Update state and clear all analysis results (simple invalidation)
       const newState = {
         plan: {
           ...state.plan,

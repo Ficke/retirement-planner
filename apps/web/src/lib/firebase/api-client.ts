@@ -11,6 +11,12 @@ import { auth } from './config';
  */
 async function waitForAuthReady(): Promise<any> {
   return new Promise((resolve) => {
+    // Skip auth in test environment
+    if (!auth) {
+      resolve(null);
+      return;
+    }
+
     // If we already have a user, resolve immediately
     if (auth.currentUser) {
       resolve(auth.currentUser);
@@ -18,7 +24,7 @@ async function waitForAuthReady(): Promise<any> {
     }
 
     // Otherwise, wait for auth state to change
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = auth.onAuthStateChanged((user: any) => {
       unsubscribe();
       resolve(user);
     });
