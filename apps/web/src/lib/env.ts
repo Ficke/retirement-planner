@@ -4,7 +4,7 @@
  */
 
 interface EnvConfig {
-  DATABASE_URL: string;
+  DATABASE_URL: string | undefined;
   GEMINI_API_KEY: string | undefined;
   POLYGON_API_KEY: string | undefined;
   LANGFUSE_PUBLIC_KEY: string | undefined;
@@ -17,7 +17,11 @@ function validateEnv(): EnvConfig {
   // Critical environment variables (required for app to function)
   const DATABASE_URL = process.env.DATABASE_URL;
 
-  if (!DATABASE_URL) {
+  // Skip DATABASE_URL validation during build time (Next.js build process)
+  const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build' || 
+                     process.env.NODE_ENV === 'production' && !DATABASE_URL;
+
+  if (!DATABASE_URL && !isBuildTime) {
     throw new Error(
       'DATABASE_URL environment variable is required. ' +
       'Run ./scripts/pull-secrets.sh to set up local environment.'
