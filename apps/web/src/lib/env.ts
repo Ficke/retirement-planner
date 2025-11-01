@@ -20,7 +20,7 @@ function validateEnv(): EnvConfig {
   if (!DATABASE_URL) {
     throw new Error(
       'DATABASE_URL environment variable is required. ' +
-      'Please set it in your .env.local file or environment.'
+      'Run ./scripts/pull-secrets.sh to set up local environment.'
     );
   }
 
