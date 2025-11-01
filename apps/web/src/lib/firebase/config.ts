@@ -16,10 +16,20 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Initialize Firebase (singleton pattern - only initialize once)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Initialize Firebase if we have the required config
+const hasRequiredConfig = firebaseConfig.apiKey && firebaseConfig.projectId;
 
-// Initialize Firebase Auth
-export const auth = getAuth(app);
+let app: any = null;
+let auth: any = null;
 
+if (hasRequiredConfig) {
+  // Initialize Firebase (singleton pattern - only initialize once)
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  // Initialize Firebase Auth
+  auth = getAuth(app);
+} else {
+  console.warn('Firebase skipped due to missing configuration (missing API key or project ID)');
+}
+
+export { auth };
 export default app;
