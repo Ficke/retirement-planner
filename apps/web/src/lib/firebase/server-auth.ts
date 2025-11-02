@@ -64,7 +64,7 @@ export async function getAuthUser(): Promise<AuthUser | null> {
       id: decodedToken.uid,        // Firebase UID as primary ID
       firebaseUid: decodedToken.uid,
       email: decodedToken.email || '',
-      name: decodedToken.name || null,
+      name: null, // Name not available in JWT, would need database lookup
     };
   } catch (error) {
     console.error('Error getting auth user:', error);
