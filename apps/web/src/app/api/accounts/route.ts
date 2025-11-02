@@ -18,11 +18,14 @@ export async function GET() {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Filter accounts by user_id
-    const allAccounts = await db.getAccounts();
-    const userAccounts = allAccounts.filter(account => account.user_id === user.id);
+    // Filter accounts by firebase_uid (user.id is now Firebase UID)
+    const result = await db.query(`
+      SELECT a.* FROM accounts a
+      JOIN users u ON a.user_id = u.id
+      WHERE u.firebase_uid = $1
+    `, [user.id]);
 
-    return NextResponse.json(userAccounts);
+    return NextResponse.json(result.rows);
   } catch (error) {
     console.error('Get accounts error:', error);
     return NextResponse.json(
@@ -62,10 +65,23 @@ export async function POST(request: NextRequest) {
     // Create account and assign to logged-in user
     const account = await db.createAccount(data);
 
+    // Get database user_id from firebase_uid
+    const userResult = await db.query(
+      'SELECT id FROM users WHERE firebase_uid = $1',
+      [user.id]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'User not found in database' },
+        { status: 404 }
+      );
+    }
+
     // Update account with user_id
     await db.query(
       'UPDATE accounts SET user_id = $1 WHERE id = $2',
-      [user.id, account.id]
+      [userResult.rows[0].id, account.id]
     );
 
     // Fetch and return updated account
