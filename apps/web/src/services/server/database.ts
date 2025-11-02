@@ -74,6 +74,8 @@ export interface UnifiedDatabaseService {
 
   // Raw query access (for complex queries)
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
+  // User helpers
+  getUserIdFromFirebaseUid(firebaseUid: string): Promise<string | null>;
 
   // Unified Accounts
   createAccount(data: CreateAccountData): Promise<Account>;
@@ -741,6 +743,23 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       sizeMB,
       location: this.getConnectionString().replace(/\/\/.*@/, '//***@'),
     };
+  }
+
+  // === USER HELPER METHODS ===
+  
+  /**
+   * Get database user ID from Firebase UID
+   * Helper for transitioning from database user lookup to Firebase-only auth
+   */
+  async getUserIdFromFirebaseUid(firebaseUid: string): Promise<string | null> {
+    await this.ensureInitialized();
+    
+    const result = await this.query<{ id: string }>(
+      'SELECT id FROM users WHERE firebase_uid = $1',
+      [firebaseUid]
+    );
+    
+    return result.rows.length > 0 ? result.rows[0].id : null;
   }
 
   // === UNIFIED ACCOUNT METHODS (accounts table) ===

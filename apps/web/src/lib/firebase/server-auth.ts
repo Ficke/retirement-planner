@@ -6,11 +6,10 @@
 
 import { cookies, headers } from 'next/headers';
 import { verifyAuthToken } from './admin';
-import { getUnifiedDatabaseService } from '@/services/server/database';
 
 export interface AuthUser {
-  id: string; // PostgreSQL user ID
-  firebaseUid: string; // Firebase UID
+  id: string; // Firebase UID (now primary ID)
+  firebaseUid: string; // Firebase UID (same as id)
   email: string;
   name?: string | null;
 }
@@ -18,7 +17,7 @@ export interface AuthUser {
 /**
  * Get the authenticated user from the request
  * Checks both Authorization header and cookies for Firebase ID token
- * Returns user info from PostgreSQL database
+ * Returns user info directly from Firebase JWT (no database lookup)
  *
  * Usage in API routes:
  *   const user = await getAuthUser();
@@ -59,30 +58,13 @@ export async function getAuthUser(): Promise<AuthUser | null> {
       return null;
     }
 
-    // Get user from PostgreSQL database
-    const db = getUnifiedDatabaseService();
-    await db.initialize();
-
-    const result = await db.query<{
-      id: string;
-      firebase_uid: string;
-      email: string;
-      name: string | null;
-    }>(
-      'SELECT id, firebase_uid, email, name FROM users WHERE firebase_uid = $1',
-      [decodedToken.uid]
-    );
-
-    if (result.rows.length === 0) {
-      return null;
-    }
-
-    const user = result.rows[0];
+    // Return user info directly from Firebase JWT - no database lookup needed
+    // This eliminates circular dependency with database initialization
     return {
-      id: user.id,
-      firebaseUid: user.firebase_uid,
-      email: user.email,
-      name: user.name,
+      id: decodedToken.uid,        // Firebase UID as primary ID
+      firebaseUid: decodedToken.uid,
+      email: decodedToken.email || '',
+      name: decodedToken.name || null,
     };
   } catch (error) {
     console.error('Error getting auth user:', error);
