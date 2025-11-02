@@ -601,19 +601,21 @@ class PostgreSQLConnection implements DatabaseConnection {
 
 class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
   private connection: PostgreSQLConnection | null = null;
-  private readonly connectionString: string;
   private currentVersion = 0;
 
   constructor() {
-    // Use environment variable for database connection
-    // Validation happens in lib/env.ts - will throw if not set
+    // Lazy initialization - don't validate DATABASE_URL until actually needed
+  }
+  
+  private getConnectionString(): string {
+    // Lazy validation - only check when actually connecting
     if (!process.env.DATABASE_URL) {
       throw new Error(
         'DATABASE_URL environment variable is required. ' +
         'Please set it in your .env.local file or environment.'
       );
     }
-    this.connectionString = process.env.DATABASE_URL;
+    return process.env.DATABASE_URL;
   }
 
   async initialize(): Promise<void> {
@@ -624,7 +626,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
     try {
       // Initialize connection
-      this.connection = new PostgreSQLConnection(this.connectionString);
+      const connectionString = this.getConnectionString();
+      this.connection = new PostgreSQLConnection(connectionString);
 
       // Test connection
       await this.connection.query('SELECT 1');
@@ -632,7 +635,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       // Run migrations
       await this.migrate();
 
-      console.log(`Database initialized with PostgreSQL connection: ${this.connectionString.replace(/\/\/.*@/, '//***@')}`);
+      console.log(`Database initialized with PostgreSQL connection: ${connectionString.replace(/\/\/.*@/, '//***@')}`);
 
       // Log stats
       const stats = await this.getDatabaseStats();
@@ -736,7 +739,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       type: 'postgres',
       version: this.currentVersion,
       sizeMB,
-      location: this.connectionString.replace(/\/\/.*@/, '//***@'),
+      location: this.getConnectionString().replace(/\/\/.*@/, '//***@'),
     };
   }
 
