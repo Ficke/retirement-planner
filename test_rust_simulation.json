@@ -1,0 +1,65 @@
+{
+  "plan": {
+    "profile": {
+      "age": 35,
+      "state": "CA",
+      "filingStatus": "Single",
+      "retirementAge": 65,
+      "currentSalary": 100000,
+      "salaryGrowthRate": 0.03,
+      "desiredSpending": 60000,
+      "spendingGrowthRate": 0.025,
+      "lifeExpectancy": 90,
+      "asOfDate": "2024-01-01"
+    },
+    "accounts": [
+      {
+        "id": "test-401k",
+        "name": "401(k)",
+        "institution": "Company Plan",
+        "type": "Traditional",
+        "balance": 200000,
+        "assetWeights": {
+          "stocks": 0.8,
+          "bonds": 0.2
+        },
+        "taxable": false,
+        "createdAt": "2024-01-01T00:00:00Z",
+        "updatedAt": "2024-01-01T00:00:00Z"
+      },
+      {
+        "id": "test-taxable",
+        "name": "Taxable Investment Account",
+        "institution": "Vanguard",
+        "type": "Taxable",
+        "balance": 50000,
+        "assetWeights": {
+          "stocks": 0.7,
+          "bonds": 0.3
+        },
+        "taxable": true,
+        "createdAt": "2024-01-01T00:00:00Z",
+        "updatedAt": "2024-01-01T00:00:00Z"
+      }
+    ],
+    "socialSecurity": {
+      "enabled": true,
+      "estimatedBenefit": 2000,
+      "claimAge": 67,
+      "manualOverride": true
+    },
+    "assumptions": {
+      "preset": "Moderate",
+      "rebalanceAnnually": true,
+      "realDollarDisplay": true,
+      "simulationModel": "historical",
+      "randomSeed": 42,
+      "useBackdoorRoth": false
+    }
+  },
+  "config": {
+    "paths": 1000,
+    "seed": 42,
+    "realDollars": true
+  }
+}
