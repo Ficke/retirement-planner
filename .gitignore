@@ -1,24 +1,60 @@
-# Node/Next
+# =========================
+# Monorepo .gitignore (Node/Next + Rust + Terraform)
+# =========================
+
+# Node / Next.js (recursive for packages/apps)
 node_modules/
+**/node_modules/
 .next/
-out/
+**/.next/
 dist/
-# Env
-.env*
-!.env.example
+**/dist/
+build/
+**/build/
+out/
+**/out/
+coverage/
+**/coverage/
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
-# OS/Editor
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Rust build artifacts
+debug/
+target/
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+# Terraform state and caches
+.terraform/
+**/.terraform/
+terraform.tfstate
+terraform.tfstate.*
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/*.tfplan
+**/crash.log
+
+# OS / Editor
 .DS_Store
 .vscode/
+**/.vscode/
 .idea/
-# Tests & coverage
-coverage/
-playwright-report/
-test-results/
+**/.idea/
+
 # Misc
 *.local
-# OCR uploads
 uploads/

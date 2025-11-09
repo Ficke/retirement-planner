@@ -20,19 +20,57 @@ import type {
 
 export interface SimulationService {
   // Main simulation
-  runMainSimulation(plan: RetirementPlan): Promise<SimulationResult>;
+  runMainSimulation(plan: RetirementPlan, useServerSide?: boolean): Promise<SimulationResult>;
 
   // Analysis simulations
-  runSocialSecurityAnalysis(plan: RetirementPlan): Promise<SSAnalysisResult[]>;
-  runSpendingAnalysis(plan: RetirementPlan): Promise<SpendingAnalysisResult[]>;
-  runRetirementAgeAnalysis(plan: RetirementPlan): Promise<RetirementAgeAnalysisResult[]>;
+  runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SSAnalysisResult[]>;
+  runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SpendingAnalysisResult[]>;
+  runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<RetirementAgeAnalysisResult[]>;
 }
 
 /**
- * Pure implementation - just orchestrates computation, no state.
+ * Server-side simulation using Next.js API proxy to Rust service
+ */
+async function runServerSideSimulation(plan: RetirementPlan): Promise<SimulationResult> {
+  const response = await fetch('/api/simulation/monte-carlo', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      plan,
+      config: {
+        paths: 5000,
+        seed: 42,
+        realDollars: plan.assumptions.realDollarDisplay,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Pure implementation - orchestrates computation with server-side vs client-side routing.
  */
 class SimulationServiceImpl implements SimulationService {
-  async runMainSimulation(plan: RetirementPlan): Promise<SimulationResult> {
+  async runMainSimulation(plan: RetirementPlan, useServerSide = true): Promise<SimulationResult> {
+    if (useServerSide) {
+      try {
+        console.log('🦀 Using server-side Rust simulation');
+        return await runServerSideSimulation(plan);
+      } catch (error) {
+        console.warn('Server-side simulation failed, falling back to client-side:', error);
+        // Fall through to client-side
+      }
+    }
+
+    console.log('🌐 Using client-side Web Worker simulation');
     return runMonteCarloSimulation(plan, {
       paths: 5000,
       seed: 42,
@@ -40,15 +78,21 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  async runSocialSecurityAnalysis(plan: RetirementPlan): Promise<SSAnalysisResult[]> {
+  async runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SSAnalysisResult[]> {
+    // Note: For now, analysis functions still use client-side calculation
+    // TODO: Implement server-side analysis endpoints in future iterations
     return engineRunSSAnalysis(plan);
   }
 
-  async runSpendingAnalysis(plan: RetirementPlan): Promise<SpendingAnalysisResult[]> {
+  async runSpendingAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SpendingAnalysisResult[]> {
+    // Note: For now, analysis functions still use client-side calculation
+    // TODO: Implement server-side analysis endpoints in future iterations
     return engineRunSpendingAnalysis(plan);
   }
 
-  async runRetirementAgeAnalysis(plan: RetirementPlan): Promise<RetirementAgeAnalysisResult[]> {
+  async runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide = true): Promise<RetirementAgeAnalysisResult[]> {
+    // Note: For now, analysis functions still use client-side calculation
+    // TODO: Implement server-side analysis endpoints in future iterations
     return engineRunRetirementAgeAnalysis(plan);
   }
 }

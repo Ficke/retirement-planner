@@ -63,6 +63,9 @@ interface PlanState {
   spendingAnalysisResult: SpendingAnalysisResult[] | null;
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
 
+  // User preferences
+  useServerSideCalculations: boolean;
+
   // Simulation loading states - one per simulation type
   isSimulatingMain: boolean;
   isSimulatingSS: boolean;
@@ -100,6 +103,9 @@ interface PlanState {
   runSpendingAnalysis: () => Promise<void>;
   runRetirementAgeAnalysis: () => Promise<void>;
   runMainSimulation: () => Promise<void>;
+
+  // User preference actions
+  setUseServerSideCalculations: (useServerSide: boolean) => void;
 
   // Account management actions (consolidated from useIndividualAccounts)
   loadAccounts: () => Promise<void>;
@@ -154,6 +160,9 @@ export const usePlan = create<PlanState>((set, get) => ({
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
+
+  // User preferences
+  useServerSideCalculations: true, // Default to server-side for better performance
 
   // Simulation loading states
   isSimulatingMain: false,
@@ -465,6 +474,23 @@ export const usePlan = create<PlanState>((set, get) => ({
       return newState;
     }),
 
+  setUseServerSideCalculations: (useServerSide) =>
+    set((state) => {
+      // Update preference and clear all simulation results to force re-calculation
+      const newState = {
+        useServerSideCalculations: useServerSide,
+        ssAnalysisResult: null,
+        spendingAnalysisResult: null,
+        retirementAgeAnalysisResult: null,
+        simulationResult: null,
+      };
+
+      // Schedule all simulations with new calculation method
+      scheduleSimulations(get);
+
+      return newState;
+    }),
+
   setSimulationResult: (result) =>
     set(() => ({ simulationResult: result })),
 
@@ -522,7 +548,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runSSAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSS } = state;
+    const { plan, aggregatedAccounts, isSimulatingSS, useServerSideCalculations } = state;
 
     if (isSimulatingSS) {
       return;
@@ -534,7 +560,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSocialSecurityAnalysis(planWithAccounts);
+      const results = await service.runSocialSecurityAnalysis(planWithAccounts, useServerSideCalculations);
       set({ ssAnalysisResult: results, isSimulatingSS: false });
     } catch (error) {
       console.error('❌ SS analysis failed:', error);
@@ -544,7 +570,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runSpendingAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSpending } = state;
+    const { plan, aggregatedAccounts, isSimulatingSpending, useServerSideCalculations } = state;
 
     if (isSimulatingSpending) {
       return;
@@ -556,7 +582,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSpendingAnalysis(planWithAccounts);
+      const results = await service.runSpendingAnalysis(planWithAccounts, useServerSideCalculations);
       set({ spendingAnalysisResult: results, isSimulatingSpending: false });
     } catch (error) {
       console.error('❌ Spending analysis failed:', error);
@@ -566,7 +592,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runRetirementAgeAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingRetirementAge } = state;
+    const { plan, aggregatedAccounts, isSimulatingRetirementAge, useServerSideCalculations } = state;
 
     if (isSimulatingRetirementAge) {
       return;
@@ -578,7 +604,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runRetirementAgeAnalysis(planWithAccounts);
+      const results = await service.runRetirementAgeAnalysis(planWithAccounts, useServerSideCalculations);
       set({ retirementAgeAnalysisResult: results, isSimulatingRetirementAge: false });
     } catch (error) {
       console.error('❌ Retirement age analysis failed:', error);
@@ -588,7 +614,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runMainSimulation: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingMain } = state;
+    const { plan, aggregatedAccounts, isSimulatingMain, useServerSideCalculations } = state;
 
     if (isSimulatingMain) {
       return;
@@ -601,7 +627,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     const service = getSimulationService();
 
     try {
-      const result = await service.runMainSimulation(planWithAccounts);
+      const result = await service.runMainSimulation(planWithAccounts, useServerSideCalculations);
 
       console.log('✅ Main simulation completed', {
         successProbability: result.successProbability,

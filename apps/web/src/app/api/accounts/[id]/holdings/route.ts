@@ -129,9 +129,14 @@ export async function GET(
 
     const db = getUnifiedDatabaseService();
 
-    // Verify account belongs to user
-    const account = await db.getAccount(accountId);
-    if (!account || account.user_id !== user.id) {
+    // Verify account belongs to user (using same pattern as accounts API)
+    const accountCheckResult = await db.query(`
+      SELECT a.id FROM accounts a
+      JOIN users u ON a.user_id = u.id
+      WHERE a.id = $1 AND u.firebase_uid = $2
+    `, [accountId, user.id]);
+    
+    if (accountCheckResult.rows.length === 0) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
