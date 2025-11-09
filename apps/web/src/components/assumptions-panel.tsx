@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { HelpCircle } from 'lucide-react';
 
 export function AssumptionsPanel() {
-  const { plan, updateAssumptions } = usePlan();
+  const { plan, updateAssumptions, useServerSideCalculations, setUseServerSideCalculations } = usePlan();
   const { assumptions } = plan;
 
   // Use a stable reference to prevent unnecessary re-renders
@@ -25,6 +25,10 @@ export function AssumptionsPanel() {
   const handleRealDisplayChange = useCallback((checked: boolean) => {
     updateAssumptions({ realDollarDisplay: checked });
   }, [updateAssumptions]);
+
+  const handleServerSideChange = useCallback((checked: boolean) => {
+    setUseServerSideCalculations(checked);
+  }, [setUseServerSideCalculations]);
 
   const handleLongevityChange = useCallback(([value]: number[]) => {
     updateAssumptions({ longevityOverride: value });
@@ -227,6 +231,27 @@ export function AssumptionsPanel() {
             value={assumptions.randomSeed ?? ''}
             onChange={handleSeedChange}
             className="max-w-xs"
+          />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Label htmlFor="serverSide">Server-side Calculations</Label>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Use high-performance Rust server for faster, consistent simulations. Disable for privacy (calculations run locally on your device).</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          <Switch
+            id="serverSide"
+            checked={useServerSideCalculations}
+            onCheckedChange={handleServerSideChange}
           />
         </div>
 

@@ -25,7 +25,21 @@ export async function GET() {
       WHERE u.firebase_uid = $1
     `, [user.id]);
 
-    return NextResponse.json(result.rows);
+    // Map raw database rows to Account objects with proper field mapping
+    const accounts = result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      institution: row.institution,
+      type: row.account_type, // Map account_type to type
+      user_id: row.user_id,
+      balance: 0, // Will be calculated from holdings
+      assetWeights: { stocks: 0.6, bonds: 0.4 }, // Default values
+      taxable: row.account_type === 'Taxable',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    return NextResponse.json(accounts);
   } catch (error) {
     console.error('Get accounts error:', error);
     return NextResponse.json(

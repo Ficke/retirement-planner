@@ -22,6 +22,12 @@ import {
   getAccountAggregationService,
   hasSnapshotData,
 } from '@/services/account-aggregation';
+import {
+  loadPlanState,
+  savePlanState,
+  loadUserPreferences,
+  saveUserPreferences,
+} from '@/lib/persistence';
 
 // Simplified account with real-time holdings
 interface AccountWithHoldings {
@@ -63,6 +69,9 @@ interface PlanState {
   spendingAnalysisResult: SpendingAnalysisResult[] | null;
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
 
+  // User preferences
+  useServerSideCalculations: boolean;
+
   // Simulation loading states - one per simulation type
   isSimulatingMain: boolean;
   isSimulatingSS: boolean;
@@ -100,6 +109,9 @@ interface PlanState {
   runSpendingAnalysis: () => Promise<void>;
   runRetirementAgeAnalysis: () => Promise<void>;
   runMainSimulation: () => Promise<void>;
+
+  // User preference actions
+  setUseServerSideCalculations: (useServerSide: boolean) => void;
 
   // Account management actions (consolidated from useIndividualAccounts)
   loadAccounts: () => Promise<void>;
@@ -147,13 +159,38 @@ const defaultPlan: RetirementPlan = {
   },
 };
 
+// Load initial plan from localStorage or use defaults
+function getInitialPlan(): RetirementPlan {
+  const saved = loadPlanState();
+  if (!saved) return defaultPlan;
+
+  // Merge saved state with defaults (in case schema changed)
+  return {
+    profile: { ...defaultPlan.profile, ...saved.profile },
+    accounts: saved.accounts || defaultPlan.accounts,
+    socialSecurity: { ...defaultPlan.socialSecurity, ...saved.socialSecurity },
+    assumptions: { ...defaultPlan.assumptions, ...saved.assumptions },
+  };
+}
+
+// Load initial user preferences
+function getInitialPreferences() {
+  const saved = loadUserPreferences();
+  return {
+    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
+  };
+}
+
 export const usePlan = create<PlanState>((set, get) => ({
-  plan: defaultPlan,
+  plan: getInitialPlan(),
   simulationResult: null,
   isValid: true,
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
+
+  // User preferences (loaded from localStorage)
+  ...getInitialPreferences(),
 
   // Simulation loading states
   isSimulatingMain: false,
@@ -184,11 +221,13 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateProfile: (profileUpdates) =>
     set((state) => {
       // Update state and clear all analysis results (simple invalidation)
+      const newPlan = {
+        ...state.plan,
+        profile: { ...state.plan.profile, ...profileUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          profile: { ...state.plan.profile, ...profileUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
@@ -196,6 +235,9 @@ export const usePlan = create<PlanState>((set, get) => ({
       };
 
       console.log('📝 New profile salaryGrowthRate:', newState.plan.profile.salaryGrowthRate);
+
+      // Persist to localStorage
+      savePlanState(newPlan);
 
       // Schedule all simulations
       scheduleSimulations(get);
@@ -428,16 +470,21 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateSocialSecurity: (ssUpdates) =>
     set((state) => {
       // Update state and clear all results
+      const newPlan = {
+        ...state.plan,
+        socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
+
+      // Persist to localStorage
+      savePlanState(newPlan);
 
       // Schedule all simulations
       scheduleSimulations(get);
@@ -448,18 +495,43 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateAssumptions: (assumptionUpdates) =>
     set((state) => {
       // Update state and clear all results
+      const newPlan = {
+        ...state.plan,
+        assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
 
+      // Persist to localStorage
+      savePlanState(newPlan);
+
       // Schedule all simulations
+      scheduleSimulations(get);
+
+      return newState;
+    }),
+
+  setUseServerSideCalculations: (useServerSide) =>
+    set((state) => {
+      // Persist preference to localStorage
+      saveUserPreferences({ useServerSideCalculations: useServerSide });
+
+      // Update preference and clear all simulation results to force re-calculation
+      const newState = {
+        useServerSideCalculations: useServerSide,
+        ssAnalysisResult: null,
+        spendingAnalysisResult: null,
+        retirementAgeAnalysisResult: null,
+        simulationResult: null,
+      };
+
+      // Schedule all simulations with new calculation method
       scheduleSimulations(get);
 
       return newState;
@@ -522,7 +594,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runSSAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSS } = state;
+    const { plan, aggregatedAccounts, isSimulatingSS, useServerSideCalculations } = state;
 
     if (isSimulatingSS) {
       return;
@@ -534,7 +606,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSocialSecurityAnalysis(planWithAccounts);
+      const results = await service.runSocialSecurityAnalysis(planWithAccounts, useServerSideCalculations);
       set({ ssAnalysisResult: results, isSimulatingSS: false });
     } catch (error) {
       console.error('❌ SS analysis failed:', error);
@@ -544,7 +616,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runSpendingAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSpending } = state;
+    const { plan, aggregatedAccounts, isSimulatingSpending, useServerSideCalculations } = state;
 
     if (isSimulatingSpending) {
       return;
@@ -556,7 +628,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSpendingAnalysis(planWithAccounts);
+      const results = await service.runSpendingAnalysis(planWithAccounts, useServerSideCalculations);
       set({ spendingAnalysisResult: results, isSimulatingSpending: false });
     } catch (error) {
       console.error('❌ Spending analysis failed:', error);
@@ -566,7 +638,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runRetirementAgeAnalysis: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingRetirementAge } = state;
+    const { plan, aggregatedAccounts, isSimulatingRetirementAge, useServerSideCalculations } = state;
 
     if (isSimulatingRetirementAge) {
       return;
@@ -578,7 +650,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     try {
       const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runRetirementAgeAnalysis(planWithAccounts);
+      const results = await service.runRetirementAgeAnalysis(planWithAccounts, useServerSideCalculations);
       set({ retirementAgeAnalysisResult: results, isSimulatingRetirementAge: false });
     } catch (error) {
       console.error('❌ Retirement age analysis failed:', error);
@@ -588,7 +660,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runMainSimulation: async () => {
     const state = get();
-    const { plan, aggregatedAccounts, isSimulatingMain } = state;
+    const { plan, aggregatedAccounts, isSimulatingMain, useServerSideCalculations } = state;
 
     if (isSimulatingMain) {
       return;
@@ -601,7 +673,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     const service = getSimulationService();
 
     try {
-      const result = await service.runMainSimulation(planWithAccounts);
+      const result = await service.runMainSimulation(planWithAccounts, useServerSideCalculations);
 
       console.log('✅ Main simulation completed', {
         successProbability: result.successProbability,

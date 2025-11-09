@@ -34,6 +34,9 @@ export const userProfileSchema = z.object({
 }).refine((profile) => profile.retirementAge > profile.age, {
   message: "Retirement age must be greater than current age",
   path: ["retirementAge"],
+}).refine((profile) => profile.lifeExpectancy > profile.retirementAge, {
+  message: "Life expectancy must be greater than retirement age",
+  path: ["lifeExpectancy"],
 });
 
 export const socialSecuritySettingsSchema = z.object({

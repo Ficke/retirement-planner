@@ -33,7 +33,7 @@ LANGFUSE_HOST=https://us.cloud.langfuse.com
 
 # Secrets (auto-generated from GCP)
 DATABASE_URL=$(gcloud secrets versions access latest --secret="DATABASE_URL")
-FIREBASE_PRIVATE_KEY=$(gcloud secrets versions access latest --secret="FIREBASE_PRIVATE_KEY")
+FIREBASE_PRIVATE_KEY="$(gcloud secrets versions access latest --secret="FIREBASE_PRIVATE_KEY" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')"
 GEMINI_API_KEY=$(gcloud secrets versions access latest --secret="GEMINI_API_KEY")
 POLYGON_API_KEY=$(gcloud secrets versions access latest --secret="POLYGON_API_KEY")
 LANGFUSE_PUBLIC_KEY=$(gcloud secrets versions access latest --secret="LANGFUSE_PUBLIC_KEY")

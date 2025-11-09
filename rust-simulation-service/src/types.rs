@@ -1,0 +1,276 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum AccountType {
+    Taxable,
+    Traditional,
+    Roth,
+    #[serde(rename = "HSA")]
+    HSA,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FilingStatus {
+    Single,
+    MarriedFilingJointly,
+    MarriedFilingSeparately,
+    HeadOfHousehold,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum State {
+    CA,
+    TX,
+    FL,
+    NY,
+    WA,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetWeights {
+    pub stocks: f64,
+    pub bonds: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub institution: String,
+    #[serde(rename = "type")]
+    pub account_type: AccountType,
+    pub user_id: Option<String>,
+    pub balance: f64,
+    #[serde(rename = "assetWeights")]
+    pub asset_weights: AssetWeights,
+    pub taxable: bool,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub age: u32,
+    pub state: State,
+    #[serde(rename = "filingStatus")]
+    pub filing_status: FilingStatus,
+    #[serde(rename = "retirementAge")]
+    pub retirement_age: u32,
+    #[serde(rename = "currentSalary")]
+    pub current_salary: f64,
+    #[serde(rename = "salaryGrowthRate")]
+    pub salary_growth_rate: f64,
+    #[serde(rename = "desiredSpending")]
+    pub desired_spending: f64,
+    #[serde(rename = "spendingGrowthRate")]
+    pub spending_growth_rate: f64,
+    #[serde(rename = "lifeExpectancy")]
+    pub life_expectancy: u32,
+    #[serde(rename = "asOfDate")]
+    pub as_of_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SocialSecuritySettings {
+    pub enabled: bool,
+    #[serde(rename = "estimatedBenefit")]
+    pub estimated_benefit: Option<f64>,
+    #[serde(rename = "claimAge")]
+    pub claim_age: u32,
+    #[serde(rename = "manualOverride")]
+    pub manual_override: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Preset {
+    Conservative,
+    Moderate,
+    Aggressive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SimulationModel {
+    #[serde(rename = "historical")]
+    Historical,
+    #[serde(rename = "parametric")]
+    Parametric,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketReturn {
+    pub mean: f64,
+    pub vol: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketAssumptions {
+    pub stocks: MarketReturn,
+    pub bonds: MarketReturn,
+    pub inflation: MarketReturn,
+    pub correlation: Vec<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionSettings {
+    pub preset: Preset,
+    #[serde(rename = "customReturns")]
+    pub custom_returns: Option<MarketAssumptions>,
+    #[serde(rename = "rebalanceAnnually")]
+    pub rebalance_annually: bool,
+    #[serde(rename = "realDollarDisplay")]
+    pub real_dollar_display: bool,
+    #[serde(rename = "longevityOverride")]
+    pub longevity_override: Option<u32>,
+    #[serde(rename = "simulationModel")]
+    pub simulation_model: SimulationModel,
+    #[serde(rename = "randomSeed")]
+    pub random_seed: Option<u64>,
+    #[serde(rename = "useBackdoorRoth")]
+    pub use_backdoor_roth: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetirementPlan {
+    pub profile: UserProfile,
+    pub accounts: Vec<Account>,
+    #[serde(rename = "socialSecurity")]
+    pub social_security: SocialSecuritySettings,
+    pub assumptions: ProjectionSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathProjection {
+    pub year: u32,
+    pub age: u32,
+    #[serde(rename = "portfolioValue")]
+    pub portfolio_value: f64,
+    pub income: f64,
+    pub spending: f64,
+    pub taxes: f64,
+    pub savings: f64,
+    #[serde(rename = "socialSecurityBenefit")]
+    pub social_security_benefit: f64,
+    #[serde(rename = "isRetired")]
+    pub is_retired: bool,
+    #[serde(rename = "withdrawalTaxable")]
+    pub withdrawal_taxable: f64,
+    #[serde(rename = "withdrawalTraditional")]
+    pub withdrawal_traditional: f64,
+    #[serde(rename = "withdrawalRoth")]
+    pub withdrawal_roth: f64,
+    #[serde(rename = "rmdAmount")]
+    pub rmd_amount: f64,
+    #[serde(rename = "depositTaxable")]
+    pub deposit_taxable: f64,
+    #[serde(rename = "depositTraditional")]
+    pub deposit_traditional: f64,
+    #[serde(rename = "depositRoth")]
+    pub deposit_roth: f64,
+    #[serde(rename = "depositHSA")]
+    pub deposit_hsa: f64,
+    #[serde(rename = "withdrawalHSA")]
+    pub withdrawal_hsa: f64,
+    #[serde(rename = "insufficientFunds")]
+    pub insufficient_funds: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathResult {
+    #[serde(rename = "terminalWealth")]
+    pub terminal_wealth: f64,
+    pub projections: Vec<PathProjection>,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YearlyProjection {
+    #[serde(flatten)]
+    pub base: PathProjection,
+    pub p5: f64,
+    pub p10: f64,
+    pub p15: f64,
+    pub p25: f64,
+    pub p50: f64,
+    pub p75: f64,
+    pub p90: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WealthAtAge {
+    pub p25: f64,
+    pub p50: f64,
+    pub p75: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WealthThresholds {
+    pub below1m: f64,
+    pub below500k: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationResult {
+    #[serde(rename = "successProbability")]
+    pub success_probability: f64,
+    #[serde(rename = "medianTerminalWealth")]
+    pub median_terminal_wealth: f64,
+    #[serde(rename = "percentile5TerminalWealth")]
+    pub percentile5_terminal_wealth: f64,
+    #[serde(rename = "percentile10TerminalWealth")]
+    pub percentile10_terminal_wealth: f64,
+    #[serde(rename = "percentile90TerminalWealth")]
+    pub percentile90_terminal_wealth: f64,
+    #[serde(rename = "yearlyProjections")]
+    pub yearly_projections: Vec<YearlyProjection>,
+    #[serde(rename = "terminalWealthDistribution")]
+    pub terminal_wealth_distribution: Vec<f64>,
+    #[serde(rename = "riskOfRuin")]
+    pub risk_of_ruin: f64,
+    #[serde(rename = "wealthThresholds")]
+    pub wealth_thresholds: WealthThresholds,
+    #[serde(rename = "wealthAtAge")]
+    pub wealth_at_age: HashMap<u32, WealthAtAge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MCConfig {
+    pub paths: u32,
+    pub seed: u64,
+    #[serde(rename = "realDollars")]
+    pub real_dollars: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationRequest {
+    pub plan: RetirementPlan,
+    pub config: MCConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSimulationRequest {
+    pub id: String,
+    pub plan: RetirementPlan,
+    pub config: MCConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSimulationResponse {
+    pub id: String,
+    pub result: SimulationResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRequest {
+    pub simulations: Vec<BatchSimulationRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResponse {
+    pub results: Vec<BatchSimulationResponse>,
+}

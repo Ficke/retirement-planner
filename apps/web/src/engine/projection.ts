@@ -6,6 +6,7 @@ import { RMD_START_AGE } from '@/data/rmd-tables';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
 import { RETIREMENT_LIMITS_2025 } from '@/data/tax-brackets-2025';
+import seedrandom from 'seedrandom';
 
 export interface ProjectionConfig {
   paths: number;
@@ -90,13 +91,6 @@ export function projectScenario(
     
     // For first year, prorate salary based on remaining year fraction
     const annualSalary = profile.currentSalary * Math.pow(1 + profile.salaryGrowthRate, year);
-    if (year === 0) {
-      console.log('💼 Year 0 salary calculation:', {
-        currentSalary: profile.currentSalary,
-        salaryGrowthRate: profile.salaryGrowthRate,
-        annualSalary
-      });
-    }
     let income = 0;
     let spending = 0;
     let taxes = 0;
@@ -167,6 +161,8 @@ export function projectScenario(
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         const oldBalance = account.balance;
         account.balance *= (1 + effectiveReturn);
+        // Clamp to 0 to prevent negative balances from extreme market downturns
+        account.balance = Math.max(0, account.balance);
 
       }
 
@@ -228,47 +224,49 @@ export function projectScenario(
 
     } else {
       // Retirement phase: withdrawals, SS benefits, taxes on withdrawals
-      spending = profile.desiredSpending * Math.pow(1 + profile.spendingGrowthRate, year);
-      
+      const targetSpending = profile.desiredSpending * Math.pow(1 + profile.spendingGrowthRate, year);
+
       if (socialSecurity.enabled && currentAge >= socialSecurity.claimAge) {
         // Calculate SS benefit using actual SSA calculation
         const salaryHistory = estimateSalaryHistory(
-          profile.currentSalary, 
-          profile.salaryGrowthRate, 
-          profile.age, 
+          profile.currentSalary,
+          profile.salaryGrowthRate,
+          profile.age,
           profile.retirementAge
         );
         const ssaBenefit = calculateSSABenefit(salaryHistory, socialSecurity.claimAge);
         socialSecurityBenefit = ssaBenefit.annualBenefit;
       }
-      
+
       // Generate market returns for this year using the configured generator
       const yearlyReturns = returnsGenerator.next();
-      
+
       // Apply account-specific returns based on each account's individual asset weights
       for (const account of accountBalances) {
-        const accountReturn = 
-          account.assetWeights.stocks * yearlyReturns.stockReturn + 
+        const accountReturn =
+          account.assetWeights.stocks * yearlyReturns.stockReturn +
           account.assetWeights.bonds * yearlyReturns.bondReturn;
-        
+
         // Apply market returns to this account's balance (prorated for first year)
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         account.balance *= (1 + effectiveReturn);
+        // Clamp to 0 to prevent negative balances from extreme market downturns
+        account.balance = Math.max(0, account.balance);
       }
-      
+
       // Calculate total withdrawals needed (spending - SS)
-      const netWithdrawalNeeded = Math.max(0, spending - socialSecurityBenefit);
+      const netWithdrawalNeeded = Math.max(0, targetSpending - socialSecurityBenefit);
 
       // Execute optimal withdrawal strategy and get actual withdrawals with tax calculation
-      const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } = 
+      const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } =
         executeOptimalWithdrawals(
-          netWithdrawalNeeded, 
-          accountBalances, 
+          netWithdrawalNeeded,
+          accountBalances,
           { age: currentAge, filingStatus: profile.filingStatus, state: profile.state },
           socialSecurityBenefit,
           rmdAmount
         );
-      
+
       // RMD excess gets reinvested in taxable account
       if (depositTaxable > 0) {
         const taxableAccount = accountBalances.find(acc => acc.taxable);
@@ -277,7 +275,7 @@ export function projectScenario(
           depositTaxableYear = depositTaxable;
         }
       }
-      
+
       // Store withdrawals for this year's projection
       withdrawalTaxableYear = withdrawalTaxable;
       withdrawalTraditionalYear = withdrawalTraditional;
@@ -285,6 +283,11 @@ export function projectScenario(
       withdrawalHSAYear = withdrawalHSA;
       insufficientFundsYear = insufficientFunds;
       taxes = totalTaxes;
+
+      // Calculate actual spending based on available funds
+      spending = insufficientFunds
+        ? Math.max(0, totalWithdrawn - totalTaxes + socialSecurityBenefit)
+        : targetSpending;
 
       income = socialSecurityBenefit;
       savings = -totalWithdrawn; // Negative savings in retirement
@@ -334,21 +337,20 @@ export function projectScenario(
 }
 
 /**
- * Seeded random number generator using mulberry32 algorithm.
+ * Seeded random number generator using seedrandom library.
  * Provides reproducible random numbers for Monte Carlo simulation.
+ * Compatible with Rust seedrandom port for exact cross-platform results.
  */
 export class SeededRNG {
-  private state: number;
+  private prng: seedrandom.PRNG;
 
   constructor(seed: number) {
-    this.state = seed;
+    // seedrandom expects a string seed, convert number to string
+    this.prng = seedrandom(seed.toString());
   }
 
   next(): number {
-    let t = this.state += 0x6D2B79F5;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    return this.prng();
   }
 
   normal(mean = 0, std = 1): number {
@@ -705,8 +707,12 @@ function executeOptimalWithdrawals(
     if (account.taxable === undefined) {
       throw new Error(`Account "${account.name}" (${account.id}) is missing required 'taxable' field. Cannot determine withdrawal tax treatment.`);
     }
-    if (account.balance === undefined || account.balance < 0) {
+    if (account.balance === undefined || isNaN(account.balance) || !isFinite(account.balance)) {
       throw new Error(`Account "${account.name}" (${account.id}) has invalid balance: ${account.balance}`);
+    }
+    // Clamp negative balances to 0 (can happen from extreme market downturns)
+    if (account.balance < 0) {
+      account.balance = 0;
     }
   }
 

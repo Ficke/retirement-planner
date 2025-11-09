@@ -77,7 +77,18 @@ class AccountAggregationServiceImpl implements AccountAggregationService {
       if (holdings.length === 0) {
         // Account with no holdings - use the account as-is with balance from DB
         // The account already has balance and assetWeights from mapRowToAccount
-        unifiedAccounts.push(account);
+        if (account && account.id) {
+          // Ensure the account has required properties
+          const safeAccount = {
+            ...account,
+            balance: account.balance || 0,
+            assetWeights: account.assetWeights || { stocks: 0.6, bonds: 0.4 },
+            taxable: account.type === 'Taxable'
+          };
+          unifiedAccounts.push(safeAccount);
+        } else {
+          console.warn('Skipping invalid account:', account);
+        }
         continue;
       }
 
