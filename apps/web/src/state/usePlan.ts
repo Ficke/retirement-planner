@@ -22,6 +22,12 @@ import {
   getAccountAggregationService,
   hasSnapshotData,
 } from '@/services/account-aggregation';
+import {
+  loadPlanState,
+  savePlanState,
+  loadUserPreferences,
+  saveUserPreferences,
+} from '@/lib/persistence';
 
 // Simplified account with real-time holdings
 interface AccountWithHoldings {
@@ -153,16 +159,38 @@ const defaultPlan: RetirementPlan = {
   },
 };
 
+// Load initial plan from localStorage or use defaults
+function getInitialPlan(): RetirementPlan {
+  const saved = loadPlanState();
+  if (!saved) return defaultPlan;
+
+  // Merge saved state with defaults (in case schema changed)
+  return {
+    profile: { ...defaultPlan.profile, ...saved.profile },
+    accounts: saved.accounts || defaultPlan.accounts,
+    socialSecurity: { ...defaultPlan.socialSecurity, ...saved.socialSecurity },
+    assumptions: { ...defaultPlan.assumptions, ...saved.assumptions },
+  };
+}
+
+// Load initial user preferences
+function getInitialPreferences() {
+  const saved = loadUserPreferences();
+  return {
+    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
+  };
+}
+
 export const usePlan = create<PlanState>((set, get) => ({
-  plan: defaultPlan,
+  plan: getInitialPlan(),
   simulationResult: null,
   isValid: true,
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
 
-  // User preferences
-  useServerSideCalculations: true, // Default to server-side for better performance
+  // User preferences (loaded from localStorage)
+  ...getInitialPreferences(),
 
   // Simulation loading states
   isSimulatingMain: false,
@@ -193,11 +221,13 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateProfile: (profileUpdates) =>
     set((state) => {
       // Update state and clear all analysis results (simple invalidation)
+      const newPlan = {
+        ...state.plan,
+        profile: { ...state.plan.profile, ...profileUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          profile: { ...state.plan.profile, ...profileUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
@@ -205,6 +235,9 @@ export const usePlan = create<PlanState>((set, get) => ({
       };
 
       console.log('📝 New profile salaryGrowthRate:', newState.plan.profile.salaryGrowthRate);
+
+      // Persist to localStorage
+      savePlanState(newPlan);
 
       // Schedule all simulations
       scheduleSimulations(get);
@@ -437,16 +470,21 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateSocialSecurity: (ssUpdates) =>
     set((state) => {
       // Update state and clear all results
+      const newPlan = {
+        ...state.plan,
+        socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
+
+      // Persist to localStorage
+      savePlanState(newPlan);
 
       // Schedule all simulations
       scheduleSimulations(get);
@@ -457,16 +495,21 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateAssumptions: (assumptionUpdates) =>
     set((state) => {
       // Update state and clear all results
+      const newPlan = {
+        ...state.plan,
+        assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
+      };
+
       const newState = {
-        plan: {
-          ...state.plan,
-          assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
-        },
+        plan: newPlan,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
+
+      // Persist to localStorage
+      savePlanState(newPlan);
 
       // Schedule all simulations
       scheduleSimulations(get);
@@ -476,6 +519,9 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   setUseServerSideCalculations: (useServerSide) =>
     set((state) => {
+      // Persist preference to localStorage
+      saveUserPreferences({ useServerSideCalculations: useServerSide });
+
       // Update preference and clear all simulation results to force re-calculation
       const newState = {
         useServerSideCalculations: useServerSide,

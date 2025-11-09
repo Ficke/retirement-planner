@@ -104,8 +104,8 @@ export function InputsForm() {
               <Input
                 id="age"
                 type="number"
-                value={watchedValues.age || ''}
-                onChange={(e) => setValue('age', Number(e.target.value))}
+                defaultValue={watchedValues.age || ''}
+                onBlur={(e) => setValue('age', Number(e.target.value))}
               />
               {errors.age && (
                 <p className="text-sm text-red-500">{errors.age.message}</p>
@@ -161,8 +161,8 @@ export function InputsForm() {
               <Input
                 id="currentSalary"
                 type="text"
-                value={formatCurrency(watchedValues.currentSalary || 0)}
-                onChange={(e) => setValue('currentSalary', parseCurrency(e.target.value))}
+                defaultValue={formatCurrency(watchedValues.currentSalary || 0)}
+                onBlur={(e) => setValue('currentSalary', parseCurrency(e.target.value))}
                 placeholder="$100,000"
               />
               {errors.currentSalary && (
@@ -175,8 +175,8 @@ export function InputsForm() {
               <Input
                 id="lifeExpectancy"
                 type="number"
-                value={watchedValues.lifeExpectancy || ''}
-                onChange={(e) => setValue('lifeExpectancy', Number(e.target.value))}
+                defaultValue={watchedValues.lifeExpectancy || ''}
+                onBlur={(e) => setValue('lifeExpectancy', Number(e.target.value))}
                 placeholder="95"
               />
               {errors.lifeExpectancy && (

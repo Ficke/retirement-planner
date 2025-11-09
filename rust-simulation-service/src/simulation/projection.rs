@@ -214,14 +214,16 @@ pub fn project_scenario(
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
                     + account.asset_weights.bonds * bond_return;
-                
+
                 let effective_return = if year == 0 {
                     account_return * remaining_year_fraction
                 } else {
                     account_return
                 };
-                
+
                 account.balance *= 1.0 + effective_return;
+                // Clamp to 0 to prevent negative balances from extreme market downturns
+                account.balance = account.balance.max(0.0);
             }
             
             // Add new savings (prorated for first year)
@@ -267,8 +269,8 @@ pub fn project_scenario(
             
         } else {
             // RETIREMENT PHASE
-            spending = profile.desired_spending * (1.0 + profile.spending_growth_rate).powi(year as i32);
-            
+            let target_spending = profile.desired_spending * (1.0 + profile.spending_growth_rate).powi(year as i32);
+
             // Calculate Social Security
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
                 let salary_history = estimate_salary_history(
@@ -280,27 +282,29 @@ pub fn project_scenario(
                 let ssa_benefit = calculate_ssa_benefit(&salary_history, plan.social_security.claim_age);
                 social_security_benefit = ssa_benefit.annual_benefit;
             }
-            
+
             // Generate market returns
             let (stock_return, bond_return) = returns_generator.next();
-            
+
             // Apply returns to each account
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
                     + account.asset_weights.bonds * bond_return;
-                
+
                 let effective_return = if year == 0 {
                     account_return * remaining_year_fraction
                 } else {
                     account_return
                 };
-                
+
                 account.balance *= 1.0 + effective_return;
+                // Clamp to 0 to prevent negative balances from extreme market downturns
+                account.balance = account.balance.max(0.0);
             }
-            
+
             // Calculate withdrawals
-            let net_withdrawal_needed = (spending - social_security_benefit).max(0.0);
-            
+            let net_withdrawal_needed = (target_spending - social_security_benefit).max(0.0);
+
             let withdrawal_result = execute_optimal_withdrawals(
                 net_withdrawal_needed,
                 &mut accounts,
@@ -310,7 +314,7 @@ pub fn project_scenario(
                 social_security_benefit,
                 rmd_amount,
             )?;
-            
+
             withdrawal_taxable = withdrawal_result.withdrawal_taxable;
             withdrawal_traditional = withdrawal_result.withdrawal_traditional;
             withdrawal_roth = withdrawal_result.withdrawal_roth;
@@ -318,14 +322,23 @@ pub fn project_scenario(
             deposit_taxable = withdrawal_result.deposit_taxable;
             taxes = withdrawal_result.total_taxes;
             insufficient_funds = withdrawal_result.insufficient_funds;
-            
+
             // Reinvest RMD excess
             if deposit_taxable > 0.0 {
                 if let Some(taxable_account) = accounts.iter_mut().find(|acc| acc.taxable) {
                     taxable_account.balance += deposit_taxable;
                 }
             }
-            
+
+            // Calculate actual spending based on available funds
+            spending = if insufficient_funds {
+                // If funds are insufficient, actual spending is limited to what's available
+                // = withdrawals - taxes + social security (and any other income sources)
+                (withdrawal_result.total_withdrawn - taxes + social_security_benefit).max(0.0)
+            } else {
+                target_spending
+            };
+
             income = social_security_benefit;
             savings = -(withdrawal_result.total_withdrawn);
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
@@ -633,8 +646,8 @@ fn create_market_returns_generator(plan: &RetirementPlan, seed: u64) -> Box<dyn 
             Box::new(ParametricReturnsGenerator::new(seed))
         }
         crate::types::SimulationModel::Historical => {
-            // TODO: Check if block bootstrap is enabled
-            Box::new(BlockBootstrapGenerator::new(seed, 5)) // Default block size of 5
+            // Block size of 3 to match TypeScript implementation (MONTE_CARLO_DEFAULTS.block_size)
+            Box::new(BlockBootstrapGenerator::new(seed, 3))
         }
     }
 }

@@ -251,3 +251,26 @@ pub struct SimulationRequest {
     pub plan: RetirementPlan,
     pub config: MCConfig,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSimulationRequest {
+    pub id: String,
+    pub plan: RetirementPlan,
+    pub config: MCConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSimulationResponse {
+    pub id: String,
+    pub result: SimulationResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRequest {
+    pub simulations: Vec<BatchSimulationRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResponse {
+    pub results: Vec<BatchSimulationResponse>,
+}
