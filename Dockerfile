@@ -1,22 +1,6 @@
 # Multi-stage build for Next.js production deployment
 
-# Stage 1: Dependencies
-FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat
-
-# Install pnpm
-RUN npm install -g pnpm@10
-
-WORKDIR /app
-
-# Copy workspace and package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/
-
-# Install all dependencies (pnpm workspaces install at root)
-RUN pnpm install --frozen-lockfile
-
-# Stage 2: Builder
+# Stage 1: Dependencies and Builder
 FROM node:20-alpine AS builder
 RUN apk add --no-cache libc6-compat
 
@@ -25,12 +9,15 @@ RUN npm install -g pnpm@10
 
 WORKDIR /app
 
-# Copy source code first
-COPY . .
+# Copy package files first (better layer caching)
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/
 
-# Copy dependencies from deps stage (pnpm workspace structure)
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
+# Install dependencies (Kaniko will cache this layer)
+RUN pnpm install --frozen-lockfile
+
+# Copy source code after installing deps
+COPY . .
 
 # Set environment for build
 ENV NODE_ENV=production
