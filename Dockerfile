@@ -25,11 +25,12 @@ RUN npm install -g pnpm@10
 
 WORKDIR /app
 
-# Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
-
-# Copy source code
+# Copy source code first
 COPY . .
+
+# Copy dependencies from deps stage (pnpm workspace structure)
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
 # Set environment for build
 ENV NODE_ENV=production
