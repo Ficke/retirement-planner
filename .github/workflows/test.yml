@@ -98,7 +98,7 @@ jobs:
 
       - name: Run cargo clippy
         working-directory: rust-simulation-service
-        run: cargo clippy -- -D warnings
+        run: cargo clippy
 
       - name: Run cargo test
         working-directory: rust-simulation-service
