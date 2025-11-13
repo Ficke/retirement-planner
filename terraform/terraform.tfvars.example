@@ -76,3 +76,12 @@ allow_unauthenticated = true
 enable_cloud_build_trigger = false
 github_owner               = "your-github-username"
 github_repo                = "retire"
+
+# Rust Simulation Service Configuration
+rust_service_name     = "rust-simulation-service"
+rust_service_image    = "us-central1-docker.pkg.dev/your-gcp-project-id/retire-plan/rust-simulation:latest"
+rust_memory_limit     = "1Gi"
+rust_cpu_limit        = "2"
+rust_min_instances    = 0
+rust_max_instances    = 10
+rust_timeout_seconds  = 120

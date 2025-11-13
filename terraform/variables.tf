@@ -168,3 +168,45 @@ variable "github_repo" {
   type        = string
   default     = ""
 }
+
+# Rust Simulation Service configuration
+variable "rust_service_name" {
+  description = "Name of the Rust simulation Cloud Run service"
+  type        = string
+  default     = "rust-simulation-service"
+}
+
+variable "rust_service_image" {
+  description = "Docker image for Rust simulation service (format: region-docker.pkg.dev/project/repo/image:tag)"
+  type        = string
+}
+
+variable "rust_memory_limit" {
+  description = "Memory limit for Rust simulation service"
+  type        = string
+  default     = "1Gi"
+}
+
+variable "rust_cpu_limit" {
+  description = "CPU limit for Rust simulation service"
+  type        = string
+  default     = "2"
+}
+
+variable "rust_min_instances" {
+  description = "Minimum number of Rust simulation instances"
+  type        = number
+  default     = 0
+}
+
+variable "rust_max_instances" {
+  description = "Maximum number of Rust simulation instances"
+  type        = number
+  default     = 10
+}
+
+variable "rust_timeout_seconds" {
+  description = "Request timeout for Rust simulation service in seconds"
+  type        = number
+  default     = 120
+}

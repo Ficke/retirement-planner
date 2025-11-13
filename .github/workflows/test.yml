@@ -3,15 +3,9 @@ name: Tests
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'apps/web/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/test.yml'
 
 jobs:
-  test:
+  test-typescript:
     name: Run Tests
     runs-on: ubuntu-latest
 
@@ -58,10 +52,65 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          echo "### Test Results 🧪" >> $GITHUB_STEP_SUMMARY
+          echo "### TypeScript Test Results 🧪" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ ${{ job.status }} == 'success' ]; then
             echo "✅ All tests, typecheck, and build passed!" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Tests, typecheck, or build failed. Please fix the errors." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  test-rust:
+    name: Test Rust Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: rust-simulation-service/target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run cargo check
+        working-directory: rust-simulation-service
+        run: cargo check --release
+
+      - name: Run cargo clippy
+        working-directory: rust-simulation-service
+        run: cargo clippy -- -D warnings
+
+      - name: Run cargo test
+        working-directory: rust-simulation-service
+        run: cargo test --release
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "### Rust Test Results 🦀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ All Rust checks, clippy, and tests passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Rust checks, clippy, or tests failed. Please fix the errors." >> $GITHUB_STEP_SUMMARY
           fi

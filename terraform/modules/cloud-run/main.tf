@@ -27,7 +27,7 @@ resource "google_project_iam_member" "cloud_run_secret_accessor" {
 resource "google_cloud_run_v2_service" "main" {
   name     = var.service_name
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = var.ingress_settings
 
   template {
     service_account = google_service_account.cloud_run.email
@@ -75,7 +75,7 @@ resource "google_cloud_run_v2_service" "main" {
       }
 
       ports {
-        container_port = 3000
+        container_port = var.container_port
       }
 
       # Liveness probe

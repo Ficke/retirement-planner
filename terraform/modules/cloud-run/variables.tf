@@ -76,3 +76,15 @@ variable "environment" {
   type        = string
   default     = "production"
 }
+
+variable "ingress_settings" {
+  description = "Ingress traffic settings (INGRESS_TRAFFIC_ALL or INGRESS_TRAFFIC_INTERNAL_ONLY)"
+  type        = string
+  default     = "INGRESS_TRAFFIC_ALL"
+}
+
+variable "container_port" {
+  description = "Container port to expose"
+  type        = number
+  default     = 3000
+}
