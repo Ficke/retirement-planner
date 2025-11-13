@@ -56,7 +56,43 @@ module "secrets" {
   depends_on = [google_project_service.required_apis]
 }
 
-# Cloud Run service for the application
+# Rust simulation service (internal-only)
+module "rust_simulation" {
+  source = "./modules/cloud-run"
+
+  project_id       = var.project_id
+  region           = var.region
+  service_name     = var.rust_service_name
+  image            = var.rust_service_image
+
+  # No environment variables needed for Rust service
+  env_vars = {}
+  secret_env_vars = {}
+
+  # Resource limits optimized for compute-intensive simulations
+  memory_limit = var.rust_memory_limit
+  cpu_limit    = var.rust_cpu_limit
+
+  # Scaling configuration
+  min_instances = var.rust_min_instances
+  max_instances = var.rust_max_instances
+
+  # Timeout for long-running simulations
+  timeout_seconds = var.rust_timeout_seconds
+
+  # Internal-only access (only callable from other Cloud Run services)
+  allow_unauthenticated = true
+  ingress_settings = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  # Custom container port for Rust service
+  container_port = 8081
+
+  depends_on = [
+    google_project_service.required_apis
+  ]
+}
+
+# Cloud Run service for the Next.js application
 module "cloud_run" {
   source = "./modules/cloud-run"
 
@@ -65,11 +101,12 @@ module "cloud_run" {
   service_name     = var.service_name
   image            = var.cloud_run_image
 
-  # Environment variables
+  # Environment variables (include Rust service URL)
   env_vars = merge(
     var.public_env_vars,
     {
       NODE_ENV = var.environment
+      RUST_SERVICE_URL = module.rust_simulation.service_url
     }
   )
 
@@ -92,7 +129,8 @@ module "cloud_run" {
 
   depends_on = [
     google_project_service.required_apis,
-    module.secrets
+    module.secrets,
+    module.rust_simulation
   ]
 }
 

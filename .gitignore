@@ -58,3 +58,7 @@ terraform.tfstate.*
 # Misc
 *.local
 uploads/
+
+# Test files
+apps/web/test-seedrandom.js
+apps/web/tests/server-client-comparison.test.ts
