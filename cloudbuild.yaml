@@ -146,11 +146,12 @@ steps:
     waitFor: ['deploy']
 
 # Store images in Artifact Registry
+# Note: Next.js images are pushed by Kaniko (--destination flag)
+# Rust images are pushed explicitly in steps 2-3
+# This section is optional but helps with build provenance tracking
 images:
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_RUST_SERVICE_NAME}:$COMMIT_SHA'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_RUST_SERVICE_NAME}:latest'
-  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
-  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
 
 # Build timeout (20 minutes)
 timeout: '1200s'
