@@ -6,30 +6,24 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
+// Firebase configuration
+// Note: These credentials are PUBLIC and meant to be in client-side code.
+// Security is enforced by Firebase Security Rules, not by hiding these values.
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: "AIzaSyBkCJjpT2Kt3DlPlPQa745iwx1RCzAAHjU",
+  authDomain: "retire-5250e.firebaseapp.com",
+  projectId: "retire-5250e",
+  storageBucket: "retire-5250e.firebasestorage.app",
+  messagingSenderId: "106859282187",
+  appId: "1:106859282187:web:9bd82c3f08f77725cfc376",
+  measurementId: "G-QRVN9XBC4Z",
 };
 
-// Initialize Firebase if we have the required config
-const hasRequiredConfig = firebaseConfig.apiKey && firebaseConfig.projectId;
+// Initialize Firebase (singleton pattern - only initialize once)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-let app: any = null;
-let auth: any = null;
-
-if (hasRequiredConfig) {
-  // Initialize Firebase (singleton pattern - only initialize once)
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  // Initialize Firebase Auth
-  auth = getAuth(app);
-} else {
-  console.warn('Firebase skipped due to missing configuration (missing API key or project ID)');
-}
+// Initialize Firebase Auth
+const auth = getAuth(app);
 
 export { auth };
 export default app;

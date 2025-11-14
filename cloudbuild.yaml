@@ -12,14 +12,6 @@ substitutions:
   _REGION: us-central1
   _REGISTRY: us-central1-docker.pkg.dev
   _REPOSITORY: retire-plan
-  # Firebase config (public, safe to include)
-  _FIREBASE_API_KEY: AIzaSyBkCJjpT2Kt3DlPlPQa745iwx1RCzAAHjU
-  _FIREBASE_PROJECT_ID: retire-5250e
-  _FIREBASE_AUTH_DOMAIN: retire-5250e.firebaseapp.com
-  _FIREBASE_STORAGE_BUCKET: retire-5250e.firebasestorage.app
-  _FIREBASE_MESSAGING_SENDER_ID: '106859282187'
-  _FIREBASE_APP_ID: 1:106859282187:web:9bd82c3f08f77725cfc376
-  _FIREBASE_MEASUREMENT_ID: G-QRVN9XBC4Z
 
 steps:
   # ===== RUST SIMULATION SERVICE =====
@@ -107,14 +99,6 @@ steps:
       - '--compressed-caching=false'  # Faster caching
       - '--snapshot-mode=redo'  # More accurate layer detection
       - '--use-new-run'  # Better RUN caching
-      # Pass Firebase config as build args for Next.js
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${_FIREBASE_MESSAGING_SENDER_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_APP_ID=${_FIREBASE_APP_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${_FIREBASE_MEASUREMENT_ID}'
 
   # Step 5: Deploy Next.js to Cloud Run (must wait for Rust service and env update)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
