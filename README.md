@@ -37,14 +37,15 @@ cd retirement-planner
 # Install dependencies
 pnpm install
 
-# Authenticate with Google Cloud (required for secrets)
-gcloud auth login
+# Interactive setup (walks you through env config)
+node scripts/setup
 
-# Pull environment variables from GCP Secret Manager
+# Or, if you have GCP access, pull secrets directly:
+gcloud auth login
 ./scripts/pull-secrets.sh
 ```
 
-This will create `apps/web/.env.local` with all required secrets from GCP Secret Manager.
+The setup script creates `apps/web/.env.local` with database URL, Firebase credentials, and other required config. Alternatively, `pull-secrets.sh` pulls everything from GCP Secret Manager.
 
 ### Running the Development Environment
 
@@ -113,12 +114,12 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 - **Simulation Engine:** Rust (Warp + Rayon)
 - **Database:** PostgreSQL (Neon)
 - **Authentication:** Firebase Auth
-- **Observability:** Langfuse (OCR tracing)
+- **Deployment:** Google Cloud Run + Cloud Build
 
 ## 🎮 How to Use
 
 1. **📝 Inputs** - Enter your age, income, expenses, and retirement goals
-2. **💳 Accounts** - Configure your retirement accounts with current balances and asset allocations
+2. **💳 Accounts** - Add your accounts with balances and stock/bond allocation percentages
 3. **⚙️ Assumptions** - Adjust market return expectations and economic parameters
 4. **📊 Results** - View your retirement projections with success probability and wealth trajectories
 
