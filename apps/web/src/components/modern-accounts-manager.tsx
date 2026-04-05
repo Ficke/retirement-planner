@@ -1,13 +1,11 @@
 /**
- * Modern unified account manager - single holdings-enabled interface
- * Replaces dual account system with consolidated holdings-first design
+ * Account manager with inline balance and allocation editing
  */
 
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { usePlan, usePlanSelectors } from '@/state/usePlan';
-import { getHoldingsClient } from '@/services/client/holdings-client';
 import type { AccountType, CreateAccountData } from '@/domain/types';
 import { formatCurrency } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -17,102 +15,111 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Plus, Trash2, TrendingUp, Building, CreditCard, AlertCircle, Loader2 } from 'lucide-react';
-import { AccountDetailView } from './account-detail-view';
-import { TransactionUploadForm } from './transaction-upload-form';
+import { Plus, Trash2, Building, CreditCard, AlertCircle, Loader2, Pencil, Check, X } from 'lucide-react';
+
+interface EditingState {
+  accountId: string;
+  balance: string;
+  stocksPct: string;
+}
+
+interface NewAccountState {
+  name: string;
+  institution: string;
+  type: AccountType;
+  balance: string;
+  stocksPct: string;
+}
 
 export function ModernAccountsManager() {
   const { createAccount, updateAccount, deleteAccount, loadAccounts } = usePlan();
 
-  // Modern selectors with enhanced loading states
   const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
-  const loadingState = usePlanSelectors.useLoadingState();
   const accountsLoading = usePlanSelectors.useAccountsLoading();
   const error = usePlanSelectors.useError();
   const isReady = usePlanSelectors.useIsReady();
 
-  const [selectedAccountForDetail, setSelectedAccountForDetail] = useState<string | null>(null);
+  const [editing, setEditing] = useState<EditingState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const balanceInputRef = useRef<HTMLInputElement>(null);
 
-  const [newAccount, setNewAccount] = useState<CreateAccountData>({
+  const [newAccount, setNewAccount] = useState<NewAccountState>({
     name: '',
     institution: '',
     type: 'Taxable',
+    balance: '',
+    stocksPct: '60',
   });
 
-  // Load accounts and portfolio values on mount
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
 
-  // Refresh account balances when navigating back to accounts page
-  // This ensures fresh data from database (single source of truth)
+  // Focus balance input when entering edit mode
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        loadAccounts();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [loadAccounts]);
-
-  // Portfolio values are now included in accountsWithHoldings.currentBalance
-  // No separate loading needed
+    if (editing && balanceInputRef.current) {
+      balanceInputRef.current.focus();
+      balanceInputRef.current.select();
+    }
+  }, [editing?.accountId]);
 
   const handleAddAccount = useCallback(async () => {
-    if (!newAccount.name.trim() || !newAccount.institution.trim()) {
-      return;
-    }
+    if (!newAccount.name.trim()) return;
+
+    const balance = parseFloat(newAccount.balance) || 0;
+    const stocksPct = parseFloat(newAccount.stocksPct) / 100 || 0.6;
 
     try {
-      await createAccount(newAccount);
-      setNewAccount({
-        name: '',
-        institution: '',
-        type: 'Taxable',
+      await createAccount({
+        name: newAccount.name.trim(),
+        institution: newAccount.institution.trim() || '',
+        type: newAccount.type,
+        balance,
+        stocksPct,
+        bondsPct: 1 - stocksPct,
       });
-    } catch (error) {
-      // Error is handled by the store
+      setNewAccount({ name: '', institution: '', type: 'Taxable', balance: '', stocksPct: '60' });
+    } catch {
+      // Error handled by store
     }
   }, [newAccount, createAccount]);
 
-  const handleUpdateAccount = useCallback(async (
-    id: string,
-    field: keyof Omit<CreateAccountData, 'id' | 'createdAt'>,
-    value: string
-  ) => {
-    try {
-      await updateAccount(id, { [field]: value });
-    } catch (error) {
-      // Error is handled by the store
-    }
-  }, [updateAccount]);
-
-  const handleAccountClick = useCallback((accountId: string) => {
-    setSelectedAccountForDetail(accountId);
+  const startEditing = useCallback((accountId: string, balance: number, stocksPct: number) => {
+    setEditing({
+      accountId,
+      balance: balance > 0 ? balance.toString() : '',
+      stocksPct: (stocksPct * 100).toFixed(0),
+    });
   }, []);
 
-  const handleBackToAccounts = useCallback(() => {
-    setSelectedAccountForDetail(null);
-    // Refresh account list to show updated balances
-    loadAccounts();
-  }, [loadAccounts]);
+  const cancelEditing = useCallback(() => {
+    setEditing(null);
+  }, []);
 
+  const saveEditing = useCallback(async () => {
+    if (!editing || saving) return;
 
-  // If viewing account details, show that instead
-  if (selectedAccountForDetail) {
-    const individualAccount = accountsWithHoldings.find(acc => acc.account.id === selectedAccountForDetail);
-    if (individualAccount) {
-      return (
-        <AccountDetailView
-          account={individualAccount.account}
-          onBack={handleBackToAccounts}
-        />
-      );
+    const balance = parseFloat(editing.balance) || 0;
+    const stocksPct = parseFloat(editing.stocksPct) / 100;
+    const bondsPct = 1 - stocksPct;
+
+    if (isNaN(stocksPct) || stocksPct < 0 || stocksPct > 1) return;
+
+    setSaving(true);
+    try {
+      await updateAccount(editing.accountId, {
+        balance,
+        assetWeights: { stocks: stocksPct, bonds: bondsPct },
+        balanceAsOf: new Date().toISOString().split('T')[0],
+      });
+      setEditing(null);
+    } catch {
+      // Error handled by store
+    } finally {
+      setSaving(false);
     }
-  }
+  }, [editing, saving, updateAccount]);
 
-  // Show loading state with modern design
   if (accountsLoading === 'loading') {
     return (
       <Card>
@@ -134,7 +141,6 @@ export function ModernAccountsManager() {
     );
   }
 
-  // Show error state with retry option
   if (accountsLoading === 'error' && error) {
     return (
       <Card>
@@ -149,12 +155,7 @@ export function ModernAccountsManager() {
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="flex items-center justify-between">
               <span>{error}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => loadAccounts()}
-                className="ml-4"
-              >
+              <Button variant="outline" size="sm" onClick={() => loadAccounts()} className="ml-4">
                 Retry
               </Button>
             </AlertDescription>
@@ -165,161 +166,198 @@ export function ModernAccountsManager() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Building className="h-5 w-5" />
-            <span>Holdings-Enabled Accounts</span>
-          </CardTitle>
-          <CardDescription>
-            Manage all your accounts with comprehensive holdings tracking and automatic market data integration.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Modern Single Account Table */}
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Institution</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Current Balance</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* Existing Accounts */}
-                {accountsWithHoldings.map((accountWithHoldings) => {
-                  const { account, currentBalance } = accountWithHoldings;
-                  const portfolioValue = currentBalance ?? 0;
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center space-x-2">
+          <Building className="h-5 w-5" />
+          <span>Accounts</span>
+        </CardTitle>
+        <CardDescription>
+          Set your account balances and stock/bond allocation. Click the pencil to edit.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Account</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Balance</TableHead>
+                <TableHead>Stocks %</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accountsWithHoldings.map(({ account, currentBalance }) => {
+                const isEditing = editing?.accountId === account.id;
 
-                  return (
-                    <TableRow
-                      key={account.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleAccountClick(account.id)}
-                    >
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <div className="p-1 bg-blue-100 rounded">
-                            <CreditCard className="h-3 w-3 text-blue-600" />
-                          </div>
+                return (
+                  <TableRow key={account.id}>
+                    <TableCell>
+                      <div className="flex items-center space-x-2">
+                        <CreditCard className="h-3 w-3 text-blue-600" />
+                        <div>
                           <span className="font-medium">{account.name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{account.institution}</span>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-1">
-                          <Building className="h-3 w-3 text-gray-500" />
-                          <span>{account.institution}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{account.type}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {portfolioValue !== null && portfolioValue > 0 ? (
-                          <div className="flex items-center space-x-1">
-                            <span className="font-medium">{formatCurrency(portfolioValue)}</span>
-                            <TrendingUp className="h-3 w-3 text-green-500" />
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">No holdings</span>
-                        )}
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex space-x-2">
-                          {/* Transaction form now inline in detail view */}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => deleteAccount(account.id)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-
-                {/* Total Assets Row */}
-                {accountsWithHoldings.length > 0 && (
-                  <TableRow className="border-t-2 border-primary bg-muted/50">
-                    <TableCell colSpan={3} className="font-semibold">
-                      Total Assets
+                      </div>
                     </TableCell>
-                    <TableCell className="font-bold text-lg">
-                      {formatCurrency(
-                        accountsWithHoldings.reduce((sum, acc) => sum + (acc.currentBalance || 0), 0)
+                    <TableCell>
+                      <Badge variant="outline">{account.type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {isEditing ? (
+                        <Input
+                          ref={balanceInputRef}
+                          type="number"
+                          value={editing.balance}
+                          onChange={(e) => setEditing({ ...editing, balance: e.target.value })}
+                          onKeyDown={(e) => e.key === 'Enter' && saveEditing()}
+                          className="w-32"
+                        />
+                      ) : (
+                        <span className="font-medium">{formatCurrency(currentBalance || 0)}</span>
                       )}
                     </TableCell>
-                    <TableCell></TableCell>
+                    <TableCell>
+                      {isEditing ? (
+                        <div className="flex items-center space-x-1">
+                          <Input
+                            type="number"
+                            value={editing.stocksPct}
+                            onChange={(e) => setEditing({ ...editing, stocksPct: e.target.value })}
+                            onKeyDown={(e) => e.key === 'Enter' && saveEditing()}
+                            className="w-16"
+                            min={0}
+                            max={100}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                        </div>
+                      ) : (
+                        <span>{(account.assetWeights.stocks * 100).toFixed(0)}%</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex space-x-1">
+                        {isEditing ? (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={saveEditing} disabled={saving}>
+                              <Check className="h-3 w-3" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={cancelEditing}>
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => startEditing(account.id, account.balance, account.assetWeights.stocks)}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteAccount(account.id)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
                   </TableRow>
-                )}
+                );
+              })}
 
-                {/* Add new account row */}
-                <TableRow>
-                  <TableCell>
+              {/* Total row */}
+              {accountsWithHoldings.length > 0 && (
+                <TableRow className="border-t-2 bg-muted/50">
+                  <TableCell colSpan={2} className="font-semibold">Total</TableCell>
+                  <TableCell className="font-bold">
+                    {formatCurrency(accountsWithHoldings.reduce((sum, a) => sum + (a.currentBalance || 0), 0))}
+                  </TableCell>
+                  <TableCell colSpan={2} />
+                </TableRow>
+              )}
+
+              {/* Add new account row */}
+              <TableRow>
+                <TableCell>
+                  <div className="flex space-x-2">
                     <Input
-                      placeholder="Account name"
+                      placeholder="Name"
                       value={newAccount.name}
                       onChange={(e) => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-28"
                     />
-                  </TableCell>
-                  <TableCell>
                     <Input
                       placeholder="Institution"
                       value={newAccount.institution}
                       onChange={(e) => setNewAccount(prev => ({ ...prev, institution: e.target.value }))}
+                      className="w-28"
                     />
-                  </TableCell>
-                  <TableCell>
-                    <Select
-                      value={newAccount.type}
-                      onValueChange={(value: AccountType) => setNewAccount(prev => ({ ...prev, type: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Taxable">Taxable</SelectItem>
-                        <SelectItem value="Traditional">Traditional</SelectItem>
-                        <SelectItem value="Roth">Roth</SelectItem>
-                        <SelectItem value="HSA">HSA</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>-</TableCell>
-                  <TableCell>
-                    <Button
-                      onClick={handleAddAccount}
-                      disabled={!newAccount.name.trim() || !newAccount.institution.trim()}
-                    >
-                      <Plus className="h-3 w-3 mr-1" />
-                      Add
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={newAccount.type}
+                    onValueChange={(value: AccountType) => setNewAccount(prev => ({ ...prev, type: value }))}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Taxable">Taxable</SelectItem>
+                      <SelectItem value="Traditional">Traditional</SelectItem>
+                      <SelectItem value="Roth">Roth</SelectItem>
+                      <SelectItem value="HSA">HSA</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    placeholder="Balance"
+                    value={newAccount.balance}
+                    onChange={(e) => setNewAccount(prev => ({ ...prev, balance: e.target.value }))}
+                    className="w-32"
+                  />
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center space-x-1">
+                    <Input
+                      type="number"
+                      value={newAccount.stocksPct}
+                      onChange={(e) => setNewAccount(prev => ({ ...prev, stocksPct: e.target.value }))}
+                      className="w-16"
+                      min={0}
+                      max={100}
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Button onClick={handleAddAccount} disabled={!newAccount.name.trim()} size="sm">
+                    <Plus className="h-3 w-3 mr-1" /> Add
+                  </Button>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {accountsWithHoldings.length === 0 && isReady && (
+          <div className="text-center py-8">
+            <Building className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium mb-2">No accounts yet</h3>
+            <p className="text-muted-foreground">Add your first account above to start projecting your retirement.</p>
           </div>
-
-          {/* Empty state */}
-          {accountsWithHoldings.length === 0 && isReady && (
-            <div className="text-center py-8">
-              <Building className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-2">No accounts yet</h3>
-              <p className="text-muted-foreground mb-4">
-                Add your first account to start tracking holdings and projecting your retirement.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Transaction form now inline in account detail view */}
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
