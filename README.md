@@ -1,142 +1,91 @@
-# RetirePlan 🏦
+# RetirePlan
 
 [![Tests](https://github.com/Ficke/retirement-planner/actions/workflows/test.yml/badge.svg)](https://github.com/Ficke/retirement-planner/actions/workflows/test.yml)
 
-> A modern, academically-grounded retirement planning tool built with Next.js and TypeScript
+Monte Carlo retirement simulator with a Rust computation engine and a Next.js frontend. Models tax-aware withdrawals, Social Security claiming strategies, and correlated asset returns across thousands of scenarios.
 
-RetirePlan helps you model retirement outcomes using Monte Carlo simulations, progressive tax calculations, and sophisticated withdrawal strategies. Plan your financial future with confidence using real market data and proven methodologies.
-
-## ✨ Features
-
-- 🎯 **Monte Carlo Projections** - Run thousands of scenarios to model market uncertainty
-- 🚀 **High-Performance Rust Engine** - Server-side simulations 10x faster than JavaScript
-- 💰 **Multi-Account Support** - Traditional 401k, Roth IRA, HSA, and taxable accounts
-- 📊 **Tax-Aware Withdrawals** - Optimized withdrawal strategies with progressive tax calculations
-- 🔄 **Social Security Integration** - Estimate benefits with flexible claiming strategies
-- 📈 **Interactive Visualizations** - Wealth projections with confidence bands and success probability
-- ⚡ **Real-time Updates** - Instant recalculation as you adjust parameters
-- 🔒 **Privacy-First** - Optional client-side calculations for sensitive data
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Node.js** 18+ ([Download](https://nodejs.org/))
-- **pnpm** ([Install guide](https://pnpm.io/installation))
-- **Rust** (for simulation service) ([Install guide](https://rustup.rs/))
-- **Google Cloud CLI** ([Install guide](https://cloud.google.com/sdk/docs/install))
-- **Neon PostgreSQL** account ([Sign up](https://neon.tech)) - Free tier available
-
-### Installation
+## Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/Ficke/retirement-planner.git
 cd retirement-planner
-
-# Install dependencies
 pnpm install
-
-# Interactive setup (walks you through env config)
-node scripts/setup
-
-# Or, if you have GCP access, pull secrets directly:
-gcloud auth login
-./scripts/pull-secrets.sh
+node scripts/setup          # interactive env config
 ```
 
-The setup script creates `apps/web/.env.local` with database URL, Firebase credentials, and other required config. Alternatively, `pull-secrets.sh` pulls everything from GCP Secret Manager.
+If you have GCP access, you can pull secrets directly instead:
 
-### Running the Development Environment
-
-The application consists of two services that run in parallel:
-
-#### 1. Next.js Web Application (port 3000)
 ```bash
-pnpm dev
+gcloud auth login && ./scripts/pull-secrets.sh
 ```
 
-#### 2. Rust Simulation Service (port 8081)
+Then start both services:
+
 ```bash
-cd rust-simulation-service
-cargo run
+pnpm dev                            # Next.js on :3000
+cd rust-simulation-service && cargo run  # Rust engine on :8081
 ```
 
-**Recommended:** Run both services in separate terminal windows.
+The Rust service is optional — the app falls back to client-side Web Workers automatically.
 
-Open [http://localhost:3000](http://localhost:3000) to view the application.
+> **Note:** Don't export `DATABASE_URL` in your shell. It will override `.env.local`.
 
-### First-Time Setup Notes
+## Architecture
 
-- The **secrets script** pulls all configuration from GCP Secret Manager (database URL, API keys, Firebase credentials)
-- **Migrations** will apply automatically when you first start the Next.js app
-- The **Rust service** provides high-performance Monte Carlo simulations (10x faster than JavaScript)
-- If the Rust service is unavailable, the app will gracefully fall back to client-side calculations
+```
+apps/web/                    Next.js frontend + API routes
+  src/state/usePlan.ts       Zustand store, simulation orchestration
+  src/engine/projection.ts   Single-path retirement projection
+  src/workers/mc.worker.ts   Monte Carlo Web Worker (client-side fallback)
+  src/services/simulation.ts Routes to Rust or client-side engine
 
-**Important:** Don't have a `DATABASE_URL` environment variable set in your shell - it will override `.env.local`.
+rust-simulation-service/     Rust Monte Carlo engine
+  src/simulation/            Projection, Monte Carlo, tax logic
+```
 
-## 📋 Available Scripts
+**Data model** — Accounts store a balance and a stock/bond allocation. That's it. No transactions, snapshots, or holdings tracking.
 
-### Next.js Web Application
+**Simulation** — 5,000 Monte Carlo paths with historical bootstrapping. Server-first (Rust + Rayon), with automatic client-side fallback. Users can toggle this via a preference.
 
-| Command | Description |
-|---------|-------------|
-| `pnpm dev` | Start development server with hot reload |
-| `pnpm build` | Build optimized production bundle |
-| `pnpm start` | Start production server |
-| `pnpm test` | Run unit tests with Vitest |
-| `pnpm test:ui` | Run unit tests with UI |
-| `pnpm e2e` | Run end-to-end tests with Playwright |
-| `pnpm e2e:ui` | Run end-to-end tests with UI |
-| `pnpm typecheck` | Run TypeScript type checking |
-| `pnpm lint` | Run ESLint |
+**State** — `plan.accounts` is the single source of truth. Profile settings auto-persist to localStorage immediately and to the database every 30 seconds. Generation counters discard stale simulation results.
 
-### Rust Simulation Service
+## Tech Stack
 
-| Command | Description |
-|---------|-------------|
-| `cargo run` | Start simulation service (from rust-simulation-service/) |
-| `cargo build --release` | Build optimized production binary |
-| `cargo test` | Run Rust unit tests |
+| Layer | Stack |
+|-------|-------|
+| Frontend | Next.js 14, TypeScript, Tailwind + shadcn/ui, Zustand, Recharts |
+| Simulation | Rust (Warp + Rayon), Web Workers (fallback) |
+| Data | PostgreSQL (Neon), Firebase Auth |
+| Infra | Google Cloud Run, Cloud Build |
+| Testing | Vitest, Testing Library, Playwright |
 
-## 🏗️ Tech Stack
+## Scripts
 
-### Frontend
-- **Framework:** Next.js 14 (App Router)
-- **Language:** TypeScript
-- **Styling:** Tailwind CSS + shadcn/ui
-- **State:** Zustand
-- **Charts:** Recharts
-- **Testing:** Vitest + Testing Library + Playwright
-- **Package Manager:** pnpm
+```bash
+pnpm dev              # dev server
+pnpm build            # production build
+pnpm test             # unit tests
+pnpm e2e              # end-to-end tests
+pnpm typecheck        # tsc --noEmit
+pnpm lint             # eslint
+```
 
-### Backend
-- **Simulation Engine:** Rust (Warp + Rayon)
-- **Database:** PostgreSQL (Neon)
-- **Authentication:** Firebase Auth
-- **Deployment:** Google Cloud Run + Cloud Build
+```bash
+# from rust-simulation-service/
+cargo run             # start engine
+cargo test            # unit tests
+cargo build --release # optimized binary
+```
 
-## 🎮 How to Use
+## Methodology
 
-1. **📝 Inputs** - Enter your age, income, expenses, and retirement goals
-2. **💳 Accounts** - Add your accounts with balances and stock/bond allocation percentages
-3. **⚙️ Assumptions** - Adjust market return expectations and economic parameters
-4. **📊 Results** - View your retirement projections with success probability and wealth trajectories
+- **Returns** — Correlated normal distributions with fat-tail adjustments
+- **Inflation** — Explicit CPI modeling for real vs. nominal calculations
+- **Taxes** — Progressive federal/state brackets with capital gains stacking
+- **Social Security** — AIME/PIA calculations with claiming age adjustments
+- **Withdrawals** — Tax-optimized ordering: Taxable, Traditional, Roth
+- **Risk of ruin** — Fails if portfolio goes negative at any point, not just terminal wealth
 
-## 🧮 Methodology
+## License
 
-RetirePlan uses academically sound financial modeling:
-
-- **Asset Returns:** Correlated normal distributions with fat-tail adjustments
-- **Inflation:** Explicit CPI modeling for real vs. nominal calculations  
-- **Taxes:** Progressive federal/state brackets with capital gains stacking
-- **Social Security:** AIME/PIA calculations with claiming age adjustments
-- **Withdrawals:** Tax-optimized withdrawal order (Taxable → Traditional → Roth)
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-Built with ❤️ for better retirement planning
+MIT
