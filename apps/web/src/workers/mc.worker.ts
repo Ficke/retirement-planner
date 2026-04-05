@@ -335,13 +335,30 @@ async function runSimulation(
     }
   }
 
+    // Extract median path: find the simulation path closest to median terminal wealth
+    const medianTerminalWealth = terminalWealths[p50Index];
+    let medianPath: PathProjection[] = [];
+    if (allProjections.length > 0) {
+      let closestDistance = Infinity;
+      for (const projections of allProjections) {
+        const lastYear = projections[projections.length - 1];
+        if (!lastYear) continue;
+        const distance = Math.abs(lastYear.portfolioValue - medianTerminalWealth);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          medianPath = projections;
+        }
+      }
+    }
+
     return {
       successProbability: successCount / paths,
-      medianTerminalWealth: terminalWealths[p50Index],
+      medianTerminalWealth,
       percentile5TerminalWealth: terminalWealths[p5Index],
       percentile10TerminalWealth: terminalWealths[p10Index],
       percentile90TerminalWealth: terminalWealths[p90Index],
       yearlyProjections,
+      medianPath,
       terminalWealthDistribution: terminalWealths,
       riskOfRuin: ruinCount / paths,
       wealthThresholds: {
