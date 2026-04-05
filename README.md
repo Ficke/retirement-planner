@@ -10,13 +10,7 @@ Monte Carlo retirement simulator with a Rust computation engine and a Next.js fr
 git clone https://github.com/Ficke/retirement-planner.git
 cd retirement-planner
 pnpm install
-node scripts/setup          # interactive env config
-```
-
-If you have GCP access, you can pull secrets directly instead:
-
-```bash
-gcloud auth login && ./scripts/pull-secrets.sh
+pnpm bootstrap              # auto-pulls from GCP/Firebase CLIs, or prompts manually
 ```
 
 Then start both services:
