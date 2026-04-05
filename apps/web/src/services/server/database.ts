@@ -474,6 +474,50 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
       'DROP TABLE IF EXISTS user_profiles',
     ],
   },
+  {
+    version: 10,
+    name: 'Use Firebase UID as users primary key',
+    up: [
+      // Drop foreign keys first
+      `ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_user_id_fkey`,
+      `ALTER TABLE user_profiles DROP CONSTRAINT IF EXISTS user_profiles_user_id_fkey`,
+
+      // Add new TEXT id column populated from firebase_uid
+      `ALTER TABLE users ADD COLUMN new_id TEXT`,
+      `UPDATE users SET new_id = firebase_uid WHERE firebase_uid IS NOT NULL`,
+      `UPDATE users SET new_id = id::TEXT WHERE firebase_uid IS NULL`,
+
+      // Update FK columns in child tables to reference the new TEXT id
+      `ALTER TABLE accounts ADD COLUMN new_user_id TEXT`,
+      `UPDATE accounts SET new_user_id = (SELECT new_id FROM users WHERE users.id = accounts.user_id)`,
+      `ALTER TABLE accounts DROP COLUMN user_id`,
+      `ALTER TABLE accounts RENAME COLUMN new_user_id TO user_id`,
+
+      `ALTER TABLE user_profiles ADD COLUMN new_user_id TEXT`,
+      `UPDATE user_profiles SET new_user_id = (SELECT new_id FROM users WHERE users.id = user_profiles.user_id)`,
+      `ALTER TABLE user_profiles DROP COLUMN user_id`,
+      `ALTER TABLE user_profiles RENAME COLUMN new_user_id TO user_id`,
+
+      // Swap primary key on users
+      `ALTER TABLE users DROP CONSTRAINT users_pkey`,
+      `ALTER TABLE users DROP COLUMN id`,
+      `ALTER TABLE users RENAME COLUMN new_id TO id`,
+      `ALTER TABLE users ADD PRIMARY KEY (id)`,
+      `ALTER TABLE users DROP COLUMN IF EXISTS firebase_uid`,
+      `DROP INDEX IF EXISTS idx_users_firebase_uid`,
+
+      // Re-add foreign keys as TEXT references
+      `ALTER TABLE accounts ADD CONSTRAINT accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+      `ALTER TABLE user_profiles ADD CONSTRAINT user_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+      `ALTER TABLE user_profiles ADD CONSTRAINT user_profiles_user_id_key UNIQUE (user_id)`,
+
+      // Drop legacy columns no longer needed
+      `ALTER TABLE users DROP COLUMN IF EXISTS password_hash`,
+      `ALTER TABLE users DROP COLUMN IF EXISTS email_verified`,
+      `ALTER TABLE users DROP COLUMN IF EXISTS image`,
+    ],
+    down: [],
+  },
 ];
 
 // PostgreSQL implementation

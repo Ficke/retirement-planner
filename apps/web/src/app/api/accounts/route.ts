@@ -18,11 +18,8 @@ export async function GET() {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Filter accounts by firebase_uid (user.id is now Firebase UID)
     const result = await db.query(`
-      SELECT a.* FROM accounts a
-      JOIN users u ON a.user_id = u.id
-      WHERE u.firebase_uid = $1
+      SELECT * FROM accounts WHERE user_id = $1
     `, [user.id]);
 
     // Map raw database rows to Account objects with proper field mapping
@@ -76,29 +73,14 @@ export async function POST(request: NextRequest) {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Create account and assign to logged-in user
     const account = await db.createAccount(data);
 
-    // Get database user_id from firebase_uid
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE firebase_uid = $1',
-      [user.id]
-    );
-    
-    if (userResult.rows.length === 0) {
-      return NextResponse.json(
-        { error: 'User not found in database' },
-        { status: 404 }
-      );
-    }
-
-    // Update account with user_id
+    // Assign account to logged-in user
     await db.query(
       'UPDATE accounts SET user_id = $1 WHERE id = $2',
-      [userResult.rows[0].id, account.id]
+      [user.id, account.id]
     );
 
-    // Fetch and return updated account
     const updatedAccount = await db.getAccount(account.id);
 
     return NextResponse.json(updatedAccount, { status: 201 });
