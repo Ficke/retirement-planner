@@ -1,20 +1,12 @@
 /**
  * Unified database service with abstraction layer for SQLite/Postgres compatibility.
- * Handles all persistent data: accounts, snapshots, transactions, and historical prices.
+ * Handles all persistent data: accounts and user profiles.
  * Designed for easy migration from SQLite to Postgres.
  */
 
 import type {
   Account,
-  AccountSnapshot,
-  CatchUpCalculation,
   CreateAccountData,
-  CreateSnapshotData,
-  AccountTransaction,
-  CreateAccountTransactionData,
-  TransactionType,
-  HoldingsSnapshot,
-  CreateHoldingsSnapshotData,
 } from '@/domain/types';
 
 // Database abstraction layer interfaces
@@ -34,31 +26,6 @@ export interface DatabaseMigration {
   down: string[];
 }
 
-// Price data interfaces
-export interface PriceRecord {
-  id?: number;
-  symbol: string;
-  date: string; // YYYY-MM-DD format
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  source: 'polygon' | 'fallback' | 'manual' | 'yahoo-finance' | 'transaction';
-  fetched_at: string; // ISO timestamp
-  created_at?: string;
-}
-
-export interface CurrentPriceRecord {
-  id?: number;
-  symbol: string;
-  price: number;
-  market_status: 'open' | 'closed' | 'extended_hours';
-  source: 'polygon' | 'fallback';
-  fetched_at: string; // ISO timestamp
-  created_at?: string;
-}
-
 // Unified database service interface
 export interface UnifiedDatabaseService {
   // Core database operations
@@ -74,62 +41,17 @@ export interface UnifiedDatabaseService {
 
   // Raw query access (for complex queries)
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
-  // User helpers
-  getUserIdFromFirebaseUid(firebaseUid: string): Promise<string | null>;
 
-  // Unified Accounts
+  // User Profile Settings
+  getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> } | null>;
+  saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }): Promise<void>;
+
+  // Accounts
   createAccount(data: CreateAccountData): Promise<Account>;
   getAccounts(): Promise<Account[]>;
   getAccount(id: string): Promise<Account | null>;
-  updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'balance' | 'assetWeights' | 'taxable'>>): Promise<Account>;
+  updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account>;
   deleteAccount(id: string): Promise<void>;
-
-  // Account Transactions
-  createAccountTransaction(data: CreateAccountTransactionData): Promise<AccountTransaction>;
-  getAccountTransactions(accountId: string): Promise<AccountTransaction[]>;
-  updateAccountTransaction(id: string, updates: Partial<Omit<AccountTransaction, 'id' | 'accountId' | 'createdAt'>>): Promise<AccountTransaction>;
-  deleteAccountTransaction(id: string): Promise<void>;
-  findDuplicateTransaction(accountId: string, symbol: string, shares: number, transactionDate: string, transactionType: string): Promise<AccountTransaction | null>;
-
-  // Account Snapshots
-  createSnapshot(data: CreateSnapshotData): Promise<AccountSnapshot>;
-  getSnapshots(accountId?: string): Promise<AccountSnapshot[]>;
-  getSnapshot(id: string): Promise<AccountSnapshot | null>;
-  getLatestSnapshot(accountId: string): Promise<AccountSnapshot | null>;
-  deleteSnapshot(id: string): Promise<void>;
-
-  // Catch-up Calculations
-  saveCatchUpCalculation(calculation: CatchUpCalculation): Promise<void>;
-  getCatchUpCalculation(snapshotId: string): Promise<CatchUpCalculation | null>;
-
-  // Holdings Snapshots Cache
-  createHoldingsSnapshot(data: CreateHoldingsSnapshotData): Promise<HoldingsSnapshot>;
-  getHoldingsSnapshots(accountId: string, asOfDate?: string): Promise<HoldingsSnapshot[]>;
-  getLatestHoldingsSnapshots(accountId: string, beforeDate?: string): Promise<HoldingsSnapshot[]>;
-  deleteHoldingsSnapshots(accountId: string, afterDate?: string): Promise<void>;
-
-  // Historical Prices (permanent storage)
-  insertHistoricalPrice(record: Omit<PriceRecord, 'id' | 'created_at'>): Promise<void>;
-  insertHistoricalPrices(records: Omit<PriceRecord, 'id' | 'created_at'>[]): Promise<void>;
-  getHistoricalPrice(symbol: string, date: string): Promise<PriceRecord | null>;
-  getHistoricalPriceRange(symbol: string, startDate: string, endDate: string): Promise<PriceRecord[]>;
-  hasHistoricalPrice(symbol: string, date: string): Promise<boolean>;
-
-  // Current Prices (frequently updated)
-  insertCurrentPrice(record: Omit<CurrentPriceRecord, 'id' | 'created_at'>): Promise<void>;
-  getCurrentPrice(symbol: string): Promise<CurrentPriceRecord | null>;
-  getCurrentPrices(symbols: string[]): Promise<Record<string, CurrentPriceRecord>>;
-
-  // Analytics and Stats
-  getDatabaseStats(): Promise<{
-    accountCount: number;
-    snapshotCount: number;
-    transactionCount: number;
-    historicalPriceCount: number;
-    currentPriceCount: number;
-    uniqueSymbols: string[];
-    dateRange: { earliest: string; latest: string } | null;
-  }>;
 
   // OCR Feedback
   saveOcrFeedback(feedback: {
@@ -516,6 +438,42 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
       `ALTER TABLE users DROP COLUMN IF EXISTS firebase_uid`,
     ],
   },
+  {
+    version: 8,
+    name: 'Add balance and allocation columns to accounts',
+    up: [
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS stocks_weight REAL NOT NULL DEFAULT 0.6`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS bonds_weight REAL NOT NULL DEFAULT 0.4`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance_as_of DATE`,
+    ],
+    down: [
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS balance_as_of`,
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS bonds_weight`,
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS stocks_weight`,
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS balance`,
+    ],
+  },
+  {
+    version: 9,
+    name: 'Add user_profiles table for planning settings',
+    up: [
+      `CREATE TABLE IF NOT EXISTS user_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        profile JSONB NOT NULL DEFAULT '{}',
+        social_security JSONB NOT NULL DEFAULT '{}',
+        assumptions JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id)`,
+    ],
+    down: [
+      'DROP INDEX IF EXISTS idx_user_profiles_user_id',
+      'DROP TABLE IF EXISTS user_profiles',
+    ],
+  },
 ];
 
 // PostgreSQL implementation
@@ -523,6 +481,8 @@ import { Pool, PoolClient } from 'pg';
 
 class PostgreSQLConnection implements DatabaseConnection {
   private pool: Pool;
+  // When set, all operations use this client (inside a transaction)
+  private transactionClient: PoolClient | null = null;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
@@ -536,32 +496,39 @@ class PostgreSQLConnection implements DatabaseConnection {
     });
   }
 
+  private async getClient(): Promise<{ client: PoolClient; release: boolean }> {
+    if (this.transactionClient) {
+      return { client: this.transactionClient, release: false };
+    }
+    return { client: await this.pool.connect(), release: true };
+  }
+
   async query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.getClient();
     try {
       const result = await client.query(sql, params);
       return result.rows as T[];
     } finally {
-      client.release();
+      if (release) client.release();
     }
   }
 
   async queryOne<T = any>(sql: string, params: any[] = []): Promise<T | null> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.getClient();
     try {
       const result = await client.query(sql, params);
       return result.rows[0] || null;
     } finally {
-      client.release();
+      if (release) client.release();
     }
   }
 
   async execute(sql: string, params: any[] = []): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.getClient();
     try {
       await client.query(sql, params);
     } finally {
-      client.release();
+      if (release) client.release();
     }
   }
 
@@ -585,6 +552,7 @@ class PostgreSQLConnection implements DatabaseConnection {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      this.transactionClient = client;
       const result = await callback();
       await client.query('COMMIT');
       return result;
@@ -592,6 +560,7 @@ class PostgreSQLConnection implements DatabaseConnection {
       await client.query('ROLLBACK');
       throw error;
     } finally {
+      this.transactionClient = null;
       client.release();
     }
   }
@@ -603,21 +572,19 @@ class PostgreSQLConnection implements DatabaseConnection {
 
 class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
   private connection: PostgreSQLConnection | null = null;
+  private readonly connectionString: string;
   private currentVersion = 0;
 
   constructor() {
-    // Lazy initialization - don't validate DATABASE_URL until actually needed
-  }
-  
-  private getConnectionString(): string {
-    // Lazy validation - only check when actually connecting
+    // Use environment variable for database connection
+    // Validation happens in lib/env.ts - will throw if not set
     if (!process.env.DATABASE_URL) {
       throw new Error(
         'DATABASE_URL environment variable is required. ' +
         'Please set it in your .env.local file or environment.'
       );
     }
-    return process.env.DATABASE_URL;
+    this.connectionString = process.env.DATABASE_URL;
   }
 
   async initialize(): Promise<void> {
@@ -628,8 +595,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
     try {
       // Initialize connection
-      const connectionString = this.getConnectionString();
-      this.connection = new PostgreSQLConnection(connectionString);
+      this.connection = new PostgreSQLConnection(this.connectionString);
 
       // Test connection
       await this.connection.query('SELECT 1');
@@ -637,11 +603,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       // Run migrations
       await this.migrate();
 
-      console.log(`Database initialized with PostgreSQL connection: ${connectionString.replace(/\/\/.*@/, '//***@')}`);
-
-      // Log stats
-      const stats = await this.getDatabaseStats();
-      console.log('Database stats:', stats);
+      console.log(`Database initialized with PostgreSQL connection: ${this.connectionString.replace(/\/\/.*@/, '//***@')}`);
 
     } catch (error) {
       console.error('Failed to initialize database:', error);
@@ -669,6 +631,24 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+
+    // Repair: if migration v8 is recorded but columns are missing (due to prior
+    // broken transaction implementation), remove the record so it re-runs.
+    const hasV8 = await this.connection!.queryOne<{ version: number }>(`
+      SELECT version FROM schema_migrations WHERE version = 8
+    `);
+    if (hasV8) {
+      const colCheck = await this.connection!.queryOne<{ exists: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'accounts' AND column_name = 'stocks_weight'
+        ) as exists
+      `);
+      if (!colCheck?.exists) {
+        console.log('Migration v8 recorded but columns missing — re-applying');
+        await this.connection!.execute(`DELETE FROM schema_migrations WHERE version = 8`);
+      }
+    }
 
     // Get current version
     const versionResult = await this.connection!.queryOne<{ version: number }>(`
@@ -741,36 +721,23 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       type: 'postgres',
       version: this.currentVersion,
       sizeMB,
-      location: this.getConnectionString().replace(/\/\/.*@/, '//***@'),
+      location: this.connectionString.replace(/\/\/.*@/, '//***@'),
     };
   }
 
-  // === USER HELPER METHODS ===
-  
-  /**
-   * Get database user ID from Firebase UID
-   * Helper for transitioning from database user lookup to Firebase-only auth
-   */
-  async getUserIdFromFirebaseUid(firebaseUid: string): Promise<string | null> {
-    await this.ensureInitialized();
-    
-    const result = await this.query<{ id: string }>(
-      'SELECT id FROM users WHERE firebase_uid = $1',
-      [firebaseUid]
-    );
-    
-    return result.rows.length > 0 ? result.rows[0].id : null;
-  }
-
-  // === UNIFIED ACCOUNT METHODS (accounts table) ===
+  // === ACCOUNT METHODS ===
   async createAccount(data: CreateAccountData): Promise<Account> {
     await this.ensureInitialized();
 
+    const balance = data.balance ?? 0;
+    const stocksWeight = data.stocksPct ?? 0.6;
+    const bondsWeight = data.bondsPct ?? 0.4;
+
     const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO accounts (name, institution, account_type)
-      VALUES ($1, $2, $3)
+      INSERT INTO accounts (name, institution, account_type, balance, stocks_weight, bonds_weight)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id
-    `, [data.name, data.institution, data.type]);
+    `, [data.name, data.institution, data.type, balance, stocksWeight, bondsWeight]);
 
     if (!result?.id) throw new Error('Failed to create account');
 
@@ -800,7 +767,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     return row ? this.mapRowToAccount(row) : null;
   }
 
-  async updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'balance' | 'assetWeights' | 'taxable'>>): Promise<Account> {
+  async updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account> {
     await this.ensureInitialized();
 
     const updateFields: string[] = [];
@@ -818,6 +785,20 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     if (updates.type !== undefined) {
       updateFields.push(`account_type = $${paramIndex++}`);
       updateValues.push(updates.type);
+    }
+    if (updates.balance !== undefined) {
+      updateFields.push(`balance = $${paramIndex++}`);
+      updateValues.push(updates.balance);
+    }
+    if (updates.assetWeights !== undefined) {
+      updateFields.push(`stocks_weight = $${paramIndex++}`);
+      updateValues.push(updates.assetWeights.stocks);
+      updateFields.push(`bonds_weight = $${paramIndex++}`);
+      updateValues.push(updates.assetWeights.bonds);
+    }
+    if (updates.balanceAsOf !== undefined) {
+      updateFields.push(`balance_as_of = $${paramIndex++}`);
+      updateValues.push(updates.balanceAsOf);
     }
 
     if (updateFields.length === 0) {
@@ -849,579 +830,57 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     `, [id]);
   }
 
-  // Account Transactions implementation
-  async createAccountTransaction(data: CreateAccountTransactionData): Promise<AccountTransaction> {
+  // === USER PROFILE METHODS ===
+  async getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> } | null> {
     await this.ensureInitialized();
 
-    const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO account_transactions (
-        account_id, symbol, transaction_type, shares, price_per_share, transaction_date, description
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id
-    `, [
-      data.accountId,
-      data.symbol.toUpperCase(),
-      data.transactionType,
-      data.shares,
-      data.pricePerShare ?? null,
-      data.transactionDate,
-      data.description ?? null,
-    ]);
+    const row = await this.connection!.queryOne<{
+      profile: Record<string, unknown>;
+      social_security: Record<string, unknown>;
+      assumptions: Record<string, unknown>;
+    }>(`
+      SELECT profile, social_security, assumptions FROM user_profiles WHERE user_id = $1
+    `, [userId]);
 
-    const transaction = await this.connection!.queryOne<any>(`
-      SELECT * FROM account_transactions WHERE id = $1
-    `, [result!.id]);
+    if (!row) return null;
 
-    return this.mapRowToAccountTransaction(transaction!);
-  }
-
-  async getAccountTransactions(accountId: string): Promise<AccountTransaction[]> {
-    await this.ensureInitialized();
-
-    const rows = await this.connection!.query<any>(`
-      SELECT * FROM account_transactions
-      WHERE account_id = $1
-      ORDER BY transaction_date DESC, created_at DESC
-    `, [accountId]);
-
-    return rows.map(row => this.mapRowToAccountTransaction(row));
-  }
-
-  async updateAccountTransaction(
-    id: string,
-    updates: Partial<Omit<AccountTransaction, 'id' | 'accountId' | 'createdAt'>>
-  ): Promise<AccountTransaction> {
-    await this.ensureInitialized();
-
-    const setClauses: string[] = [];
-    const values: any[] = [];
-    let paramIndex = 1;
-
-    if (updates.symbol !== undefined) {
-      setClauses.push(`symbol = $${paramIndex++}`);
-      values.push(updates.symbol.toUpperCase());
-    }
-    if (updates.transactionType !== undefined) {
-      setClauses.push(`transaction_type = $${paramIndex++}`);
-      values.push(updates.transactionType);
-    }
-    if (updates.shares !== undefined) {
-      setClauses.push(`shares = $${paramIndex++}`);
-      values.push(updates.shares);
-    }
-    if (updates.pricePerShare !== undefined) {
-      setClauses.push(`price_per_share = $${paramIndex++}`);
-      values.push(updates.pricePerShare);
-    }
-    if (updates.transactionDate !== undefined) {
-      setClauses.push(`transaction_date = $${paramIndex++}`);
-      values.push(updates.transactionDate);
-    }
-    if (updates.description !== undefined) {
-      setClauses.push(`description = $${paramIndex++}`);
-      values.push(updates.description);
-    }
-
-    if (setClauses.length === 0) {
-      throw new Error('No updates provided');
-    }
-
-    values.push(id);
-
-    await this.connection!.execute(`
-      UPDATE account_transactions
-      SET ${setClauses.join(', ')}
-      WHERE id = $${paramIndex}
-    `, values);
-
-    const transaction = await this.connection!.queryOne<any>(`
-      SELECT * FROM account_transactions WHERE id = $1
-    `, [id]);
-
-    if (!transaction) {
-      throw new Error('Transaction not found after update');
-    }
-
-    return this.mapRowToAccountTransaction(transaction);
-  }
-
-  async deleteAccountTransaction(id: string): Promise<void> {
-    await this.ensureInitialized();
-
-    await this.connection!.execute(`
-      DELETE FROM account_transactions WHERE id = $1
-    `, [id]);
-  }
-
-  async findDuplicateTransaction(
-    accountId: string,
-    symbol: string,
-    shares: number,
-    transactionDate: string,
-    transactionType: string
-  ): Promise<AccountTransaction | null> {
-    await this.ensureInitialized();
-
-    // Look for transactions with exact same key fields
-    // Allow for small floating point differences in shares (within 0.0001)
-    const row = await this.connection!.queryOne<any>(`
-      SELECT * FROM account_transactions
-      WHERE account_id = $1
-        AND symbol = $2
-        AND transaction_type = $3
-        AND transaction_date = $4
-        AND ABS(shares - $5) < 0.0001
-      ORDER BY created_at DESC
-      LIMIT 1
-    `, [accountId, symbol.toUpperCase(), transactionType, transactionDate, shares]);
-
-    if (!row) {
-      return null;
-    }
-
-    return this.mapRowToAccountTransaction(row);
-  }
-
-  // Helper method to map database row to AccountTransaction
-  private mapRowToAccountTransaction(row: any): AccountTransaction {
     return {
-      id: row.id,
-      accountId: row.account_id,
-      symbol: row.symbol,
-      transactionType: row.transaction_type as TransactionType,
-      shares: parseFloat(row.shares),
-      pricePerShare: row.price_per_share ? parseFloat(row.price_per_share) : undefined,
-      transactionDate: row.transaction_date,
-      description: row.description ?? undefined,
-      createdAt: row.created_at,
+      profile: row.profile,
+      socialSecurity: row.social_security,
+      assumptions: row.assumptions,
     };
   }
 
-  // Helper method to map database row to unified Account
+  async saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }): Promise<void> {
+    await this.ensureInitialized();
+
+    await this.connection!.execute(`
+      INSERT INTO user_profiles (user_id, profile, social_security, assumptions)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id) DO UPDATE SET
+        profile = $2,
+        social_security = $3,
+        assumptions = $4,
+        updated_at = NOW()
+    `, [userId, JSON.stringify(data.profile), JSON.stringify(data.socialSecurity), JSON.stringify(data.assumptions)]);
+  }
+
   private mapRowToAccount(row: any): Account {
-    // TODO: Calculate balance and assetWeights from transactions
-    // For now, return with default values
     return {
       id: row.id,
       name: row.name,
       institution: row.institution,
       type: row.account_type,
-      user_id: row.user_id, // Owner of this account (for multi-user support)
-      balance: 0, // TODO: Calculate from account_transactions
-      assetWeights: { stocks: 0.6, bonds: 0.4 }, // TODO: Calculate from holdings
+      user_id: row.user_id,
+      balance: Number(row.balance) || 0,
+      assetWeights: {
+        stocks: Number(row.stocks_weight) || 0.6,
+        bonds: Number(row.bonds_weight) || 0.4,
+      },
+      balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-    };
-  }
-
-  // Account Snapshots implementation (DEPRECATED - will be removed in migration 5)
-  async createSnapshot(data: CreateSnapshotData): Promise<AccountSnapshot> {
-    await this.ensureInitialized();
-
-    const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO account_snapshots (
-        account_id, balance, snapshot_date, stocks_weight, bonds_weight
-      ) VALUES ($1, $2, $3, $4, $5)
-      RETURNING id
-    `, [
-      data.accountId,
-      data.balance,
-      data.snapshotDate,
-      data.stocksWeight,
-      data.bondsWeight,
-    ]);
-
-    if (!result?.id) throw new Error('Failed to create snapshot');
-
-    const snapshot = await this.getSnapshot(result.id);
-    if (!snapshot) throw new Error('Failed to create snapshot');
-    return snapshot;
-  }
-
-  async getSnapshots(accountId?: string): Promise<AccountSnapshot[]> {
-    await this.ensureInitialized();
-
-    const sql = accountId
-      ? 'SELECT * FROM account_snapshots WHERE account_id = $1 ORDER BY snapshot_date DESC'
-      : 'SELECT * FROM account_snapshots ORDER BY snapshot_date DESC';
-
-    const params = accountId ? [accountId] : [];
-    const rows = await this.connection!.query<any>(sql, params);
-
-    return rows.map(this.mapRowToAccountSnapshot);
-  }
-
-  async getSnapshot(id: string): Promise<AccountSnapshot | null> {
-    await this.ensureInitialized();
-
-    const row = await this.connection!.queryOne<any>(`
-      SELECT * FROM account_snapshots WHERE id = $1
-    `, [id]);
-
-    return row ? this.mapRowToAccountSnapshot(row) : null;
-  }
-
-  async getLatestSnapshot(accountId: string): Promise<AccountSnapshot | null> {
-    await this.ensureInitialized();
-
-    const row = await this.connection!.queryOne<any>(`
-      SELECT * FROM account_snapshots
-      WHERE account_id = $1
-      ORDER BY snapshot_date DESC
-      LIMIT 1
-    `, [accountId]);
-
-    return row ? this.mapRowToAccountSnapshot(row) : null;
-  }
-
-  async deleteSnapshot(id: string): Promise<void> {
-    await this.ensureInitialized();
-
-    await this.connection!.execute(`DELETE FROM account_snapshots WHERE id = $1`, [id]);
-  }
-
-  // Holdings Snapshots - Smart caching for holdings-based single source of truth
-  async createHoldingsSnapshot(data: CreateHoldingsSnapshotData): Promise<HoldingsSnapshot> {
-    await this.ensureInitialized();
-
-    const result = await this.connection!.queryOne<any>(`
-      INSERT INTO holdings_snapshots (
-        account_id, symbol, shares, average_cost_basis, as_of_date,
-        last_transaction_id, calculation_method
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *
-    `, [
-      data.accountId,
-      data.symbol,
-      data.shares,
-      data.averageCostBasis,
-      data.asOfDate,
-      data.lastTransactionId || null,
-      data.calculationMethod || 'full_calc'
-    ]);
-
-    if (!result) {
-      throw new Error('Failed to create holdings snapshot');
-    }
-
-    return this.mapRowToHoldingsSnapshot(result);
-  }
-
-  async getHoldingsSnapshots(accountId: string, asOfDate?: string): Promise<HoldingsSnapshot[]> {
-    await this.ensureInitialized();
-
-    let query = `
-      SELECT * FROM holdings_snapshots
-      WHERE account_id = $1
-    `;
-    const params: any[] = [accountId];
-
-    if (asOfDate) {
-      query += ` AND as_of_date = $2`;
-      params.push(asOfDate);
-    }
-
-    query += ` ORDER BY symbol, as_of_date DESC`;
-
-    const rows = await this.connection!.query<any>(query, params);
-    return rows.map(row => this.mapRowToHoldingsSnapshot(row));
-  }
-
-  async getLatestHoldingsSnapshots(accountId: string, beforeDate?: string): Promise<HoldingsSnapshot[]> {
-    await this.ensureInitialized();
-
-    let query = `
-      SELECT DISTINCT ON (symbol) *
-      FROM holdings_snapshots
-      WHERE account_id = $1
-    `;
-    const params: any[] = [accountId];
-
-    if (beforeDate) {
-      query += ` AND as_of_date <= $2`;
-      params.push(beforeDate);
-    }
-
-    query += ` ORDER BY symbol, as_of_date DESC`;
-
-    const rows = await this.connection!.query<any>(query, params);
-    return rows.map(row => this.mapRowToHoldingsSnapshot(row));
-  }
-
-  async deleteHoldingsSnapshots(accountId: string, symbol?: string): Promise<void> {
-    await this.ensureInitialized();
-
-    let query = `DELETE FROM holdings_snapshots WHERE account_id = $1`;
-    const params: any[] = [accountId];
-
-    if (symbol) {
-      query += ` AND symbol = $2`;
-      params.push(symbol);
-    }
-
-    await this.connection!.execute(query, params);
-  }
-
-  private mapRowToHoldingsSnapshot(row: any): HoldingsSnapshot {
-    return {
-      id: row.id,
-      accountId: row.account_id,
-      symbol: row.symbol,
-      shares: row.shares,
-      averageCostBasis: row.average_cost_basis,
-      asOfDate: row.as_of_date,
-      lastTransactionId: row.last_transaction_id,
-      calculationMethod: row.calculation_method,
-      createdAt: row.created_at,
-    };
-  }
-
-  private mapRowToAccountSnapshot(row: any): AccountSnapshot {
-    return {
-      id: row.id,
-      accountId: row.account_id,
-      balance: row.balance,
-      snapshotDate: row.snapshot_date,
-      stocksWeight: row.stocks_weight,
-      bondsWeight: row.bonds_weight,
-      createdAt: row.created_at,
-    };
-  }
-
-  async saveCatchUpCalculation(calculation: CatchUpCalculation): Promise<void> {
-    throw new Error('Not implemented yet');
-  }
-
-  async getCatchUpCalculation(snapshotId: string): Promise<CatchUpCalculation | null> {
-    throw new Error('Not implemented yet');
-  }
-
-  // Historical Prices implementation - the core of our growing price database
-  async insertHistoricalPrice(record: Omit<PriceRecord, 'id' | 'created_at'>): Promise<void> {
-    await this.ensureInitialized();
-
-    await this.connection!.execute(`
-      INSERT INTO historical_prices (
-        symbol, date, open, high, low, close, volume, source, fetched_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (symbol, date) DO UPDATE SET
-        open = EXCLUDED.open,
-        high = EXCLUDED.high,
-        low = EXCLUDED.low,
-        close = EXCLUDED.close,
-        volume = EXCLUDED.volume,
-        source = EXCLUDED.source,
-        fetched_at = EXCLUDED.fetched_at
-    `, [
-      record.symbol.toUpperCase(),
-      record.date,
-      record.open,
-      record.high,
-      record.low,
-      record.close,
-      record.volume,
-      record.source,
-      record.fetched_at,
-    ]);
-  }
-
-  async insertHistoricalPrices(records: Omit<PriceRecord, 'id' | 'created_at'>[]): Promise<void> {
-    await this.ensureInitialized();
-    if (records.length === 0) return;
-
-    const params = records.map(record => [
-      record.symbol.toUpperCase(),
-      record.date,
-      record.open,
-      record.high,
-      record.low,
-      record.close,
-      record.volume,
-      record.source,
-      record.fetched_at,
-    ]);
-
-    await this.connection!.executeMany(`
-      INSERT INTO historical_prices (
-        symbol, date, open, high, low, close, volume, source, fetched_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (symbol, date) DO UPDATE SET
-        open = EXCLUDED.open,
-        high = EXCLUDED.high,
-        low = EXCLUDED.low,
-        close = EXCLUDED.close,
-        volume = EXCLUDED.volume,
-        source = EXCLUDED.source,
-        fetched_at = EXCLUDED.fetched_at
-    `, params);
-
-    console.log(`✅ Stored ${records.length} historical price records in database`);
-  }
-
-  async getHistoricalPrice(symbol: string, date: string): Promise<PriceRecord | null> {
-    await this.ensureInitialized();
-
-    const row = await this.connection!.queryOne<any>(`
-      SELECT * FROM historical_prices
-      WHERE symbol = $1 AND date = $2
-    `, [symbol.toUpperCase(), date]);
-
-    return row ? this.mapRowToPriceRecord(row) : null;
-  }
-
-  async getHistoricalPriceRange(symbol: string, startDate: string, endDate: string): Promise<PriceRecord[]> {
-    await this.ensureInitialized();
-
-    const rows = await this.connection!.query<any>(`
-      SELECT * FROM historical_prices
-      WHERE symbol = $1 AND date >= $2 AND date <= $3
-      ORDER BY date ASC
-    `, [symbol.toUpperCase(), startDate, endDate]);
-
-    return rows.map(this.mapRowToPriceRecord);
-  }
-
-  async hasHistoricalPrice(symbol: string, date: string): Promise<boolean> {
-    await this.ensureInitialized();
-
-    const result = await this.connection!.queryOne<{ exists: number }>(`
-      SELECT 1 as exists FROM historical_prices
-      WHERE symbol = $1 AND date = $2
-      LIMIT 1
-    `, [symbol.toUpperCase(), date]);
-
-    return !!result?.exists;
-  }
-
-  // Current Prices implementation - frequently updated latest prices
-  async insertCurrentPrice(record: Omit<CurrentPriceRecord, 'id' | 'created_at'>): Promise<void> {
-    await this.ensureInitialized();
-
-    await this.connection!.execute(`
-      INSERT INTO current_prices (
-        symbol, price, market_status, source, fetched_at
-      ) VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (symbol) DO UPDATE SET
-        price = EXCLUDED.price,
-        market_status = EXCLUDED.market_status,
-        source = EXCLUDED.source,
-        fetched_at = EXCLUDED.fetched_at
-    `, [
-      record.symbol.toUpperCase(),
-      record.price,
-      record.market_status,
-      record.source,
-      record.fetched_at,
-    ]);
-  }
-
-  async getCurrentPrice(symbol: string): Promise<CurrentPriceRecord | null> {
-    await this.ensureInitialized();
-
-    const row = await this.connection!.queryOne<any>(`
-      SELECT * FROM current_prices WHERE symbol = $1
-    `, [symbol.toUpperCase()]);
-
-    return row ? this.mapRowToCurrentPriceRecord(row) : null;
-  }
-
-  async getCurrentPrices(symbols: string[]): Promise<Record<string, CurrentPriceRecord>> {
-    await this.ensureInitialized();
-    if (symbols.length === 0) return {};
-
-    const placeholders = symbols.map(() => '?').join(',');
-    const rows = await this.connection!.query<any>(`
-      SELECT * FROM current_prices
-      WHERE symbol IN (${placeholders})
-    `, symbols.map(s => s.toUpperCase()));
-
-    const result: Record<string, CurrentPriceRecord> = {};
-    for (const row of rows) {
-      const record = this.mapRowToCurrentPriceRecord(row);
-      result[record.symbol] = record;
-    }
-
-    return result;
-  }
-
-  private mapRowToPriceRecord(row: any): PriceRecord {
-    return {
-      id: row.id,
-      symbol: row.symbol,
-      date: row.date,
-      open: row.open,
-      high: row.high,
-      low: row.low,
-      close: row.close,
-      volume: row.volume,
-      source: row.source,
-      fetched_at: row.fetched_at,
-      created_at: row.created_at,
-    };
-  }
-
-  private mapRowToCurrentPriceRecord(row: any): CurrentPriceRecord {
-    return {
-      id: row.id,
-      symbol: row.symbol,
-      price: row.price,
-      market_status: row.market_status,
-      source: row.source,
-      fetched_at: row.fetched_at,
-      created_at: row.created_at,
-    };
-  }
-
-  async getDatabaseStats(): Promise<{
-    accountCount: number;
-    snapshotCount: number;
-    transactionCount: number;
-    historicalPriceCount: number;
-    currentPriceCount: number;
-    uniqueSymbols: string[];
-    dateRange: { earliest: string; latest: string } | null;
-  }> {
-    await this.ensureInitialized();
-
-    const [
-      accountCount,
-      transactionCount,
-      historicalPriceCount,
-      currentPriceCount,
-    ] = await Promise.all([
-      this.connection!.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM accounts'),
-      this.connection!.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM account_transactions'),
-      this.connection!.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM historical_prices'),
-      this.connection!.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM current_prices'),
-    ]);
-
-    const symbolsResult = await this.connection!.query<{ symbol: string }>(`
-      SELECT DISTINCT symbol FROM (
-        SELECT symbol FROM account_transactions
-        UNION
-        SELECT symbol FROM historical_prices
-        UNION
-        SELECT symbol FROM current_prices
-      ) ORDER BY symbol
-    `);
-
-    const dateRangeResult = await this.connection!.queryOne<{ earliest: string | null; latest: string | null }>(`
-      SELECT MIN(date) as earliest, MAX(date) as latest
-      FROM historical_prices
-    `);
-
-    return {
-      accountCount: accountCount?.count || 0,
-      snapshotCount: 0, // Deprecated - snapshots removed
-      transactionCount: transactionCount?.count || 0,
-      historicalPriceCount: historicalPriceCount?.count || 0,
-      currentPriceCount: currentPriceCount?.count || 0,
-      uniqueSymbols: symbolsResult.map(r => r.symbol),
-      dateRange: dateRangeResult?.earliest && dateRangeResult?.latest
-        ? { earliest: dateRangeResult.earliest, latest: dateRangeResult.latest }
-        : null,
     };
   }
 
