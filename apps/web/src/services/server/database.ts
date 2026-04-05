@@ -443,14 +443,14 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
     name: 'Add balance and allocation columns to accounts',
     up: [
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance REAL NOT NULL DEFAULT 0`,
-      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS stocks_weight REAL NOT NULL DEFAULT 0.6`,
-      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS bonds_weight REAL NOT NULL DEFAULT 0.4`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS stocks_pct REAL NOT NULL DEFAULT 0.6`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS bonds_pct REAL NOT NULL DEFAULT 0.4`,
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance_as_of DATE`,
     ],
     down: [
       `ALTER TABLE accounts DROP COLUMN IF EXISTS balance_as_of`,
-      `ALTER TABLE accounts DROP COLUMN IF EXISTS bonds_weight`,
-      `ALTER TABLE accounts DROP COLUMN IF EXISTS stocks_weight`,
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS bonds_pct`,
+      `ALTER TABLE accounts DROP COLUMN IF EXISTS stocks_pct`,
       `ALTER TABLE accounts DROP COLUMN IF EXISTS balance`,
     ],
   },
@@ -685,7 +685,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       const colCheck = await this.connection!.queryOne<{ exists: boolean }>(`
         SELECT EXISTS (
           SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'accounts' AND column_name = 'stocks_weight'
+          WHERE table_name = 'accounts' AND column_name = 'stocks_pct'
         ) as exists
       `);
       if (!colCheck?.exists) {
@@ -778,7 +778,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     const bondsWeight = data.bondsPct ?? 0.4;
 
     const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO accounts (name, institution, account_type, balance, stocks_weight, bonds_weight)
+      INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id
     `, [data.name, data.institution, data.type, balance, stocksWeight, bondsWeight]);
@@ -835,9 +835,9 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       updateValues.push(updates.balance);
     }
     if (updates.assetWeights !== undefined) {
-      updateFields.push(`stocks_weight = $${paramIndex++}`);
+      updateFields.push(`stocks_pct = $${paramIndex++}`);
       updateValues.push(updates.assetWeights.stocks);
-      updateFields.push(`bonds_weight = $${paramIndex++}`);
+      updateFields.push(`bonds_pct = $${paramIndex++}`);
       updateValues.push(updates.assetWeights.bonds);
     }
     if (updates.balanceAsOf !== undefined) {
@@ -918,8 +918,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       user_id: row.user_id,
       balance: Number(row.balance) || 0,
       assetWeights: {
-        stocks: Number(row.stocks_weight) || 0.6,
-        bonds: Number(row.bonds_weight) || 0.4,
+        stocks: Number(row.stocks_pct) || 0.6,
+        bonds: Number(row.bonds_pct) || 0.4,
       },
       balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',

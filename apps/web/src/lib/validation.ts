@@ -7,7 +7,7 @@ import { z } from 'zod';
 // Account validation
 export const CreateAccountSchema = z.object({
   name: z.string().min(1, 'Account name is required').max(100, 'Account name too long'),
-  institution: z.string().min(1, 'Institution is required').max(100, 'Institution name too long'),
+  institution: z.string().max(100, 'Institution name too long').default(''),
   type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA'], {
     message: 'Account type must be Taxable, Traditional, Roth, or HSA',
   }),

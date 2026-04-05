@@ -22,15 +22,18 @@ export async function GET() {
       SELECT * FROM accounts WHERE user_id = $1
     `, [user.id]);
 
-    // Map raw database rows to Account objects with proper field mapping
     const accounts = result.rows.map(row => ({
       id: row.id,
       name: row.name,
       institution: row.institution,
-      type: row.account_type, // Map account_type to type
+      type: row.account_type,
       user_id: row.user_id,
-      balance: 0, // Will be calculated from holdings
-      assetWeights: { stocks: 0.6, bonds: 0.4 }, // Default values
+      balance: Number(row.balance) || 0,
+      assetWeights: {
+        stocks: Number(row.stocks_pct) || 0.6,
+        bonds: Number(row.bonds_pct) || 0.4,
+      },
+      balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',
       createdAt: row.created_at,
       updatedAt: row.updated_at,
