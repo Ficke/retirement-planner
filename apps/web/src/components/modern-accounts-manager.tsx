@@ -67,7 +67,7 @@ export function ModernAccountsManager() {
     if (!newAccount.name.trim()) return;
 
     const balance = parseFloat(newAccount.balance) || 0;
-    const stocksPct = parseFloat(newAccount.stocksPct) / 100 || 0.6;
+    const stocksPct = parseFloat(newAccount.stocksPct) / 100 || 0;
 
     try {
       await createAccount({

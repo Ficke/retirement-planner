@@ -30,8 +30,8 @@ export async function GET() {
       user_id: row.user_id,
       balance: Number(row.balance) || 0,
       assetWeights: {
-        stocks: Number(row.stocks_pct) || 0.6,
-        bonds: Number(row.bonds_pct) || 0.4,
+        stocks: Number(row.stocks_pct),
+        bonds: Number(row.bonds_pct),
       },
       balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',

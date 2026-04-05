@@ -443,8 +443,8 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
     name: 'Add balance and allocation columns to accounts',
     up: [
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance REAL NOT NULL DEFAULT 0`,
-      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS stocks_pct REAL NOT NULL DEFAULT 0.6`,
-      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS bonds_pct REAL NOT NULL DEFAULT 0.4`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS stocks_pct REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS bonds_pct REAL NOT NULL DEFAULT 0`,
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS balance_as_of DATE`,
     ],
     down: [
@@ -774,8 +774,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     await this.ensureInitialized();
 
     const balance = data.balance ?? 0;
-    const stocksWeight = data.stocksPct ?? 0.6;
-    const bondsWeight = data.bondsPct ?? 0.4;
+    const stocksWeight = data.stocksPct ?? 0;
+    const bondsWeight = data.bondsPct ?? 0;
 
     const result = await this.connection!.queryOne<{ id: string }>(`
       INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct)
@@ -918,8 +918,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       user_id: row.user_id,
       balance: Number(row.balance) || 0,
       assetWeights: {
-        stocks: Number(row.stocks_pct) || 0.6,
-        bonds: Number(row.bonds_pct) || 0.4,
+        stocks: Number(row.stocks_pct),
+        bonds: Number(row.bonds_pct),
       },
       balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',
