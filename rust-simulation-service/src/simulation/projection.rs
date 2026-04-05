@@ -374,7 +374,8 @@ pub fn project_scenario(
     }
     
     let terminal_wealth = portfolio_value;
-    let success = terminal_wealth > 0.0;
+    let ever_had_insufficient_funds = projections.iter().any(|p| p.insufficient_funds);
+    let success = terminal_wealth > 0.0 && !ever_had_insufficient_funds;
     
     Ok(PathResult {
         terminal_wealth,

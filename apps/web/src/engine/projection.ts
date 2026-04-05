@@ -327,7 +327,8 @@ export function projectScenario(
   // Single-path projection result - no percentiles or aggregation
   // Monte Carlo worker aggregates multiple paths to create SimulationResult
   const finalWealth = currentPortfolioValue;
-  const success = finalWealth > 0;
+  const everHadInsufficientFunds = yearlyProjections.some(p => p.insufficientFunds);
+  const success = finalWealth > 0 && !everHadInsufficientFunds;
 
   return {
     terminalWealth: finalWealth,
