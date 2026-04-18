@@ -805,7 +805,21 @@ export function SimulationAnalyzer() {
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-xl font-semibold">Scenario Analysis</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-xl font-semibold">Scenario Analysis</CardTitle>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 cursor-help">
+                      lower fidelity
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Each scenario runs 1,000 paths vs. 5,000 for the main simulation — results are directional, not directly comparable.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <p className="text-sm text-muted-foreground mt-1">
               Analyze different strategies to optimize your retirement plan
             </p>

@@ -10,7 +10,6 @@ import { AssumptionsPanel } from "@/components/assumptions-panel";
 import { ResultsPanel } from "@/components/results-panel";
 import { SimulationControls } from "@/components/simulation-controls";
 import { SimulationAnalyzer } from "@/components/SimulationAnalyzer";
-import { DeveloperTools } from "@/components/developer-tools";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMigration } from "@/hooks/useMigration";
 import { useAuth } from "@/lib/firebase";
@@ -87,9 +86,6 @@ export default function Home() {
           </Tabs>
         </div>
       </main>
-
-      {/* Developer Tools - Only shown in development */}
-      <DeveloperTools />
     </div>
   );
 }
