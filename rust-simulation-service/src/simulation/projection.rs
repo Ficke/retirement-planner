@@ -19,9 +19,9 @@ use super::parametric_returns;
 
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
-    pub paths: usize,
     pub seed: u64,
-    pub real_dollars: bool,
+    pub use_historical_bootstrap: bool,
+    pub block_size: usize,
 }
 
 /// Market returns generator interface
@@ -138,7 +138,7 @@ pub fn project_scenario(
     let mut previous_year_traditional_balance = 0.0;
     
     // Create market returns generator
-    let mut returns_generator = create_market_returns_generator(plan, config.seed);
+    let mut returns_generator = create_market_returns_generator(plan, &config);
     
     for year in 0..total_years {
         let current_age = profile.age + year;
@@ -158,11 +158,12 @@ pub fn project_scenario(
             rmd_amount = calculate_rmd(balance_for_rmd, current_age);
         }
         
-        // Initialize yearly tracking variables
-        let mut income = 0.0;
-        let mut spending = 0.0;
-        let mut taxes = 0.0;
-        let mut savings = 0.0;
+        // Yearly tracking variables — income/spending/taxes/savings are assigned
+        // in both the working and retirement branches below.
+        let income;
+        let spending;
+        let taxes;
+        let savings;
         let mut social_security_benefit = 0.0;
         let mut withdrawal_taxable = 0.0;
         let mut withdrawal_traditional = 0.0;
@@ -354,7 +355,7 @@ pub fn project_scenario(
             year: profile.age + year,
             age: current_age,
             portfolio_value,
-            income: if is_retired { 0.0 } else { income },
+            income,
             spending,
             taxes,
             savings,
@@ -641,18 +642,128 @@ fn calculate_marginal_tax_on_excess(
     Ok(total_tax.total_tax - base_tax.total_tax)
 }
 
-fn create_market_returns_generator(plan: &RetirementPlan, seed: u64) -> Box<dyn MarketReturnsGenerator> {
+fn create_market_returns_generator(
+    plan: &RetirementPlan,
+    config: &ProjectionConfig,
+) -> Box<dyn MarketReturnsGenerator> {
+    // NOTE: Rust uses `rand::StdRng` while TS uses `seedrandom`. Identical seeds
+    // do NOT produce identical path sequences across engines. This is accepted;
+    // cross-engine results should be compared in aggregate (percentiles), not
+    // path-by-path. See apps/web/src/services/simulation.ts.
     match plan.assumptions.simulation_model {
         crate::types::SimulationModel::Parametric => {
-            Box::new(ParametricReturnsGenerator::new(seed))
+            Box::new(ParametricReturnsGenerator::new(config.seed))
         }
         crate::types::SimulationModel::Historical => {
-            // Block size of 3 to match TypeScript implementation (MONTE_CARLO_DEFAULTS.block_size)
-            Box::new(BlockBootstrapGenerator::new(seed, 3))
+            if config.use_historical_bootstrap {
+                Box::new(BlockBootstrapGenerator::new(config.seed, config.block_size))
+            } else {
+                Box::new(SingleBootstrapGenerator::new(config.seed))
+            }
         }
     }
 }
 
 fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{
+        AssetWeights, MarketAssumptions, MarketReturn, Preset, ProjectionSettings,
+        SimulationModel, SocialSecuritySettings, UserProfile,
+    };
+
+    fn test_plan() -> RetirementPlan {
+        RetirementPlan {
+            profile: UserProfile {
+                age: 64,
+                state: State::TX,
+                filing_status: FilingStatus::Single,
+                retirement_age: 65,
+                current_salary: 100_000.0,
+                salary_growth_rate: 0.03,
+                desired_spending: 60_000.0,
+                spending_growth_rate: 0.025,
+                life_expectancy: 90,
+                as_of_date: "2026-01-01".to_string(),
+            },
+            accounts: vec![
+                Account {
+                    id: "a1".into(),
+                    name: "Brokerage".into(),
+                    institution: "Test".into(),
+                    account_type: AccountType::Taxable,
+                    user_id: None,
+                    balance: 500_000.0,
+                    asset_weights: AssetWeights { stocks: 0.6, bonds: 0.4 },
+                    taxable: true,
+                    created_at: "2026-01-01".into(),
+                    updated_at: "2026-01-01".into(),
+                },
+                Account {
+                    id: "a2".into(),
+                    name: "401k".into(),
+                    institution: "Test".into(),
+                    account_type: AccountType::Traditional,
+                    user_id: None,
+                    balance: 500_000.0,
+                    asset_weights: AssetWeights { stocks: 0.6, bonds: 0.4 },
+                    taxable: false,
+                    created_at: "2026-01-01".into(),
+                    updated_at: "2026-01-01".into(),
+                },
+            ],
+            social_security: SocialSecuritySettings {
+                enabled: true,
+                estimated_benefit: None,
+                claim_age: 65,
+                manual_override: false,
+            },
+            assumptions: ProjectionSettings {
+                preset: Preset::Moderate,
+                custom_returns: Some(MarketAssumptions {
+                    stocks: MarketReturn { mean: 0.07, vol: 0.15 },
+                    bonds: MarketReturn { mean: 0.03, vol: 0.05 },
+                    inflation: MarketReturn { mean: 0.025, vol: 0.01 },
+                    correlation: vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+                }),
+                rebalance_annually: true,
+                longevity_override: None,
+                simulation_model: SimulationModel::Parametric,
+                random_seed: Some(42),
+                use_backdoor_roth: false,
+            },
+        }
+    }
+
+    #[test]
+    fn retirement_year_income_equals_ss_benefit() {
+        let plan = test_plan();
+        let config = ProjectionConfig {
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        let result = project_scenario(&plan, config).expect("projection should succeed");
+
+        let retired = result
+            .projections
+            .iter()
+            .find(|p| p.is_retired && p.social_security_benefit > 0.0)
+            .expect("should have at least one retired year with SS benefits");
+
+        assert!(
+            retired.income > 0.0,
+            "retirement-year income must not be zeroed out (regression: projection.rs:357)"
+        );
+        assert!(
+            (retired.income - retired.social_security_benefit).abs() < 1e-6,
+            "retirement-year income ({}) should equal SS benefit ({})",
+            retired.income,
+            retired.social_security_benefit
+        );
+    }
 }

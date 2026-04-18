@@ -49,7 +49,6 @@ export const SaveProfileSchema = z.object({
     preset: z.enum(['Conservative', 'Moderate', 'Aggressive']),
     customReturns: z.any().optional(),
     rebalanceAnnually: z.boolean(),
-    realDollarDisplay: z.boolean(),
     longevityOverride: z.number().optional(),
     simulationModel: z.enum(['historical', 'parametric']),
     randomSeed: z.number().optional(),

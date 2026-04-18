@@ -1,7 +1,5 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use rand::SeedableRng;
-// Note: Normal distributions moved to parametric_returns module
 use std::collections::HashMap;
 use tracing::info;
 
@@ -25,7 +23,12 @@ pub async fn run_simulation(
         .into_par_iter()
         .map(|path_index| {
             let path_seed = config.seed.wrapping_add(path_index as u64);
-            run_single_path(&plan, path_seed, config.real_dollars)
+            run_single_path(
+                &plan,
+                path_seed,
+                config.use_historical_bootstrap,
+                config.block_size,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     
@@ -43,14 +46,15 @@ pub async fn run_simulation(
 fn run_single_path(
     plan: &RetirementPlan,
     seed: u64,
-    real_dollars: bool,
+    use_historical_bootstrap: bool,
+    block_size: usize,
 ) -> Result<PathResult> {
     let config = ProjectionConfig {
-        paths: 1,
         seed,
-        real_dollars,
+        use_historical_bootstrap,
+        block_size,
     };
-    
+
     project_scenario(plan, config)
 }
 

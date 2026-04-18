@@ -240,7 +240,6 @@ const defaultPlan: RetirementPlan = {
   assumptions: {
     preset: 'Moderate',
     rebalanceAnnually: true,
-    realDollarDisplay: true,
     simulationModel: 'historical',
     useBackdoorRoth: true,
   },

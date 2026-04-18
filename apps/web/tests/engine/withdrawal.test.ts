@@ -199,7 +199,6 @@ describe('Withdrawal Logic', () => {
       assumptions: {
         preset: 'Moderate' as Preset,
         rebalanceAnnually: true,
-        realDollarDisplay: true,
         simulationModel: 'historical' as const,
     useBackdoorRoth: false
       }
@@ -208,7 +207,6 @@ describe('Withdrawal Logic', () => {
     const config: ProjectionConfig = {
       paths: 1,
       seed: 12345,
-      realDollars: true
     };
 
     const result = projectScenario(plan, config);

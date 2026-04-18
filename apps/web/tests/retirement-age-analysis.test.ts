@@ -51,7 +51,6 @@ describe('Retirement Age Analysis', () => {
     assumptions: createTestProjectionSettings({
       preset: 'Moderate',
       rebalanceAnnually: true,
-      realDollarDisplay: true,
       simulationModel: 'historical'
     })
   };
@@ -60,7 +59,6 @@ describe('Retirement Age Analysis', () => {
     const analysis = await analyzeRetirementAgeOptions(basePlan, {
       paths: 100, // Use multiple paths for real Monte Carlo
       seed: 42,
-      realDollars: true
     }, { min: 53, max: 61 });
 
     console.log('\n=== RETIREMENT AGE ANALYSIS ===');
@@ -107,7 +105,6 @@ describe('Retirement Age Analysis', () => {
     const analysis = await analyzeRetirementAgeOptions(basePlan, {
       paths: 50, // Smaller for faster test
       seed: 42,
-      realDollars: true
     }, { min: 53, max: 61 });
 
     const insights = generateRetirementAgeInsights(analysis);
@@ -127,7 +124,6 @@ describe('Retirement Age Analysis', () => {
     const analysis = await analyzeRetirementAgeOptions(basePlan, {
       paths: 50,
       seed: 42,
-      realDollars: true
     }, { min: 53, max: 61 });
 
     // Should have risk categories (may be the same in deterministic mode)
@@ -152,7 +148,6 @@ describe('Retirement Age Analysis', () => {
     const analysis = await analyzeRetirementAgeOptions(basePlan, {
       paths: 50,
       seed: 42,
-      realDollars: true
     }, { min: 55, max: 59 });
 
     console.log('\n=== MARGINAL BENEFIT ANALYSIS ===');

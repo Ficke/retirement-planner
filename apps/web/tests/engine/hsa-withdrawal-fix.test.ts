@@ -75,7 +75,6 @@ describe('HSA Withdrawal Logic Fix', () => {
     assumptions: {
       preset: 'Conservative', // Use conservative to minimize volatility
       rebalanceAnnually: true,
-      realDollarDisplay: true,
       simulationModel: 'historical',
       useBackdoorRoth: false,
     },
@@ -83,7 +82,7 @@ describe('HSA Withdrawal Logic Fix', () => {
 
   it('should not heavily rely on HSA withdrawals when Traditional accounts are available', () => {
     const plan = createTestPlan();
-    const result = projectScenario(plan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(plan, { paths: 1, seed: 42 });
 
     // Check the first few years of retirement
     const firstYear = result.projections[0]; // Age 75
@@ -100,7 +99,7 @@ describe('HSA Withdrawal Logic Fix', () => {
 
   it('should use proper withdrawal order: Taxable → Traditional (including beyond RMD) → Roth → HSA', () => {
     const plan = createTestPlan();
-    const result = projectScenario(plan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(plan, { paths: 1, seed: 42 });
 
     // Look at early retirement years
     const earlyYears = result.projections.slice(0, 5);
@@ -117,7 +116,7 @@ describe('HSA Withdrawal Logic Fix', () => {
 
   it('should maintain consistent withdrawal patterns without sudden spikes', () => {
     const plan = createTestPlan();
-    const result = projectScenario(plan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(plan, { paths: 1, seed: 42 });
 
     const hsaWithdrawals = result.projections.map(year => year.withdrawalHSA);
 

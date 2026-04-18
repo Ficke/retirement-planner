@@ -5,6 +5,7 @@
  */
 
 import { runMonteCarloSimulation } from '@/engine/mc';
+import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import {
   runSocialSecurityAnalysis as engineRunSSAnalysis,
   runSpendingAnalysis as engineRunSpendingAnalysis,
@@ -34,7 +35,8 @@ interface BatchSimulationRequest {
   config: {
     paths: number;
     seed: number;
-    realDollars: boolean;
+    useHistoricalBootstrap: boolean;
+    blockSize: number;
   };
 }
 
@@ -61,7 +63,8 @@ async function runServerSideSimulation(plan: RetirementPlan): Promise<Simulation
       config: {
         paths: 5000,
         seed: 42,
-        realDollars: plan.assumptions.realDollarDisplay,
+        useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+        blockSize: MONTE_CARLO_DEFAULTS.block_size,
       },
     }),
   });
@@ -102,7 +105,8 @@ class SimulationServiceImpl implements SimulationService {
     if (useServerSide) {
       try {
         console.log('🦀 Using server-side Rust simulation');
-        return await runServerSideSimulation(plan);
+        const result = await runServerSideSimulation(plan);
+        return { ...result, source: 'server' };
       } catch (error) {
         console.warn('Server-side simulation failed, falling back to client-side:', error);
         // Fall through to client-side
@@ -110,11 +114,11 @@ class SimulationServiceImpl implements SimulationService {
     }
 
     console.log('🌐 Using client-side Web Worker simulation');
-    return runMonteCarloSimulation(plan, {
+    const result = await runMonteCarloSimulation(plan, {
       paths: 5000,
       seed: 42,
-      realDollars: plan.assumptions.realDollarDisplay,
     });
+    return { ...result, source: 'client' };
   }
 
   async runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SSAnalysisResult[]> {
@@ -136,7 +140,8 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 1000 + age, // Unique seed per age
-            realDollars: plan.assumptions.realDollarDisplay,
+            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
 
@@ -148,7 +153,7 @@ class SimulationServiceImpl implements SimulationService {
           if (!responseForAge) {
             throw new Error(`Missing result for SS age ${age}`);
           }
-          return { claimAge: age, result: responseForAge.result };
+          return { claimAge: age, result: { ...responseForAge.result, source: 'server' as const } };
         });
       } catch (error) {
         console.warn('Server-side SS analysis failed, falling back to client-side:', error);
@@ -176,7 +181,8 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 2000 + annualSpending, // Unique seed per spending level
-            realDollars: plan.assumptions.realDollarDisplay,
+            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
 
@@ -188,7 +194,7 @@ class SimulationServiceImpl implements SimulationService {
           if (!responseForSpending) {
             throw new Error(`Missing result for spending level ${annualSpending}`);
           }
-          return { annualSpending, result: responseForSpending.result };
+          return { annualSpending, result: { ...responseForSpending.result, source: 'server' as const } };
         });
       } catch (error) {
         console.warn('Server-side spending analysis failed, falling back to client-side:', error);
@@ -216,7 +222,8 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 3000 + retirementAge, // Unique seed per age
-            realDollars: plan.assumptions.realDollarDisplay,
+            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
 
@@ -228,7 +235,7 @@ class SimulationServiceImpl implements SimulationService {
           if (!responseForAge) {
             throw new Error(`Missing result for retirement age ${retirementAge}`);
           }
-          return { retirementAge, result: responseForAge.result };
+          return { retirementAge, result: { ...responseForAge.result, source: 'server' as const } };
         });
       } catch (error) {
         console.warn('Server-side retirement age analysis failed, falling back to client-side:', error);

@@ -77,7 +77,6 @@ export interface ProjectionSettings {
   preset: Preset;
   customReturns?: MarketAssumptions;
   rebalanceAnnually: boolean;
-  realDollarDisplay: boolean;
   longevityOverride?: number;
   simulationModel: SimulationModel;
   randomSeed?: number;
@@ -120,6 +119,8 @@ export interface SimulationResult {
     p50: number;
     p75: number;
   }>;
+  /** Which engine produced this result. Set by the simulation service, not the engine. */
+  source?: 'server' | 'client';
 }
 
 export interface SSAnalysisResult {
