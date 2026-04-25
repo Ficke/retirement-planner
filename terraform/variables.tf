@@ -169,6 +169,33 @@ variable "github_repo" {
   default     = ""
 }
 
+variable "cloud_build_trigger_name" {
+  description = "Name of the Cloud Build trigger"
+  type        = string
+  default     = "deploy-production"
+}
+
+# Build-time substitution variables passed as --build-arg to Kaniko.
+# These are distinct from public_env_vars (Cloud Run runtime env vars):
+# NEXT_PUBLIC_* values must be baked into the client JS bundle during `next build`,
+# so they must be present at Docker build time — Cloud Run env vars alone are not enough.
+# Keys must start with _ per Cloud Build convention.
+variable "build_substitutions" {
+  description = "Cloud Build substitution variables passed as Kaniko build args (baked into client bundle)"
+  type        = map(string)
+  default     = {}
+  # Set in terraform.tfvars:
+  # build_substitutions = {
+  #   _FIREBASE_API_KEY            = "AIza..."
+  #   _FIREBASE_AUTH_DOMAIN        = "your-project.firebaseapp.com"
+  #   _FIREBASE_PROJECT_ID         = "your-project-id"
+  #   _FIREBASE_STORAGE_BUCKET     = "your-project.appspot.com"
+  #   _FIREBASE_MESSAGING_SENDER_ID = "123456789"
+  #   _FIREBASE_APP_ID             = "1:123456789:web:abc123"
+  #   _FIREBASE_MEASUREMENT_ID     = "G-XXXXXXXXXX"
+  # }
+}
+
 # Rust Simulation Service configuration
 variable "rust_service_name" {
   description = "Name of the Rust simulation Cloud Run service"
