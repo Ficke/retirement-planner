@@ -4,11 +4,8 @@
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, type Auth } from 'firebase/auth';
 
-// Firebase configuration
-// Note: These credentials are PUBLIC and meant to be in client-side code.
-// Security is enforced by Firebase Security Rules, not by hiding these values.
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
@@ -21,11 +18,17 @@ const firebaseConfig = {
   }),
 };
 
-// Initialize Firebase (singleton pattern - only initialize once)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Firebase must only initialize in the browser. next build pre-renders pages
+// server-side without real credentials, causing initializeApp/getAuth to throw.
+// All callers are 'use client' code so auth is never the stub at call time.
+function initFirebase() {
+  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  return { app, auth: getAuth(app) };
+}
 
-// Initialize Firebase Auth
-const auth = getAuth(app);
+const { app, auth } = typeof window !== 'undefined'
+  ? initFirebase()
+  : { app: null as any, auth: {} as Auth };
 
 export { auth };
 export default app;
