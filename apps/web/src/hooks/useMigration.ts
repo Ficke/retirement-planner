@@ -6,13 +6,17 @@
 import { useEffect, useState } from 'react';
 import { clearLegacyAccountData, hasLegacyData, type MigrationResult } from '@/lib/migration';
 import { usePlan } from '@/state/usePlan';
+import { useAuth } from '@/lib/firebase';
 
 export function useMigration() {
   const [migrationStatus, setMigrationStatus] = useState<'pending' | 'running' | 'completed' | 'error'>('pending');
   const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
   const { loadProfile, loadAccounts } = usePlan();
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
+    if (authLoading || !user) return;
+
     const runMigration = async () => {
       // Check if migration is needed
       if (!hasLegacyData()) {
@@ -55,7 +59,7 @@ export function useMigration() {
     };
 
     runMigration();
-  }, []);
+  }, [authLoading, user]);
 
   return {
     migrationStatus,
