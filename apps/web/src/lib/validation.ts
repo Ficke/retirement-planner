@@ -7,24 +7,53 @@ import { z } from 'zod';
 // Account validation
 export const CreateAccountSchema = z.object({
   name: z.string().min(1, 'Account name is required').max(100, 'Account name too long'),
-  institution: z.string().min(1, 'Institution is required').max(100, 'Institution name too long'),
+  institution: z.string().max(100, 'Institution name too long').default(''),
   type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA'], {
     message: 'Account type must be Taxable, Traditional, Roth, or HSA',
   }),
+  balance: z.number().min(0, 'Balance must be non-negative').optional(),
+  stocksPct: z.number().min(0).max(1, 'Stocks percentage must be between 0 and 1').optional(),
+  bondsPct: z.number().min(0).max(1, 'Bonds percentage must be between 0 and 1').optional(),
 });
 
-export const UpdateAccountSchema = CreateAccountSchema.partial();
+export const UpdateAccountSchema = CreateAccountSchema.partial().extend({
+  balance: z.number().min(0).optional(),
+  assetWeights: z.object({
+    stocks: z.number().min(0).max(1),
+    bonds: z.number().min(0).max(1),
+  }).optional(),
+  balanceAsOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format').optional(),
+});
 
-// Transaction validation
-export const CreateTransactionSchema = z.object({
-  symbol: z.string().min(1, 'Symbol is required').max(10, 'Symbol too long').toUpperCase(),
-  shares: z.number().positive('Shares must be positive'),
-  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (use YYYY-MM-DD)'),
-  transactionType: z.enum(['BUY', 'SELL', 'SPLIT', 'DIVIDEND_REINVEST'], {
-    message: 'Invalid transaction type',
-  }),
-  pricePerShare: z.number().positive('Price must be positive').optional(),
-  description: z.string().max(500, 'Description too long').optional(),
+// Profile validation
+export const SaveProfileSchema = z.object({
+  profile: z.object({
+    age: z.number().min(1).max(120),
+    state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other']),
+    filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold']),
+    retirementAge: z.number().min(1).max(120),
+    currentSalary: z.number().min(0),
+    salaryGrowthRate: z.number(),
+    desiredSpending: z.number().min(0),
+    spendingGrowthRate: z.number(),
+    lifeExpectancy: z.number().min(1).max(120),
+    asOfDate: z.string(),
+  }).optional(),
+  socialSecurity: z.object({
+    enabled: z.boolean(),
+    estimatedBenefit: z.number().optional(),
+    claimAge: z.number().min(62).max(70),
+    manualOverride: z.boolean(),
+  }).optional(),
+  assumptions: z.object({
+    preset: z.enum(['Conservative', 'Moderate', 'Aggressive']),
+    customReturns: z.any().optional(),
+    rebalanceAnnually: z.boolean(),
+    longevityOverride: z.number().optional(),
+    simulationModel: z.enum(['historical', 'parametric']),
+    randomSeed: z.number().optional(),
+    useBackdoorRoth: z.boolean(),
+  }).optional(),
 });
 
 // Auth validation

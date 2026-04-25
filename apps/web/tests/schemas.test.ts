@@ -37,7 +37,6 @@ describe('Domain Schemas', () => {
       assumptions: createTestProjectionSettings({
         preset: 'Moderate',
         rebalanceAnnually: true,
-        realDollarDisplay: true,
         simulationModel: 'historical',
       }),
     };
@@ -81,7 +80,6 @@ describe('Domain Schemas', () => {
       assumptions: createTestProjectionSettings({
         preset: 'Moderate',
         rebalanceAnnually: true,
-        realDollarDisplay: true,
         simulationModel: 'historical',
       }),
     };

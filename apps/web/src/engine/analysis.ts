@@ -32,7 +32,6 @@ export async function runSocialSecurityAnalysis(plan: RetirementPlan): Promise<S
     const result = await runMonteCarloSimulation(modifiedPlan, {
       paths: 1000, // Optimized for interactive analysis
       seed: 42 + age * 1000, // Offset seed by retirement age to ensure different random sequences
-      realDollars: cleanPlan.assumptions.realDollarDisplay,
     });
     return { claimAge: age, result };
   });
@@ -79,7 +78,6 @@ export async function runSpendingAnalysis(
     const result = await runMonteCarloSimulation(modifiedPlan, {
       paths: 1000, // Optimized for interactive analysis
       seed: 42, // Same seed across all scenarios for pure sensitivity analysis
-      realDollars: cleanPlan.assumptions.realDollarDisplay,
     });
     return { annualSpending: spending, result };
   });
@@ -151,7 +149,6 @@ async function testRetirementAge(
   const result = await runMonteCarloSimulation(modifiedPlan, {
     paths: 1000, // Optimized for interactive analysis
     seed: 42, // Same seed across all scenarios for pure sensitivity analysis
-    realDollars: cleanPlan.assumptions.realDollarDisplay,
   });
 
   return { retirementAge: age, result };

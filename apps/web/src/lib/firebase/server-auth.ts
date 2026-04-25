@@ -8,8 +8,7 @@ import { cookies, headers } from 'next/headers';
 import { verifyAuthToken } from './admin';
 
 export interface AuthUser {
-  id: string; // Firebase UID (now primary ID)
-  firebaseUid: string; // Firebase UID (same as id)
+  id: string; // Firebase UID — matches users.id in the database
   email: string;
   name?: string | null;
 }
@@ -61,10 +60,9 @@ export async function getAuthUser(): Promise<AuthUser | null> {
     // Return user info directly from Firebase JWT - no database lookup needed
     // This eliminates circular dependency with database initialization
     return {
-      id: decodedToken.uid,        // Firebase UID as primary ID
-      firebaseUid: decodedToken.uid,
+      id: decodedToken.uid,
       email: decodedToken.email || '',
-      name: null, // Name not available in JWT, would need database lookup
+      name: null,
     };
   } catch (error) {
     console.error('Error getting auth user:', error);

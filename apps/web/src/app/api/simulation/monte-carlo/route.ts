@@ -6,7 +6,8 @@ interface SimulationRequest {
   config: {
     paths: number;
     seed: number;
-    realDollars: boolean;
+    useHistoricalBootstrap?: boolean;
+    blockSize?: number;
   };
 }
 

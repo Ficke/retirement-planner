@@ -10,13 +10,15 @@ import { getAuth } from 'firebase/auth';
 // Note: These credentials are PUBLIC and meant to be in client-side code.
 // Security is enforced by Firebase Security Rules, not by hiding these values.
 const firebaseConfig = {
-  apiKey: "AIzaSyBkCJjpT2Kt3DlPlPQa745iwx1RCzAAHjU",
-  authDomain: "retire-5250e.firebaseapp.com",
-  projectId: "retire-5250e",
-  storageBucket: "retire-5250e.firebasestorage.app",
-  messagingSenderId: "106859282187",
-  appId: "1:106859282187:web:9bd82c3f08f77725cfc376",
-  measurementId: "G-QRVN9XBC4Z",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
+  ...(process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID && {
+    measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  }),
 };
 
 // Initialize Firebase (singleton pattern - only initialize once)

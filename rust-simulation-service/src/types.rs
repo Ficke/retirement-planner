@@ -123,8 +123,6 @@ pub struct ProjectionSettings {
     pub custom_returns: Option<MarketAssumptions>,
     #[serde(rename = "rebalanceAnnually")]
     pub rebalance_annually: bool,
-    #[serde(rename = "realDollarDisplay")]
-    pub real_dollar_display: bool,
     #[serde(rename = "longevityOverride")]
     pub longevity_override: Option<u32>,
     #[serde(rename = "simulationModel")]
@@ -242,9 +240,16 @@ pub struct SimulationResult {
 pub struct MCConfig {
     pub paths: u32,
     pub seed: u64,
-    #[serde(rename = "realDollars")]
-    pub real_dollars: bool,
+    /// When Historical mode, true → block bootstrap, false → single-year bootstrap.
+    /// Defaults to true to match MONTE_CARLO_DEFAULTS.use_historical_bootstrap.
+    #[serde(rename = "useHistoricalBootstrap", default = "default_use_historical_bootstrap")]
+    pub use_historical_bootstrap: bool,
+    #[serde(rename = "blockSize", default = "default_block_size")]
+    pub block_size: usize,
 }
+
+fn default_use_historical_bootstrap() -> bool { true }
+fn default_block_size() -> usize { 3 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationRequest {

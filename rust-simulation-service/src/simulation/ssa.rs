@@ -13,11 +13,7 @@ pub struct SSABendPoint {
 
 #[derive(Debug, Clone)]
 pub struct SSABenefitResult {
-    pub monthly_benefit: f64,
     pub annual_benefit: f64,
-    pub pia: f64,
-    pub aime: f64,
-    pub claim_adjustment: f64,
 }
 
 /// 2025 estimated bend points
@@ -56,17 +52,10 @@ pub fn calculate_ssa_benefit(
     let aime = calculate_aime(salary_history);
     let pia = calculate_pia(aime, &BEND_POINTS);
     let claim_adjustment = get_claim_age_adjustment(claim_age);
-    
-    let monthly_benefit = pia * claim_adjustment;
-    let annual_benefit = monthly_benefit * 12.0;
-    
-    SSABenefitResult {
-        monthly_benefit,
-        annual_benefit,
-        pia,
-        aime,
-        claim_adjustment,
-    }
+
+    let annual_benefit = pia * claim_adjustment * 12.0;
+
+    SSABenefitResult { annual_benefit }
 }
 
 /// Calculate Average Indexed Monthly Earnings (AIME) from salary history
@@ -144,7 +133,7 @@ pub fn get_claim_age_adjustment(claim_age: u32) -> f64 {
 pub fn estimate_salary_history(
     current_salary: f64,
     salary_growth_rate: f64,
-    current_age: u32,
+    _current_age: u32,
     retirement_age: u32,
 ) -> Vec<f64> {
     let mut salary_history = Vec::new();
@@ -211,13 +200,12 @@ mod tests {
     fn test_full_benefit_calculation() {
         let salary_history: Vec<f64> = vec![75000.0; 35];
         let result = calculate_ssa_benefit(&salary_history, 67);
-        
-        // Verify components are calculated
-        assert!(result.aime > 0.0);
-        assert!(result.pia > 0.0);
-        assert_eq!(result.claim_adjustment, 1.0);
-        assert_eq!(result.monthly_benefit, result.pia);
-        assert_eq!(result.annual_benefit, result.monthly_benefit * 12.0);
+
+        // At FRA (67), claim adjustment is 1.0, so annual_benefit = PIA * 12.
+        let aime = 75000.0 / 12.0;
+        let expected_pia = 1174.0 * 0.90 + (aime - 1174.0) * 0.32;
+        let expected_annual = expected_pia * 12.0;
+        assert!((result.annual_benefit - expected_annual).abs() < 0.01);
     }
     
     #[test]

@@ -1,7 +1,9 @@
 /**
- * Longevity modeling using SOA mortality tables and Gompertz distribution.
- * Provides survival probability calculations for retirement planning.
+ * Longevity modeling using Gompertz mortality.
+ * Parameters loaded from apps/web/src/data/mortality/soagompertz.json.
  */
+
+import mortalityData from '@/data/mortality/soagompertz.json';
 
 export interface GompertzParameters {
   alpha: number;
@@ -14,28 +16,25 @@ export interface SurvivalResult {
   probabilityOfSuccess: number;
 }
 
-/**
- * Calculate survival probability using Gompertz mortality model.
- * Based on SOA mortality tables with gender-specific parameters.
- * 
- * @param currentAge - Current age of the individual
- * @param targetAge - Target age for survival probability
- * @param gender - Gender for mortality parameters ('male' | 'female' | 'unisex')
- * @returns Survival probability and life expectancy
- */
+type Gender = 'male' | 'female' | 'unisex';
+
+const GOMPERTZ: Record<Gender, GompertzParameters> = mortalityData.gompertzParameters;
+const LIFE_EXP_AT_65: Record<Gender, number> = mortalityData.lifeExpectancyAt65;
+
 export function calculateSurvivalProbability(
   currentAge: number,
   targetAge: number,
-  gender: 'male' | 'female' | 'unisex' = 'unisex'
+  gender: Gender = 'unisex'
 ): SurvivalResult {
-  // TODO: Load actual Gompertz parameters from soagompertz.json
   const params = getGompertzParameters(gender);
-  
-  const survivalProb = Math.exp(-params.alpha / params.beta * 
-    (Math.exp(params.beta * targetAge) - Math.exp(params.beta * currentAge)));
-  
-  const lifeExpectancy = estimateLifeExpectancy(currentAge, params);
-  
+
+  const survivalProb = Math.exp(
+    (-params.alpha / params.beta) *
+      (Math.exp(params.beta * targetAge) - Math.exp(params.beta * currentAge))
+  );
+
+  const lifeExpectancy = estimateLifeExpectancy(currentAge, gender);
+
   return {
     probabilityToAge: survivalProb,
     lifeExpectancy,
@@ -43,62 +42,33 @@ export function calculateSurvivalProbability(
   };
 }
 
-/**
- * Get Gompertz parameters for mortality modeling.
- * 
- * @param gender - Gender for parameter selection
- * @returns Gompertz alpha and beta parameters
- */
-export function getGompertzParameters(gender: 'male' | 'female' | 'unisex'): GompertzParameters {
-  // TODO: Load from mortality data JSON
-  const defaultParams = {
-    male: { alpha: 0.0003, beta: 0.09 },
-    female: { alpha: 0.0002, beta: 0.085 },
-    unisex: { alpha: 0.00025, beta: 0.0875 },
-  };
-  
-  return defaultParams[gender];
+export function getGompertzParameters(gender: Gender): GompertzParameters {
+  return GOMPERTZ[gender];
 }
 
 /**
- * Estimate life expectancy from current age using Gompertz model.
- * 
- * @param currentAge - Current age
- * @param params - Gompertz parameters
- * @returns Estimated life expectancy in years
+ * Life expectancy (age at which cumulative survival ≈ 0.5), anchored on the
+ * SOA table values at 65 and extrapolated linearly for other ages. Good enough
+ * for planning display; projection uses the full survival curve.
  */
-export function estimateLifeExpectancy(
-  currentAge: number,
-  params: GompertzParameters
-): number {
-  // Simplified estimation - in practice this involves integration
-  // TODO: Implement proper Gompertz life expectancy calculation
-  if (currentAge >= 65) {
-    return currentAge + (params.alpha < 0.00025 ? 22 : 20); // Female vs male approximation
-  }
-  return currentAge + (params.alpha < 0.00025 ? 25 : 23);
+export function estimateLifeExpectancy(currentAge: number, gender: Gender = 'unisex'): number {
+  const leAt65 = LIFE_EXP_AT_65[gender];
+  // Linear adjustment: each year lived past 65 shifts LE by ~0.5 years for adults.
+  const delta = (currentAge - 65) * 0.5;
+  return Math.max(currentAge + 1, leAt65 + Math.max(0, delta));
 }
 
-/**
- * Generate survival curve for planning horizon.
- * Used to define "success" probability based on chosen longevity assumptions.
- * 
- * @param currentAge - Starting age
- * @param maxAge - Maximum age to model (planning horizon)
- * @param gender - Gender for mortality parameters
- * @returns Array of survival probabilities by age
- */
 export function generateSurvivalCurve(
   currentAge: number,
   maxAge: number,
-  gender: 'male' | 'female' | 'unisex' = 'unisex'
+  gender: Gender = 'unisex'
 ): number[] {
   const curve: number[] = [];
-  
+
   for (let age = currentAge; age <= maxAge; age++) {
     const survival = calculateSurvivalProbability(currentAge, age, gender);
     curve.push(survival.probabilityToAge);
   }
-  
+
   return curve;
 }

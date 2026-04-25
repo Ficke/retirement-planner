@@ -9,22 +9,14 @@ import type {
   SSAnalysisResult,
   SpendingAnalysisResult,
   RetirementAgeAnalysisResult,
-  AccountSnapshot,
   CreateAccountData,
-  CreateSnapshotData,
   LoadingState,
   AccountLoadingState,
 } from '@/domain/types';
 import { getSimulationService } from '@/services/simulation';
 import { getAccountsClient } from '@/services/client/accounts-client';
-import { getHoldingsClient } from '@/services/client/holdings-client';
+import { getProfileClient } from '@/services/client/profile-client';
 import {
-  getAccountAggregationService,
-  hasSnapshotData,
-} from '@/services/account-aggregation';
-import {
-  loadPlanState,
-  savePlanState,
   loadUserPreferences,
   saveUserPreferences,
 } from '@/lib/persistence';
@@ -40,6 +32,12 @@ interface AccountWithHoldings {
 // Debounced simulation scheduler to prevent race conditions
 let simulationTimeoutId: NodeJS.Timeout | null = null;
 const SIMULATION_DELAY = 100; // ms
+
+// Generation counters to discard stale simulation results
+let mainSimGeneration = 0;
+let ssSimGeneration = 0;
+let spendingSimGeneration = 0;
+let retirementAgeSimGeneration = 0;
 
 function scheduleSimulations(get: () => any) {
   // Clear any existing timeout
@@ -61,6 +59,93 @@ function scheduleSimulations(get: () => any) {
   }, SIMULATION_DELAY);
 }
 
+// --- Profile persistence (localStorage + DB) ---
+const PROFILE_STORAGE_KEY = 'retireplan:profile';
+let profileDirty = false;
+let dbSaveIntervalId: NodeJS.Timeout | null = null;
+
+function saveProfileToLocalStorage(plan: RetirementPlan) {
+  try {
+    const data = {
+      profile: plan.profile,
+      socialSecurity: plan.socialSecurity,
+      assumptions: plan.assumptions,
+    };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(data));
+    profileDirty = true;
+  } catch {
+    // localStorage full or unavailable — silent
+  }
+}
+
+function loadProfileFromLocalStorage(): { profile?: Partial<UserProfile>; socialSecurity?: Partial<SocialSecuritySettings>; assumptions?: Partial<AssumptionSettings> } | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function flushProfileToDb(get: () => PlanState) {
+  if (!profileDirty) return;
+  profileDirty = false;
+  try {
+    const { plan } = get();
+    const client = getProfileClient();
+    await client.saveProfile({
+      profile: plan.profile as unknown as Record<string, unknown>,
+      socialSecurity: plan.socialSecurity as unknown as Record<string, unknown>,
+      assumptions: plan.assumptions as unknown as Record<string, unknown>,
+    });
+  } catch (error) {
+    console.error('Failed to save profile to DB:', error);
+    profileDirty = true; // retry next time
+  }
+}
+
+function setupProfileAutoSave(get: () => PlanState) {
+  if (dbSaveIntervalId) return; // already set up
+
+  // Periodic save every 30s
+  dbSaveIntervalId = setInterval(() => flushProfileToDb(get), 30_000);
+
+  // Save on tab blur / page hide
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+      flushProfileToDb(get);
+    }
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  // Save on page unload
+  const handleBeforeUnload = () => {
+    flushProfileToDb(get);
+  };
+  window.addEventListener('beforeunload', handleBeforeUnload);
+}
+
+function onProfileChanged(get: () => PlanState) {
+  const state = get();
+  if (!state.profileLoaded) return;
+  saveProfileToLocalStorage(state.plan);
+}
+
+function validateAccounts(accounts: Account[]): { isValid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  for (const account of accounts) {
+    const weightSum = account.assetWeights.stocks + account.assetWeights.bonds;
+    if (Math.abs(weightSum - 1) > 0.01) {
+      errors.push(`Account ${account.name}: Asset weights sum to ${weightSum.toFixed(3)}, expected 1.000`);
+    }
+    if (account.balance < 0) {
+      errors.push(`Account ${account.name}: Balance cannot be negative (${account.balance})`);
+    }
+  }
+  return { isValid: errors.length === 0, errors };
+}
+
 interface PlanState {
   plan: RetirementPlan;
   simulationResult: SimulationResult | null;
@@ -78,27 +163,28 @@ interface PlanState {
   isSimulatingSpending: boolean;
   isSimulatingRetirementAge: boolean;
 
-  // Accounts state (unified architecture)
+  // Accounts state
   accounts: Account[];
   accountsWithHoldings: AccountWithHoldings[];
-  aggregatedAccounts: Account[];
 
-  // Modern loading states with fail-fast design
+  // Loading states
   loadingState: AccountLoadingState;
   accountsLoading: LoadingState;
-  aggregationLoading: LoadingState;
 
   // Legacy loading states (for backward compatibility)
   isLoading: boolean;
   isCreatingAccount: boolean;
   isAddingSnapshot: boolean;
-  isAggregating: boolean;
+
+  // Profile persistence
+  profileLoaded: boolean;
 
   // Error handling with immediate feedback
   error: string | null;
   lastError: string | null;
 
   // Plan management actions
+  loadProfile: () => Promise<void>;
   updateProfile: (profile: Partial<UserProfile>) => void;
   updateSocialSecurity: (settings: Partial<SocialSecuritySettings>) => void;
   updateAssumptions: (settings: Partial<AssumptionSettings>) => void;
@@ -113,22 +199,23 @@ interface PlanState {
   // User preference actions
   setUseServerSideCalculations: (useServerSide: boolean) => void;
 
-  // Account management actions (consolidated from useIndividualAccounts)
+  // Account management actions
   loadAccounts: () => Promise<void>;
   createAccount: (data: CreateAccountData) => Promise<Account>;
   updateAccount: (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt'>>) => Promise<void>;
   deleteAccount: (id: string) => Promise<void>;
 
-  // Aggregation actions
-  refreshAggregation: () => Promise<void>;
-
   // Utility actions
   clearError: () => void;
   clearSimulationResults: () => void;
+}
 
-  // Legacy method (now uses aggregatedAccounts directly)
-  getAccounts: () => Promise<Account[]>;
-  updateAccounts: () => Promise<void>;
+// Load initial user preferences
+function getInitialPreferences() {
+  const saved = loadUserPreferences();
+  return {
+    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
+  };
 }
 
 const defaultPlan: RetirementPlan = {
@@ -144,7 +231,7 @@ const defaultPlan: RetirementPlan = {
     lifeExpectancy: 90,
     asOfDate: new Date().toISOString().split('T')[0],
   },
-  accounts: [], // Legacy - now using aggregatedAccounts
+  accounts: [],
   socialSecurity: {
     enabled: true,
     claimAge: 67,
@@ -153,36 +240,13 @@ const defaultPlan: RetirementPlan = {
   assumptions: {
     preset: 'Moderate',
     rebalanceAnnually: true,
-    realDollarDisplay: true,
     simulationModel: 'historical',
     useBackdoorRoth: true,
   },
 };
 
-// Load initial plan from localStorage or use defaults
-function getInitialPlan(): RetirementPlan {
-  const saved = loadPlanState();
-  if (!saved) return defaultPlan;
-
-  // Merge saved state with defaults (in case schema changed)
-  return {
-    profile: { ...defaultPlan.profile, ...saved.profile },
-    accounts: saved.accounts || defaultPlan.accounts,
-    socialSecurity: { ...defaultPlan.socialSecurity, ...saved.socialSecurity },
-    assumptions: { ...defaultPlan.assumptions, ...saved.assumptions },
-  };
-}
-
-// Load initial user preferences
-function getInitialPreferences() {
-  const saved = loadUserPreferences();
-  return {
-    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
-  };
-}
-
 export const usePlan = create<PlanState>((set, get) => ({
-  plan: getInitialPlan(),
+  plan: defaultPlan,
   simulationResult: null,
   isValid: true,
   ssAnalysisResult: null,
@@ -198,125 +262,152 @@ export const usePlan = create<PlanState>((set, get) => ({
   isSimulatingSpending: false,
   isSimulatingRetirementAge: false,
 
-  // Accounts state (unified architecture)
+  // Accounts state
   accounts: [],
   accountsWithHoldings: [],
-  aggregatedAccounts: [],
 
-  // Modern loading states
+  // Loading states
   loadingState: { state: 'idle' },
   accountsLoading: 'idle',
-  aggregationLoading: 'idle',
 
   // Legacy loading states (for backward compatibility)
   isLoading: false,
   isCreatingAccount: false,
   isAddingSnapshot: false,
-  isAggregating: false,
+
+  // Profile persistence
+  profileLoaded: false,
 
   // Error handling
   error: null,
   lastError: null,
 
-  updateProfile: (profileUpdates) =>
-    set((state) => {
-      // Update state and clear all analysis results (simple invalidation)
-      const newPlan = {
-        ...state.plan,
-        profile: { ...state.plan.profile, ...profileUpdates },
+  loadProfile: async () => {
+    try {
+      // Load from DB first
+      const client = getProfileClient();
+      const dbData = await client.getProfile();
+
+      // Then overlay localStorage (catches unsaved changes from crashes)
+      const lsData = loadProfileFromLocalStorage();
+
+      // Merge: defaults < DB < localStorage
+      const mergedProfile = {
+        ...defaultPlan.profile,
+        ...(dbData?.profile as Partial<UserProfile> | undefined),
+        ...(lsData?.profile),
+      };
+      const mergedSS = {
+        ...defaultPlan.socialSecurity,
+        ...(dbData?.socialSecurity as Partial<SocialSecuritySettings> | undefined),
+        ...(lsData?.socialSecurity),
+      };
+      const mergedAssumptions = {
+        ...defaultPlan.assumptions,
+        ...(dbData?.assumptions as Partial<AssumptionSettings> | undefined),
+        ...(lsData?.assumptions),
       };
 
+      set((state) => ({
+        plan: {
+          ...state.plan,
+          profile: mergedProfile as UserProfile,
+          socialSecurity: mergedSS as SocialSecuritySettings,
+          assumptions: mergedAssumptions as AssumptionSettings,
+        },
+        profileLoaded: true,
+      }));
+
+      // Start auto-save listeners now that profile is loaded
+      setupProfileAutoSave(get);
+
+      console.log('Profile loaded successfully');
+    } catch (error) {
+      console.error('Failed to load profile, using defaults:', error);
+      set({ profileLoaded: true });
+      setupProfileAutoSave(get);
+    }
+  },
+
+  updateProfile: (profileUpdates) =>
+    set((state) => {
+      // Update state and clear all results
       const newState = {
-        plan: newPlan,
+        plan: {
+          ...state.plan,
+          profile: { ...state.plan.profile, ...profileUpdates },
+        },
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
 
-      console.log('📝 New profile salaryGrowthRate:', newState.plan.profile.salaryGrowthRate);
-
-      // Persist to localStorage
-      savePlanState(newPlan);
-
       // Schedule all simulations
       scheduleSimulations(get);
+      // Persist to localStorage
+      setTimeout(() => onProfileChanged(get), 0);
 
       return newState;
     }),
 
-  // Load all accounts with modern loading patterns and fail-fast design
+  // Load accounts, sync plan.accounts, and schedule simulations
   loadAccounts: async () => {
-    // Set immediate loading state with timestamp
     const loadStartTime = new Date().toISOString();
     set({
-      // Modern loading states
       accountsLoading: 'loading',
       loadingState: { state: 'loading', lastUpdated: loadStartTime },
-      // Legacy states for backward compatibility
       isLoading: true,
       error: null,
     });
 
     try {
-      // Parallel loading for performance
       const client = getAccountsClient();
-      const [accounts, hasSnapshotData_] = await Promise.all([
-        client.getAccounts(),
-        hasSnapshotData(),
-      ]);
+      const accounts = await client.getAccounts();
 
-      // Fetch real-time holdings for each account
-      const holdingsClient = getHoldingsClient();
-      const accountsWithHoldings: AccountWithHoldings[] = await Promise.all(
-        accounts.map(async (account) => {
-          try {
-            const holdingsData = await holdingsClient.getAccountValue(account.id);
-            const currentBalance = holdingsData?.totalValue || 0;
-            return {
-              account,
-              currentBalance,
-              isLoading: false,
-            };
-          } catch (error) {
-            console.error(`Failed to load holdings for account ${account.id}:`, error);
-            return {
-              account,
-              currentBalance: 0,
-              isLoading: false,
-              error: error instanceof Error ? error.message : 'Failed to load holdings',
-            };
-          }
-        })
-      );
+      // Validate accounts
+      const validation = validateAccounts(accounts);
+      if (!validation.isValid) {
+        console.warn('Account validation issues:', validation.errors);
+      }
 
-      // Immediate success state update
-      set({
-        accounts: accounts,
+      const accountsWithHoldings: AccountWithHoldings[] = accounts.map((account) => ({
+        account,
+        currentBalance: account.balance,
+        isLoading: false,
+      }));
+
+      set((prev) => ({
+        accounts,
         accountsWithHoldings,
-        // Modern loading states
+        // Keep plan.accounts in sync — this is what simulation methods read
+        plan: { ...prev.plan, accounts },
+        // Clear stale simulation results
+        simulationResult: null,
+        ssAnalysisResult: null,
+        spendingAnalysisResult: null,
+        retirementAgeAnalysisResult: null,
         accountsLoading: 'success',
         loadingState: { state: 'success', lastUpdated: new Date().toISOString() },
-        // Legacy states
         isLoading: false,
         error: null,
-      });
+      }));
 
-      console.log(`Loaded ${accounts.length} accounts, ${accountsWithHoldings.length} with real-time holdings`);
+      // Schedule simulation re-runs with updated accounts
+      scheduleSimulations(get);
+
+      console.log(`Loaded ${accounts.length} accounts`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to load accounts';
-      console.error('Failed to load individual accounts:', error);
+      console.error('Failed to load accounts:', error);
 
-      // Immediate error state update with fail-fast design
       set({
-        // Modern loading states
         accountsLoading: 'error',
         loadingState: {
           state: 'error',
           error: errorMessage,
           lastUpdated: new Date().toISOString()
         },
-        // Legacy states
         error: errorMessage,
         lastError: errorMessage,
         isLoading: false,
@@ -331,7 +422,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       const client = getAccountsClient();
       const newAccount = await client.createAccount(data);
 
-      // Refresh data
+      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
 
       set({ isCreatingAccount: false });
@@ -346,14 +437,14 @@ export const usePlan = create<PlanState>((set, get) => ({
     }
   },
 
-  updateAccount: async (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'balance' | 'assetWeights' | 'taxable'>>) => {
+  updateAccount: async (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>) => {
     set({ error: null });
 
     try {
       const client = getAccountsClient();
       await client.updateAccount(id, updates);
 
-      // Refresh data
+      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
     } catch (error) {
       console.error('Failed to update account:', error);
@@ -371,7 +462,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       const client = getAccountsClient();
       await client.deleteAccount(id);
 
-      // Refresh data
+      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
     } catch (error) {
       console.error('Failed to delete account:', error);
@@ -379,62 +470,6 @@ export const usePlan = create<PlanState>((set, get) => ({
         error: error instanceof Error ? error.message : 'Failed to delete account',
       });
       throw error;
-    }
-  },
-
-  refreshAggregation: async () => {
-    // Set immediate loading state
-    set({
-      aggregationLoading: 'loading',
-      isAggregating: true,
-      error: null
-    });
-
-    try {
-      const aggregationService = getAccountAggregationService();
-      // Use simple holdings-based aggregation instead of complex snapshot aggregation
-      const aggregatedAccounts = await aggregationService.aggregateAccountsFromHoldings();
-
-      // Validate aggregation
-      const validation = aggregationService.validateAggregation(aggregatedAccounts);
-      if (!validation.isValid) {
-        const errorMessage = `Aggregation issues: ${validation.errors.join(', ')}`;
-        console.warn('Aggregation validation failed:', validation.errors);
-
-        set({
-          aggregationLoading: 'error',
-          error: errorMessage,
-          lastError: errorMessage,
-          isAggregating: false,
-        });
-        return;
-      }
-
-      // Immediate success state update
-      set({
-        aggregatedAccounts,
-        aggregationLoading: 'success',
-        isAggregating: false,
-        // Also update the legacy plan.accounts for backward compatibility
-        plan: {
-          ...get().plan,
-          accounts: aggregatedAccounts,
-        },
-        // Clear simulation result since accounts changed
-        simulationResult: null,
-      });
-
-      console.log(`Aggregated ${aggregatedAccounts.length} account types`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to aggregate accounts';
-      console.error('Failed to refresh aggregation:', error);
-
-      set({
-        aggregationLoading: 'error',
-        error: errorMessage,
-        lastError: errorMessage,
-        isAggregating: false,
-      });
     }
   },
 
@@ -451,43 +486,23 @@ export const usePlan = create<PlanState>((set, get) => ({
     });
   },
 
-  // Legacy method - now returns aggregatedAccounts directly
-  getAccounts: async () => {
-    const { aggregatedAccounts } = get();
-    if (aggregatedAccounts.length === 0) {
-      // If no aggregated accounts, try to refresh
-      await get().refreshAggregation();
-      return get().aggregatedAccounts;
-    }
-    return aggregatedAccounts;
-  },
-
-  // Legacy method - now calls refreshAggregation
-  updateAccounts: async () => {
-    await get().refreshAggregation();
-  },
-
   updateSocialSecurity: (ssUpdates) =>
     set((state) => {
       // Update state and clear all results
-      const newPlan = {
-        ...state.plan,
-        socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
-      };
-
       const newState = {
-        plan: newPlan,
+        plan: {
+          ...state.plan,
+          socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
+        },
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
 
-      // Persist to localStorage
-      savePlanState(newPlan);
-
       // Schedule all simulations
       scheduleSimulations(get);
+      setTimeout(() => onProfileChanged(get), 0);
 
       return newState;
     }),
@@ -495,40 +510,36 @@ export const usePlan = create<PlanState>((set, get) => ({
   updateAssumptions: (assumptionUpdates) =>
     set((state) => {
       // Update state and clear all results
-      const newPlan = {
-        ...state.plan,
-        assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
-      };
-
       const newState = {
-        plan: newPlan,
+        plan: {
+          ...state.plan,
+          assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
+        },
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
         simulationResult: null,
       };
 
-      // Persist to localStorage
-      savePlanState(newPlan);
-
       // Schedule all simulations
       scheduleSimulations(get);
+      setTimeout(() => onProfileChanged(get), 0);
 
       return newState;
     }),
 
   setUseServerSideCalculations: (useServerSide) =>
-    set((state) => {
+    set(() => {
       // Persist preference to localStorage
       saveUserPreferences({ useServerSideCalculations: useServerSide });
 
       // Update preference and clear all simulation results to force re-calculation
       const newState = {
         useServerSideCalculations: useServerSide,
-        ssAnalysisResult: null,
-        spendingAnalysisResult: null,
-        retirementAgeAnalysisResult: null,
-        simulationResult: null,
+        ssAnalysisResult: null as SSAnalysisResult[] | null,
+        spendingAnalysisResult: null as SpendingAnalysisResult[] | null,
+        retirementAgeAnalysisResult: null as RetirementAgeAnalysisResult[] | null,
+        simulationResult: null as SimulationResult | null,
       };
 
       // Schedule all simulations with new calculation method
@@ -541,11 +552,10 @@ export const usePlan = create<PlanState>((set, get) => ({
     set(() => ({ simulationResult: result })),
 
   validatePlan: async () => {
-    const { plan, aggregatedAccounts } = get();
+    const { plan } = get();
 
     try {
-      // Use aggregatedAccounts directly instead of calling getAccounts()
-      const hasValidAccounts = aggregatedAccounts.length > 0 && aggregatedAccounts.every(account => {
+      const hasValidAccounts = plan.accounts.length > 0 && plan.accounts.every(account => {
         const weightSum = account.assetWeights.stocks + account.assetWeights.bonds;
         return Math.abs(weightSum - 1) < 0.001;
       });
@@ -572,6 +582,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       spendingAnalysisResult: null,
       retirementAgeAnalysisResult: null,
       isValid: true,
+      profileLoaded: false,
       // Reset simulation loading states
       isSimulatingMain: false,
       isSimulatingSS: false,
@@ -580,100 +591,85 @@ export const usePlan = create<PlanState>((set, get) => ({
       // Reset accounts state
       accounts: [],
       accountsWithHoldings: [],
-      aggregatedAccounts: [],
       loadingState: { state: 'idle' },
       accountsLoading: 'idle',
-      aggregationLoading: 'idle',
       isLoading: false,
       isCreatingAccount: false,
       isAddingSnapshot: false,
-      isAggregating: false,
       error: null,
       lastError: null,
     }),
 
   runSSAnalysis: async () => {
-    const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSS, useServerSideCalculations } = state;
+    const { plan, useServerSideCalculations } = get();
 
-    if (isSimulatingSS) {
-      return;
-    }
-
+    const generation = ++ssSimGeneration;
     set({ isSimulatingSS: true });
 
     const service = getSimulationService();
 
     try {
-      const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSocialSecurityAnalysis(planWithAccounts, useServerSideCalculations);
+      const results = await service.runSocialSecurityAnalysis(plan, useServerSideCalculations);
+      if (generation !== ssSimGeneration) return;
       set({ ssAnalysisResult: results, isSimulatingSS: false });
     } catch (error) {
+      if (generation !== ssSimGeneration) return;
       console.error('❌ SS analysis failed:', error);
       set({ isSimulatingSS: false, ssAnalysisResult: null });
     }
   },
 
   runSpendingAnalysis: async () => {
-    const state = get();
-    const { plan, aggregatedAccounts, isSimulatingSpending, useServerSideCalculations } = state;
+    const { plan, useServerSideCalculations } = get();
 
-    if (isSimulatingSpending) {
-      return;
-    }
-
+    const generation = ++spendingSimGeneration;
     set({ isSimulatingSpending: true });
 
     const service = getSimulationService();
 
     try {
-      const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runSpendingAnalysis(planWithAccounts, useServerSideCalculations);
+      const results = await service.runSpendingAnalysis(plan, useServerSideCalculations);
+      if (generation !== spendingSimGeneration) return;
       set({ spendingAnalysisResult: results, isSimulatingSpending: false });
     } catch (error) {
+      if (generation !== spendingSimGeneration) return;
       console.error('❌ Spending analysis failed:', error);
       set({ isSimulatingSpending: false, spendingAnalysisResult: null });
     }
   },
 
   runRetirementAgeAnalysis: async () => {
-    const state = get();
-    const { plan, aggregatedAccounts, isSimulatingRetirementAge, useServerSideCalculations } = state;
+    const { plan, useServerSideCalculations } = get();
 
-    if (isSimulatingRetirementAge) {
-      return;
-    }
-
+    const generation = ++retirementAgeSimGeneration;
     set({ isSimulatingRetirementAge: true });
 
     const service = getSimulationService();
 
     try {
-      const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-      const results = await service.runRetirementAgeAnalysis(planWithAccounts, useServerSideCalculations);
+      const results = await service.runRetirementAgeAnalysis(plan, useServerSideCalculations);
+      if (generation !== retirementAgeSimGeneration) return;
       set({ retirementAgeAnalysisResult: results, isSimulatingRetirementAge: false });
     } catch (error) {
+      if (generation !== retirementAgeSimGeneration) return;
       console.error('❌ Retirement age analysis failed:', error);
       set({ isSimulatingRetirementAge: false, retirementAgeAnalysisResult: null });
     }
   },
 
   runMainSimulation: async () => {
-    const state = get();
-    const { plan, aggregatedAccounts, isSimulatingMain, useServerSideCalculations } = state;
+    const { plan, useServerSideCalculations } = get();
 
-    if (isSimulatingMain) {
-      return;
-    }
-
-    const planWithAccounts = { ...plan, accounts: aggregatedAccounts };
-
+    const generation = ++mainSimGeneration;
     set({ isSimulatingMain: true });
 
     const service = getSimulationService();
 
     try {
-      const result = await service.runMainSimulation(planWithAccounts, useServerSideCalculations);
+      const result = await service.runMainSimulation(plan, useServerSideCalculations);
+
+      // Discard stale results if a newer simulation was triggered
+      if (generation !== mainSimGeneration) return;
 
       console.log('✅ Main simulation completed', {
         successProbability: result.successProbability,
@@ -685,6 +681,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         isSimulatingMain: false
       });
     } catch (error) {
+      if (generation !== mainSimGeneration) return;
       console.error('❌ Main simulation failed:', error);
       set({
         isSimulatingMain: false,
@@ -694,36 +691,23 @@ export const usePlan = create<PlanState>((set, get) => ({
   },
 }));
 
-// Selectors for individual accounts functionality (consolidated from useIndividualAccounts)
+// Selectors for individual accounts functionality
 export const usePlanSelectors = {
-  // Get all accounts
   useAccounts: () => usePlan(state => state.accounts),
-
-  // Get accounts with real-time holdings
   useAccountsWithHoldings: () => usePlan(state => state.accountsWithHoldings),
 
-  // Legacy selector removed - all components now use useAccountsWithHoldings
-
-  // Get aggregated accounts for projection
-  useAggregatedAccounts: () => usePlan(state => state.aggregatedAccounts),
-
-  // Modern loading states with fail-fast design
+  // Loading states
   useLoadingState: () => usePlan(state => state.loadingState),
   useAccountsLoading: () => usePlan(state => state.accountsLoading),
-  useAggregationLoading: () => usePlan(state => state.aggregationLoading),
 
   // Legacy loading states (for backward compatibility)
   useIsLoading: () => usePlan(state => state.isLoading),
   useIsCreating: () => usePlan(state => state.isCreatingAccount),
   useIsAddingSnapshot: () => usePlan(state => state.isAddingSnapshot),
-  useIsAggregating: () => usePlan(state => state.isAggregating),
 
-  // Enhanced error states with immediate feedback
+  // Error states
   useError: () => usePlan(state => state.error),
   useLastError: () => usePlan(state => state.lastError),
-
-  // Get mode and capabilities - deprecated properties removed
-  // useSnapshotMode and useHasSnapshots have been removed as they don't exist in the current architecture
 
   // Get account by ID
   useAccount: (id: string) => usePlan(state =>
