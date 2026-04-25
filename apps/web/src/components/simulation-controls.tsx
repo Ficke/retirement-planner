@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { usePlan } from '@/state/usePlan';
 import { useSimulationState } from '@/hooks/useSimulationState';
 import { formatCurrency } from '@/lib/format';
@@ -14,7 +14,7 @@ import type { SocialSecurityUpdate } from '@/domain/types';
 import { RefreshCw, HelpCircle } from 'lucide-react';
 
 export function SimulationControls() {
-  const { plan, updateProfile, updateSocialSecurity, runMainSimulation } = usePlan();
+  const { plan, updateProfile, updateSocialSecurity } = usePlan();
   const { isSimulationRunning } = useSimulationState();
 
   // Check if main simulation is running
@@ -41,15 +41,6 @@ export function SimulationControls() {
     const rate = value / 100;
     updateProfile({ salaryGrowthRate: rate });
   }, [updateProfile]);
-
-
-  // Run initial simulation on mount if no result exists
-  useEffect(() => {
-    const { simulationResult } = usePlan.getState();
-    if (!simulationResult) {
-      runMainSimulation();
-    }
-  }, []); // Only run on mount
 
 
   const yearsToRetirement = plan.profile.retirementAge - plan.profile.age;

@@ -51,10 +51,6 @@ export function ModernAccountsManager() {
     stocksPct: '60',
   });
 
-  useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
-
   // Focus balance input when entering edit mode
   useEffect(() => {
     if (editing && balanceInputRef.current) {

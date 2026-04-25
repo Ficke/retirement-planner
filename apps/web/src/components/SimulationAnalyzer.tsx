@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { usePlan } from '@/state/usePlan';
 import { useSimulationState } from '@/hooks/useSimulationState';
 import { Button } from '@/components/ui/button';
@@ -330,7 +330,7 @@ function EnhancedSpendingTable({ results, best }: EnhancedSpendingTableProps) {
 }
 
 function SocialSecurityAnalysis() {
-  const { runSSAnalysis, ssAnalysisResult, plan } = usePlan();
+  const { ssAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -422,7 +422,7 @@ function SocialSecurityAnalysis() {
 }
 
 function SpendingAnalysis() {
-  const { runSpendingAnalysis, spendingAnalysisResult, plan } = usePlan();
+  const { spendingAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -606,7 +606,7 @@ function SpendingAnalysis() {
 }
 
 function RetirementAgeAnalysis() {
-  const { runRetirementAgeAnalysis, retirementAgeAnalysisResult, plan } = usePlan();
+  const { retirementAgeAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -786,19 +786,7 @@ function RetirementAgeAnalysis() {
 
 export function SimulationAnalyzer() {
   const [isExpanded, setIsExpanded] = useState(true);
-  const { runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis, plan } = usePlan();
-
-  // Get the current analysis results for display only
-  const { ssAnalysisResult, spendingAnalysisResult, retirementAgeAnalysisResult } = usePlan();
-
-  // Only run analyses on initial mount if results are missing
-  useEffect(() => {
-    if (isExpanded) {
-      if (!ssAnalysisResult) runSSAnalysis();
-      if (!spendingAnalysisResult) runSpendingAnalysis();
-      if (!retirementAgeAnalysisResult) runRetirementAgeAnalysis();
-    }
-  }, [isExpanded]); // Only depend on isExpanded - state management now handles scheduling
+  const { plan } = usePlan();
 
   return (
     <Card>
