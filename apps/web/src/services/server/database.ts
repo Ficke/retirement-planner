@@ -778,10 +778,10 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     const bondsWeight = data.bondsPct ?? 0;
 
     const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id
-    `, [data.name, data.institution, data.type, balance, stocksWeight, bondsWeight]);
+    `, [data.name, data.institution, data.type, balance, stocksWeight, bondsWeight, data.userId ?? null]);
 
     if (!result?.id) throw new Error('Failed to create account');
 

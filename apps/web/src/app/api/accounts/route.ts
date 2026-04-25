@@ -30,8 +30,8 @@ export async function GET() {
       user_id: row.user_id,
       balance: Number(row.balance) || 0,
       assetWeights: {
-        stocks: Number(row.stocks_pct),
-        bonds: Number(row.bonds_pct),
+        stocks: Number(row.stocks_pct) || 0,
+        bonds: Number(row.bonds_pct) || 0,
       },
       balanceAsOf: row.balance_as_of ?? undefined,
       taxable: row.account_type === 'Taxable',
@@ -76,17 +76,9 @@ export async function POST(request: NextRequest) {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    const account = await db.createAccount(data);
+    const account = await db.createAccount({ ...data, userId: user.id });
 
-    // Assign account to logged-in user
-    await db.query(
-      'UPDATE accounts SET user_id = $1 WHERE id = $2',
-      [user.id, account.id]
-    );
-
-    const updatedAccount = await db.getAccount(account.id);
-
-    return NextResponse.json(updatedAccount, { status: 201 });
+    return NextResponse.json(account, { status: 201 });
   } catch (error) {
     console.error('Create account error:', error);
     return NextResponse.json(

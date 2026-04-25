@@ -169,8 +169,11 @@ class SimulationServiceImpl implements SimulationService {
     if (useServerSide) {
       try {
         console.log('🦀 Using server-side Rust batch simulation for spending analysis');
-        // Test spending levels from $50k to $100k in $5k increments
-        const spendingLevels = Array.from({ length: 11 }, (_, i) => 50000 + i * 5000);
+        // 11 levels centered on desiredSpending, step ≈ 10% of that value rounded to nearest $5k
+        const base = plan.profile.desiredSpending;
+        const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
+        const spendingLevels = Array.from({ length: 11 }, (_, i) => base + step * (i - 5))
+          .filter(s => s > 0);
 
         const simulations: BatchSimulationRequest[] = spendingLevels.map((annualSpending) => ({
           id: `spending-${annualSpending}`,

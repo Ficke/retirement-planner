@@ -34,6 +34,7 @@ export interface CreateAccountData {
   balance?: number;
   stocksPct?: number;
   bondsPct?: number;
+  userId?: string;
 }
 
 export interface UserProfile {
