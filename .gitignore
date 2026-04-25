@@ -48,6 +48,9 @@ terraform.tfstate.*
 **/*.tfplan
 **/crash.log
 
+# Claude Code
+.claude/
+
 # OS / Editor
 .DS_Store
 .vscode/
