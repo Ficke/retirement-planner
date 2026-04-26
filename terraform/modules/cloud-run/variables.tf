@@ -88,3 +88,9 @@ variable "container_port" {
   type        = number
   default     = 3000
 }
+
+variable "use_tcp_probe" {
+  description = "Use TCP socket for startup/liveness probes instead of HTTP GET (for non-HTTP services)"
+  type        = bool
+  default     = false
+}
