@@ -86,6 +86,7 @@ module "rust_simulation" {
 
   # Custom container port for Rust service
   container_port = 8081
+  use_tcp_probe  = true
 
   depends_on = [
     google_project_service.required_apis
@@ -138,8 +139,10 @@ module "cloud_run" {
 resource "google_cloudbuild_trigger" "main_branch" {
   count = var.enable_cloud_build_trigger ? 1 : 0
 
-  name        = var.cloud_build_trigger_name
-  description = "Build and deploy on push to main branch"
+  name            = var.cloud_build_trigger_name
+  description     = "Build and deploy on push to main branch"
+  service_account = var.cloud_build_service_account
+  include_build_logs = "INCLUDE_BUILD_LOGS_WITH_STATUS"
 
   github {
     owner = var.github_owner

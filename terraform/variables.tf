@@ -175,6 +175,12 @@ variable "cloud_build_trigger_name" {
   default     = "deploy-production"
 }
 
+variable "cloud_build_service_account" {
+  description = "Service account for Cloud Build trigger (e.g. projects/PROJECT_ID/serviceAccounts/PROJECT_NUMBER-compute@developer.gserviceaccount.com)"
+  type        = string
+  default     = ""
+}
+
 # Build-time substitution variables passed as --build-arg to Kaniko.
 # These are distinct from public_env_vars (Cloud Run runtime env vars):
 # NEXT_PUBLIC_* values must be baked into the client JS bundle during `next build`,

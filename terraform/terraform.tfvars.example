@@ -74,9 +74,10 @@ allow_unauthenticated = true
 
 # Cloud Build (for GitHub integration)
 enable_cloud_build_trigger = true
-cloud_build_trigger_name   = "deploy-production"
-github_owner               = "your-github-username"
-github_repo                = "retirement-planner"
+cloud_build_trigger_name        = "deploy-production"
+cloud_build_service_account     = "projects/YOUR_PROJECT_ID/serviceAccounts/YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+github_owner                    = "your-github-username"
+github_repo                     = "retirement-planner"
 
 # Build-time substitutions — baked into the client JS bundle by next build.
 # Distinct from public_env_vars (Cloud Run runtime): NEXT_PUBLIC_* values must
