@@ -1,143 +1,287 @@
 "use client";
 
-import { usePlan } from '@/state/usePlan';
+import { usePlan } from "@/state/usePlan";
 import {
   US_STOCK_REAL_RETURNS_1926_2024,
   US_BOND_REAL_RETURNS_1926_2024,
   US_INFLATION_1926_2024,
   ASSET_CORRELATION_MATRIX_1926_2024,
-} from '@/data/market-history';
-import { Card } from '../primitives';
-import { Donut } from '../charts';
+} from "@/data/market-history";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DashboardCard,
+  PageHeader,
+  PageShell,
+} from "@/components/retire/ui";
+import { Donut } from "@/components/ui/charts";
 
-// What the simulation actually uses — hardcoded in market-history.ts
-// (TS engine) and mirrored in rust-simulation-service/.../parametric_returns.rs.
 const ENGINE = {
-  stocks: { mean: US_STOCK_REAL_RETURNS_1926_2024.mean, vol: US_STOCK_REAL_RETURNS_1926_2024.volatility },
-  bonds: { mean: US_BOND_REAL_RETURNS_1926_2024.mean, vol: US_BOND_REAL_RETURNS_1926_2024.volatility },
-  inflation: { mean: US_INFLATION_1926_2024.mean, vol: US_INFLATION_1926_2024.volatility },
+  stocks: {
+    mean: US_STOCK_REAL_RETURNS_1926_2024.mean,
+    vol: US_STOCK_REAL_RETURNS_1926_2024.volatility,
+  },
+  bonds: {
+    mean: US_BOND_REAL_RETURNS_1926_2024.mean,
+    vol: US_BOND_REAL_RETURNS_1926_2024.volatility,
+  },
+  inflation: {
+    mean: US_INFLATION_1926_2024.mean,
+    vol: US_INFLATION_1926_2024.volatility,
+  },
   correlation: ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds,
 } as const;
+
+const STOCK_COLOR = "var(--color-account-traditional)";
+const BOND_COLOR = "var(--color-account-hsa)";
 
 export function PageAssumptions() {
   const { plan } = usePlan();
 
-  // Portfolio-weighted stocks/bonds from current accounts
   const totalBal = plan.accounts.reduce((s, a) => s + a.balance, 0);
-  const stockWeight = totalBal > 0
-    ? plan.accounts.reduce((s, a) => s + a.balance * a.assetWeights.stocks, 0) / totalBal
-    : 0.6;
+  const stockWeight =
+    totalBal > 0
+      ? plan.accounts.reduce((s, a) => s + a.balance * a.assetWeights.stocks, 0) /
+        totalBal
+      : 0.6;
   const bondWeight = 1 - stockWeight;
 
-  const expectedReturn = (ENGINE.stocks.mean * stockWeight + ENGINE.bonds.mean * bondWeight) * 100;
-  const expectedVol = Math.sqrt(
-    Math.pow(ENGINE.stocks.vol * stockWeight, 2) +
-    Math.pow(ENGINE.bonds.vol * bondWeight, 2) +
-    2 * stockWeight * bondWeight * ENGINE.stocks.vol * ENGINE.bonds.vol * ENGINE.correlation
-  ) * 100;
+  const expectedReturn =
+    (ENGINE.stocks.mean * stockWeight + ENGINE.bonds.mean * bondWeight) * 100;
+  const expectedVol =
+    Math.sqrt(
+      Math.pow(ENGINE.stocks.vol * stockWeight, 2) +
+        Math.pow(ENGINE.bonds.vol * bondWeight, 2) +
+        2 *
+          stockWeight *
+          bondWeight *
+          ENGINE.stocks.vol *
+          ENGINE.bonds.vol *
+          ENGINE.correlation,
+    ) * 100;
 
   return (
-    <>
-      <div className="r-page-head">
-        <div>
-          <h1>Assumptions</h1>
-          <div className="sub">
-            What the Monte Carlo simulation assumes about the world. Engine constants from US 1926–2024 history, shown for transparency.
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Assumptions"
+        description="What the Monte Carlo simulation assumes about the world. Engine constants from US 1926–2024 history, shown for transparency."
+      />
 
-      <div className="r-section-title"><h2>Market model</h2></div>
-      <div className="r-split-2">
-        <Card title="Asset class assumptions" sub="Real (after-inflation) returns. Hardcoded from US 1926–2024 history." flush>
-          <table className="r-tbl">
-            <thead>
-              <tr>
-                <th>Asset class</th>
-                <th className="r">Weight</th>
-                <th className="r">Expected return</th>
-                <th className="r">Volatility</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <span className="r-dot" style={{ background: 'var(--r-c-traditional)', marginRight: 8, width: 9, height: 9 }} />
-                  Stocks
-                </td>
-                <td className="r mono">{(stockWeight * 100).toFixed(0)}%</td>
-                <td className="r mono">{(ENGINE.stocks.mean * 100).toFixed(1)}%</td>
-                <td className="r mono">{(ENGINE.stocks.vol * 100).toFixed(1)}%</td>
-              </tr>
-              <tr>
-                <td>
-                  <span className="r-dot" style={{ background: 'var(--r-c-hsa)', marginRight: 8, width: 9, height: 9 }} />
-                  Bonds
-                </td>
-                <td className="r mono">{(bondWeight * 100).toFixed(0)}%</td>
-                <td className="r mono">{(ENGINE.bonds.mean * 100).toFixed(1)}%</td>
-                <td className="r mono">{(ENGINE.bonds.vol * 100).toFixed(1)}%</td>
-              </tr>
-            </tbody>
-            <tfoot>
-              <tr style={{ background: 'var(--r-bg-sunk)' }}>
-                <td style={{ fontWeight: 600, color: 'var(--r-ink-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Portfolio (derived)</td>
-                <td className="r mono" style={{ fontWeight: 600 }}>100%</td>
-                <td className="r mono" style={{ fontWeight: 600 }}>{expectedReturn.toFixed(1)}%</td>
-                <td className="r mono" style={{ fontWeight: 600 }}>{expectedVol.toFixed(1)}%</td>
-              </tr>
-            </tfoot>
-          </table>
-          <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--r-ink-3)', borderTop: '1px solid var(--r-line)', background: 'var(--r-bg-sunk)' }}>
-            Asset-class returns and vol are baked into the engine. The parametric mode samples from these directly; the bootstrap mode resamples the historical sequences they were derived from.
+      <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+        Market model
+      </h2>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DashboardCard
+          title="Asset class assumptions"
+          description="Real (after-inflation) returns. Hardcoded from US 1926–2024 history."
+          flush
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Asset class</TableHead>
+                <TableHead className="text-right">Weight</TableHead>
+                <TableHead className="text-right">Expected return</TableHead>
+                <TableHead className="text-right">Volatility</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                <TableCell>
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      className="size-2.5 rounded-full"
+                      style={{ background: STOCK_COLOR }}
+                    />
+                    Stocks
+                  </span>
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(stockWeight * 100).toFixed(0)}%
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(ENGINE.stocks.mean * 100).toFixed(1)}%
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(ENGINE.stocks.vol * 100).toFixed(1)}%
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      className="size-2.5 rounded-full"
+                      style={{ background: BOND_COLOR }}
+                    />
+                    Bonds
+                  </span>
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(bondWeight * 100).toFixed(0)}%
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(ENGINE.bonds.mean * 100).toFixed(1)}%
+                </TableCell>
+                <TableCell className="text-right font-mono">
+                  {(ENGINE.bonds.vol * 100).toFixed(1)}%
+                </TableCell>
+              </TableRow>
+            </TableBody>
+            <TableFooter className="bg-muted/40">
+              <TableRow>
+                <TableCell className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                  Portfolio (derived)
+                </TableCell>
+                <TableCell className="text-right font-mono font-semibold">
+                  100%
+                </TableCell>
+                <TableCell className="text-right font-mono font-semibold">
+                  {expectedReturn.toFixed(1)}%
+                </TableCell>
+                <TableCell className="text-right font-mono font-semibold">
+                  {expectedVol.toFixed(1)}%
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          </Table>
+          <div className="bg-muted/40 border-border text-muted-foreground border-t px-4 py-2.5 text-[11px]">
+            Asset-class returns and vol are baked into the engine. The parametric mode
+            samples from these directly; the bootstrap mode resamples the historical
+            sequences they were derived from.
           </div>
-        </Card>
-        <Card title="Allocation" sub="Stock/bond split across all your accounts">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+        </DashboardCard>
+
+        <DashboardCard
+          title="Allocation"
+          description="Stock/bond split across all your accounts"
+        >
+          <div className="flex items-center gap-6">
             <Donut
               data={[
-                { value: stockWeight, color: 'var(--r-c-traditional)' },
-                { value: bondWeight, color: 'var(--r-c-hsa)' },
+                { value: stockWeight, color: STOCK_COLOR },
+                { value: bondWeight, color: BOND_COLOR },
               ]}
               size={140}
               thickness={20}
               centerLabel="Stocks"
-              centerValue={(stockWeight * 100).toFixed(0) + '%'}
+              centerValue={`${(stockWeight * 100).toFixed(0)}%`}
             />
-            <div style={{ flex: 1, fontSize: 12.5, color: 'var(--r-ink-2)', lineHeight: 1.6 }}>
-              Allocation is portfolio-weighted from each account&rsquo;s stock/bond split. Edit individual account allocations on the Accounts page.
-            </div>
+            <p className="text-muted-foreground flex-1 text-xs leading-relaxed">
+              Allocation is portfolio-weighted from each account&rsquo;s stock/bond split.
+              Edit individual account allocations on the Accounts page.
+            </p>
           </div>
-        </Card>
+        </DashboardCard>
       </div>
 
-      <div className="r-section-title"><h2>Economic &amp; rule assumptions</h2></div>
-      <Card flush>
-        <table className="r-tbl">
-          <thead><tr><th>Assumption</th><th className="r">Value</th><th>Source</th></tr></thead>
-          <tbody>
-            <tr><td>Long-run inflation (CPI)</td><td className="r mono">{(ENGINE.inflation.mean * 100).toFixed(1)}%</td><td style={{ color: 'var(--r-ink-3)' }}>US 1926–2024, real returns net of inflation</td></tr>
-            <tr><td>Stock/bond correlation</td><td className="r mono">{ENGINE.correlation.toFixed(2)}</td><td style={{ color: 'var(--r-ink-3)' }}>US 1926–2024 historical</td></tr>
-            <tr><td>Tax brackets</td><td className="r mono">{plan.profile.state === 'CA' ? 'Federal 2025 + CA 2025' : 'Federal 2025'}</td><td style={{ color: 'var(--r-ink-3)' }}>IRS{plan.profile.state === 'CA' ? ' / FTB' : ''}</td></tr>
-            <tr><td>RMD table</td><td className="r mono">SECURE 2.0 (2024+)</td><td style={{ color: 'var(--r-ink-3)' }}>IRS Pub. 590-B</td></tr>
-            <tr><td>Contribution limits</td><td className="r mono">2025</td><td style={{ color: 'var(--r-ink-3)' }}>IRS</td></tr>
-          </tbody>
-        </table>
-      </Card>
+      <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+        Economic &amp; rule assumptions
+      </h2>
+      <DashboardCard flush>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Assumption</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+              <TableHead>Source</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <RuleRow
+              label="Long-run inflation (CPI)"
+              value={`${(ENGINE.inflation.mean * 100).toFixed(1)}%`}
+              source="US 1926–2024, real returns net of inflation"
+            />
+            <RuleRow
+              label="Stock/bond correlation"
+              value={ENGINE.correlation.toFixed(2)}
+              source="US 1926–2024 historical"
+            />
+            <RuleRow
+              label="Tax brackets"
+              value={
+                plan.profile.state === "CA"
+                  ? "Federal 2025 + CA 2025"
+                  : "Federal 2025"
+              }
+              source={`IRS${plan.profile.state === "CA" ? " / FTB" : ""}`}
+            />
+            <RuleRow
+              label="RMD table"
+              value="SECURE 2.0 (2024+)"
+              source="IRS Pub. 590-B"
+            />
+            <RuleRow label="Contribution limits" value="2025" source="IRS" />
+          </TableBody>
+        </Table>
+      </DashboardCard>
 
-      <div className="r-section-title"><h2>Simulation parameters</h2></div>
-      <Card flush>
-        <table className="r-tbl">
-          <thead><tr><th>Parameter</th><th className="r">Value</th><th>Notes</th></tr></thead>
-          <tbody>
-            <tr><td>Method</td><td className="r mono">Historical bootstrap</td><td style={{ color: 'var(--r-ink-3)' }}>Resamples real US 1926–2024 years in 3-year blocks</td></tr>
-            <tr><td>Paths per simulation</td><td className="r mono">5,000</td><td style={{ color: 'var(--r-ink-3)' }}>Independent Monte Carlo trajectories</td></tr>
-            <tr><td>Time horizon</td><td className="r mono">Age {plan.profile.age} → {plan.profile.lifeExpectancy}</td><td style={{ color: 'var(--r-ink-3)' }}>Set on Profile</td></tr>
-            <tr><td>Step size</td><td className="r mono">Annual</td><td style={{ color: 'var(--r-ink-3)' }}>End-of-year valuation</td></tr>
-            <tr><td>Bootstrap block size</td><td className="r mono">3 years</td><td style={{ color: 'var(--r-ink-3)' }}>Preserves multi-year sequences (e.g. 2008 → 2009)</td></tr>
-          </tbody>
-        </table>
-      </Card>
-    </>
+      <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+        Simulation parameters
+      </h2>
+      <DashboardCard flush>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Parameter</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+              <TableHead>Notes</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <RuleRow
+              label="Method"
+              value="Historical bootstrap"
+              source="Resamples real US 1926–2024 years in 3-year blocks"
+            />
+            <RuleRow
+              label="Paths per simulation"
+              value="5,000"
+              source="Independent Monte Carlo trajectories"
+            />
+            <RuleRow
+              label="Time horizon"
+              value={`Age ${plan.profile.age} → ${plan.profile.lifeExpectancy}`}
+              source="Set on Profile"
+            />
+            <RuleRow
+              label="Step size"
+              value="Annual"
+              source="End-of-year valuation"
+            />
+            <RuleRow
+              label="Bootstrap block size"
+              value="3 years"
+              source="Preserves multi-year sequences (e.g. 2008 → 2009)"
+            />
+          </TableBody>
+        </Table>
+      </DashboardCard>
+    </PageShell>
+  );
+}
+
+function RuleRow({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: string;
+  source: string;
+}) {
+  return (
+    <TableRow>
+      <TableCell>{label}</TableCell>
+      <TableCell className="text-right font-mono">{value}</TableCell>
+      <TableCell className="text-muted-foreground">{source}</TableCell>
+    </TableRow>
   );
 }
