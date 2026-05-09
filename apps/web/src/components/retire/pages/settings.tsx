@@ -36,6 +36,8 @@ export function PageSettings() {
     updatePlan,
     useServerSideCalculations,
     setUseServerSideCalculations,
+    privateAccountsMode,
+    setPrivateAccountsMode,
   } = usePlan();
   const updateAssumptions = (
     assumptions: Parameters<typeof updatePlan>[0]["assumptions"],
@@ -93,6 +95,30 @@ export function PageSettings() {
                 <SelectItem value="local">Local (browser worker)</SelectItem>
               </SelectContent>
             </Select>
+          </Setting>
+        </DashboardCard>
+
+        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+          Privacy
+        </h2>
+        <DashboardCard>
+          <Setting
+            label="Account storage"
+            helper="Private mode keeps your accounts in this browser only — they're never written to our database. Simulations still send the values to the compute service for the run, but nothing is stored. Switching off will reload accounts saved in your account."
+          >
+            <ToggleGroup
+              type="single"
+              value={privateAccountsMode ? "private" : "stored"}
+              onValueChange={(v) => {
+                if (!v) return;
+                void setPrivateAccountsMode(v === "private");
+              }}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="stored">Stored</ToggleGroupItem>
+              <ToggleGroupItem value="private">Private (browser only)</ToggleGroupItem>
+            </ToggleGroup>
           </Setting>
         </DashboardCard>
 

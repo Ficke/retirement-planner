@@ -19,6 +19,8 @@ import { getProfileClient } from '@/services/client/profile-client';
 import {
   loadUserPreferences,
   saveUserPreferences,
+  loadLocalAccounts,
+  saveLocalAccounts,
 } from '@/lib/persistence';
 
 // Simplified account with real-time holdings
@@ -156,6 +158,7 @@ interface PlanState {
 
   // User preferences
   useServerSideCalculations: boolean;
+  privateAccountsMode: boolean;
 
   // Simulation loading states - one per simulation type
   isSimulatingMain: boolean;
@@ -200,6 +203,7 @@ interface PlanState {
 
   // User preference actions
   setUseServerSideCalculations: (useServerSide: boolean) => void;
+  setPrivateAccountsMode: (enabled: boolean) => Promise<void>;
 
   // Account management actions
   loadAccounts: () => Promise<void>;
@@ -217,6 +221,7 @@ function getInitialPreferences() {
   const saved = loadUserPreferences();
   return {
     useServerSideCalculations: saved?.useServerSideCalculations ?? true,
+    privateAccountsMode: saved?.privateAccountsMode ?? true,
   };
 }
 
@@ -361,8 +366,10 @@ export const usePlan = create<PlanState>((set, get) => ({
     });
 
     try {
-      const client = getAccountsClient();
-      const accounts = await client.getAccounts();
+      const { privateAccountsMode } = get();
+      const accounts = privateAccountsMode
+        ? (loadLocalAccounts<Account>() ?? [])
+        : await getAccountsClient().getAccounts();
 
       // Validate accounts
       const validation = validateAccounts(accounts);
@@ -418,8 +425,33 @@ export const usePlan = create<PlanState>((set, get) => ({
     set({ isCreatingAccount: true, error: null });
 
     try {
-      const client = getAccountsClient();
-      const newAccount = await client.createAccount(data);
+      const { privateAccountsMode } = get();
+      let newAccount: Account;
+
+      if (privateAccountsMode) {
+        const stocks = data.stocksPct ?? 0.6;
+        const bonds = data.bondsPct ?? (1 - stocks);
+        const now = new Date().toISOString();
+        newAccount = {
+          id:
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: data.name,
+          institution: data.institution,
+          type: data.type,
+          balance: data.balance ?? 0,
+          assetWeights: { stocks, bonds },
+          balanceAsOf: now.split('T')[0],
+          taxable: data.type === 'Taxable',
+          createdAt: now,
+          updatedAt: now,
+        };
+        const existing = loadLocalAccounts<Account>() ?? [];
+        saveLocalAccounts([...existing, newAccount]);
+      } else {
+        newAccount = await getAccountsClient().createAccount(data);
+      }
 
       // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
@@ -440,8 +472,24 @@ export const usePlan = create<PlanState>((set, get) => ({
     set({ error: null });
 
     try {
-      const client = getAccountsClient();
-      await client.updateAccount(id, updates);
+      const { privateAccountsMode } = get();
+      if (privateAccountsMode) {
+        const existing = loadLocalAccounts<Account>() ?? [];
+        const next = existing.map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                ...updates,
+                taxable:
+                  (updates.type ?? a.type) === 'Taxable',
+                updatedAt: new Date().toISOString(),
+              }
+            : a,
+        );
+        saveLocalAccounts(next);
+      } else {
+        await getAccountsClient().updateAccount(id, updates);
+      }
 
       // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
@@ -458,8 +506,13 @@ export const usePlan = create<PlanState>((set, get) => ({
     set({ error: null });
 
     try {
-      const client = getAccountsClient();
-      await client.deleteAccount(id);
+      const { privateAccountsMode } = get();
+      if (privateAccountsMode) {
+        const existing = loadLocalAccounts<Account>() ?? [];
+        saveLocalAccounts(existing.filter((a) => a.id !== id));
+      } else {
+        await getAccountsClient().deleteAccount(id);
+      }
 
       // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
       await get().loadAccounts();
@@ -485,10 +538,36 @@ export const usePlan = create<PlanState>((set, get) => ({
     });
   },
 
+  setPrivateAccountsMode: async (enabled) => {
+    const { privateAccountsMode, accounts, useServerSideCalculations } = get();
+    if (privateAccountsMode === enabled) return;
+
+    saveUserPreferences({
+      useServerSideCalculations,
+      privateAccountsMode: enabled,
+    });
+
+    // When turning ON, seed local storage with whatever's currently loaded so
+    // the UI doesn't go blank. When turning OFF, leave local storage as-is
+    // (user may turn it back on) and just reload from DB.
+    if (enabled) {
+      const existingLocal = loadLocalAccounts<Account>();
+      if (!existingLocal || existingLocal.length === 0) {
+        saveLocalAccounts(accounts);
+      }
+    }
+
+    set({ privateAccountsMode: enabled });
+    await get().loadAccounts();
+  },
+
   setUseServerSideCalculations: (useServerSide) =>
-    set(() => {
+    set((state) => {
       // Persist preference to localStorage
-      saveUserPreferences({ useServerSideCalculations: useServerSide });
+      saveUserPreferences({
+        useServerSideCalculations: useServerSide,
+        privateAccountsMode: state.privateAccountsMode,
+      });
 
       // Update preference and clear all simulation results to force re-calculation
       const newState = {
