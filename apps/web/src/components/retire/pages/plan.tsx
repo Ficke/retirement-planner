@@ -1,32 +1,67 @@
 "use client";
 
-import { useMemo } from 'react';
-import { usePlan } from '@/state/usePlan';
-import type { FilingStatus, State } from '@/domain/types';
-import { calculateTax } from '@/engine/tax';
-import { Card } from '../primitives';
-import { fmtCurrency, fmtPercent } from '../format';
+import { useId, useMemo, useState } from "react";
+
+import { usePlan } from "@/state/usePlan";
+import type { FilingStatus, State } from "@/domain/types";
+import { calculateTax } from "@/engine/tax";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DashboardCard,
+  PageHeader,
+  PageShell,
+} from "@/components/retire/ui";
+import { fmtCurrency, fmtPercent } from "../format";
+import { cn } from "@/lib/utils";
 
 const STATE_OPTIONS: [State, string][] = [
-  ['CA', 'California'], ['TX', 'Texas'], ['FL', 'Florida'],
-  ['NY', 'New York'], ['WA', 'Washington'], ['Other', 'Other'],
+  ["CA", "California"],
+  ["TX", "Texas"],
+  ["FL", "Florida"],
+  ["NY", "New York"],
+  ["WA", "Washington"],
+  ["Other", "Other"],
 ];
 
 const FILING_OPTIONS: [FilingStatus, string][] = [
-  ['Single', 'Single'],
-  ['MarriedFilingJointly', 'Married Filing Jointly'],
-  ['MarriedFilingSeparately', 'Married Filing Separately'],
-  ['HeadOfHousehold', 'Head of Household'],
+  ["Single", "Single"],
+  ["MarriedFilingJointly", "Married Filing Jointly"],
+  ["MarriedFilingSeparately", "Married Filing Separately"],
+  ["HeadOfHousehold", "Head of Household"],
 ];
 
 export function PagePlan() {
   const { plan, updatePlan } = usePlan();
-  const updateProfile = (profile: Parameters<typeof updatePlan>[0]['profile']) => updatePlan({ profile });
+  const updateProfile = (profile: Parameters<typeof updatePlan>[0]["profile"]) =>
+    updatePlan({ profile });
   const p = plan.profile;
 
   const tax = useMemo(() => {
     try {
-      return calculateTax(p.currentSalary, 0, p.age, p.filingStatus, p.state, p.desiredSpending);
+      return calculateTax(
+        p.currentSalary,
+        0,
+        p.age,
+        p.filingStatus,
+        p.state,
+        p.desiredSpending,
+      );
     } catch {
       return null;
     }
@@ -38,131 +73,289 @@ export function PagePlan() {
   const available = takeHome - p.desiredSpending;
   const availableRate = p.currentSalary > 0 ? available / p.currentSalary : 0;
   const spendOfGross = p.currentSalary > 0 ? p.desiredSpending / p.currentSalary : 0;
+  const takeHomeRate = p.currentSalary > 0 ? takeHome / p.currentSalary : 0;
 
   return (
-    <>
-      <div className="r-page-head">
-        <div>
-          <h1>Profile</h1>
-          <div className="sub">Facts about you. Auto-saves on change.</div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Profile"
+        description="Facts about you. Auto-saves on change."
+      />
 
-      <Card>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-          <Field label="Current age" type="number"
-                 value={p.age} onChange={v => updateProfile({ age: Number(v) })} />
-          <Field label="Life expectancy" type="number"
-                 value={p.lifeExpectancy} onChange={v => updateProfile({ lifeExpectancy: Number(v) })} />
-          <Field label="As-of date" type="date"
-                 value={p.asOfDate} onChange={v => updateProfile({ asOfDate: String(v) })} />
-          <SelectField label="State" value={p.state} options={STATE_OPTIONS}
-                       onChange={v => updateProfile({ state: v as State })} />
-          <SelectField label="Filing status" value={p.filingStatus} options={FILING_OPTIONS}
-                       onChange={v => updateProfile({ filingStatus: v as FilingStatus })} />
-          <Field label="Retirement age" type="number"
-                 value={p.retirementAge} onChange={v => updateProfile({ retirementAge: Number(v) })} />
-          <Field label="Current salary" type="currency"
-                 value={p.currentSalary} onChange={v => updateProfile({ currentSalary: Number(v) })} />
-          <Field label="Desired retirement spending (annual)" type="currency"
-                 value={p.desiredSpending} onChange={v => updateProfile({ desiredSpending: Number(v) })} />
-          <Field label="Salary growth (real %)" type="number" step={0.1}
-                 value={(p.salaryGrowthRate * 100).toFixed(1)}
-                 onChange={v => updateProfile({ salaryGrowthRate: Number(v) / 100 })} />
+      <DashboardCard>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <NumberField
+            label="Current age"
+            value={p.age}
+            onChange={(v) => updateProfile({ age: v })}
+          />
+          <NumberField
+            label="Life expectancy"
+            value={p.lifeExpectancy}
+            onChange={(v) => updateProfile({ lifeExpectancy: v })}
+          />
+          <DateField
+            label="As-of date"
+            value={p.asOfDate}
+            onChange={(v) => updateProfile({ asOfDate: v })}
+          />
+          <SelectField
+            label="State"
+            value={p.state}
+            options={STATE_OPTIONS}
+            onChange={(v) => updateProfile({ state: v as State })}
+          />
+          <SelectField
+            label="Filing status"
+            value={p.filingStatus}
+            options={FILING_OPTIONS}
+            onChange={(v) => updateProfile({ filingStatus: v as FilingStatus })}
+          />
+          <CurrencyField
+            label="Current salary"
+            value={p.currentSalary}
+            onChange={(v) => updateProfile({ currentSalary: v })}
+          />
+          <CurrencyField
+            label="Desired retirement spending (annual)"
+            value={p.desiredSpending}
+            onChange={(v) => updateProfile({ desiredSpending: v })}
+          />
+          <NumberField
+            label="Salary growth (real %)"
+            value={Number((p.salaryGrowthRate * 100).toFixed(1))}
+            step={0.1}
+            onChange={(v) => updateProfile({ salaryGrowthRate: v / 100 })}
+          />
         </div>
-      </Card>
+      </DashboardCard>
 
-      <div className="r-section-title"><h2>Tax &amp; Savings</h2></div>
-      <Card flush>
-        <table className="r-tbl">
-          <thead><tr><th>Flow</th><th className="r">Annual</th><th className="r">% of Gross</th></tr></thead>
-          <tbody>
-            <Row a="Gross salary" b={fmtCurrency(p.currentSalary)} c="100%" strong />
-            <Row a={`− Estimated taxes (federal + state + FICA)`} b={`-${fmtCurrency(totalTax)}`} c={fmtPercent(effRate, 1)} tone="neg" indent />
-            <Row a="Take-home pay" b={fmtCurrency(takeHome)} c={fmtPercent(p.currentSalary > 0 ? takeHome / p.currentSalary : 0, 1)} strong />
-            <Row a="− Annual spending" b={`-${fmtCurrency(p.desiredSpending)}`} c={fmtPercent(spendOfGross, 1)} tone="neg" indent />
-            <Row a="Available for savings" b={fmtCurrency(available)} c={fmtPercent(availableRate, 1)} strong />
-          </tbody>
-        </table>
-        <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--r-ink-3)', borderTop: '1px solid var(--r-line)', background: 'var(--r-bg-sunk)' }}>
-          Taxes derived from {p.state === 'CA' ? 'Federal + California 2025' : 'Federal 2025'} brackets and FICA. Per-bucket allocation (401k / HSA / Roth / Taxable) is determined automatically by the simulation engine using current contribution limits.
+      <DashboardCard title="Tax & Savings" flush>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Flow</TableHead>
+              <TableHead className="text-right">Annual</TableHead>
+              <TableHead className="text-right">% of Gross</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <FlowRow label="Gross salary" amount={fmtCurrency(p.currentSalary)} pct="100%" strong />
+            <FlowRow
+              label="− Estimated taxes (federal + state + FICA)"
+              amount={`-${fmtCurrency(totalTax)}`}
+              pct={fmtPercent(effRate, 1)}
+              tone="negative"
+              indent
+            />
+            <FlowRow
+              label="Take-home pay"
+              amount={fmtCurrency(takeHome)}
+              pct={fmtPercent(takeHomeRate, 1)}
+              strong
+            />
+            <FlowRow
+              label="− Annual spending"
+              amount={`-${fmtCurrency(p.desiredSpending)}`}
+              pct={fmtPercent(spendOfGross, 1)}
+              tone="negative"
+              indent
+            />
+            <FlowRow
+              label="Available for savings"
+              amount={fmtCurrency(available)}
+              pct={fmtPercent(availableRate, 1)}
+              strong
+            />
+          </TableBody>
+        </Table>
+        <div className="bg-muted/40 border-border text-muted-foreground border-t px-4 py-2.5 text-[11px]">
+          Taxes derived from{" "}
+          {p.state === "CA" ? "Federal + California 2025" : "Federal 2025"} brackets and
+          FICA. Per-bucket allocation (401k / HSA / Roth / Taxable) is determined
+          automatically by the simulation engine using current contribution limits.
         </div>
-      </Card>
-    </>
+      </DashboardCard>
+    </PageShell>
   );
 }
 
-function Field({
-  label, value, onChange, type = 'text', step,
+// -- Field primitives --------------------------------------------------------
+
+function Wrap({
+  label,
+  htmlFor,
+  children,
 }: {
   label: string;
-  value: string | number;
-  onChange: (v: string | number) => void;
-  type?: 'text' | 'number' | 'date' | 'currency';
-  step?: number;
+  htmlFor: string;
+  children: React.ReactNode;
 }) {
-  if (type === 'currency') {
-    const display = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value) || 0);
-    return (
-      <div className="r-field">
-        <label>{label}</label>
-        <input
-          className="r-input mono"
-          type="text"
-          defaultValue={display}
-          onBlur={e => {
-            const n = Number(e.target.value.replace(/[^0-9.-]/g, ''));
-            if (!isNaN(n)) onChange(n);
-          }}
-        />
-      </div>
-    );
-  }
   return (
-    <div className="r-field">
-      <label>{label}</label>
-      <input
-        className="r-input"
-        type={type}
-        step={step}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-      />
+    <div className="flex flex-col gap-1.5">
+      <Label
+        htmlFor={htmlFor}
+        className="text-muted-foreground text-xs font-medium tracking-wide uppercase"
+      >
+        {label}
+      </Label>
+      {children}
     </div>
   );
 }
 
+function NumberField({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  step?: number;
+  onChange: (v: number) => void;
+}) {
+  const id = useId();
+  return (
+    <Wrap label={label} htmlFor={id}>
+      <Input
+        id={id}
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (!Number.isNaN(n)) onChange(n);
+        }}
+      />
+    </Wrap>
+  );
+}
+
+function DateField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const id = useId();
+  return (
+    <Wrap label={label} htmlFor={id}>
+      <Input id={id} type="date" value={value} onChange={(e) => onChange(e.target.value)} />
+    </Wrap>
+  );
+}
+
+function CurrencyField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const id = useId();
+  const formatted = useMemo(
+    () =>
+      new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      }).format(value || 0),
+    [value],
+  );
+  // Switch to raw editing on focus, format on blur — keeps text caret happy.
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <Wrap label={label} htmlFor={id}>
+      <Input
+        id={id}
+        inputMode="numeric"
+        className="font-mono"
+        value={draft ?? formatted}
+        onFocus={() => setDraft(String(value))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft == null) return;
+          const n = Number(draft.replace(/[^0-9.-]/g, ""));
+          if (!Number.isNaN(n)) onChange(n);
+          setDraft(null);
+        }}
+      />
+    </Wrap>
+  );
+}
+
 function SelectField<T extends string>({
-  label, value, options, onChange,
+  label,
+  value,
+  options,
+  onChange,
 }: {
   label: string;
   value: T;
   options: [T, string][];
   onChange: (v: T) => void;
 }) {
+  const id = useId();
   return (
-    <div className="r-field">
-      <label>{label}</label>
-      <select className="r-select" value={value} onChange={e => onChange(e.target.value as T)}>
-        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </div>
+    <Wrap label={label} htmlFor={id}>
+      <Select value={value} onValueChange={(v) => onChange(v as T)}>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([v, l]) => (
+            <SelectItem key={v} value={v}>
+              {l}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Wrap>
   );
 }
 
-function Row({
-  a, b, c, tone, strong, indent,
+function FlowRow({
+  label,
+  amount,
+  pct,
+  tone,
+  strong,
+  indent,
 }: {
-  a: string; b: string; c: string;
-  tone?: 'neg' | 'info';
+  label: string;
+  amount: string;
+  pct: string;
+  tone?: "negative";
   strong?: boolean;
   indent?: boolean;
 }) {
   return (
-    <tr style={strong ? { background: 'var(--r-bg-sunk)' } : undefined}>
-      <td style={{ paddingLeft: indent ? 32 : 14, color: tone === 'neg' ? 'var(--r-neg)' : tone === 'info' ? 'var(--r-ink-2)' : 'var(--r-ink)', fontWeight: strong ? 600 : 400 }}>{a}</td>
-      <td className={`r mono ${tone === 'neg' ? 'r-neg' : ''}`} style={{ fontWeight: strong ? 600 : 400 }}>{b}</td>
-      <td className="r mono" style={{ color: 'var(--r-ink-3)' }}>{c}</td>
-    </tr>
+    <TableRow className={cn(strong && "bg-muted/40")}>
+      <TableCell
+        className={cn(
+          tone === "negative" && "text-danger",
+          strong && "font-semibold",
+          indent && "pl-8",
+        )}
+      >
+        {label}
+      </TableCell>
+      <TableCell
+        className={cn(
+          "text-right font-mono",
+          tone === "negative" && "text-danger",
+          strong && "font-semibold",
+        )}
+      >
+        {amount}
+      </TableCell>
+      <TableCell className="text-muted-foreground text-right font-mono">{pct}</TableCell>
+    </TableRow>
   );
 }
