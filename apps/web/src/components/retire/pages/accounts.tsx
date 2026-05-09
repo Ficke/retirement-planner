@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 import { usePlan, usePlanSelectors } from "@/state/usePlan";
 import type { Account, AccountType, CreateAccountData } from "@/domain/types";
@@ -195,13 +195,27 @@ export function PageAccounts() {
           }
         >
           <AccountFormFields draft={draft} onChange={setDraft} />
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="ghost" onClick={closeEditor}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={!draft.name.trim()}>
-              {editor.kind === "create" ? "Create account" : "Save changes"}
-            </Button>
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <div>
+              {editor.kind === "edit" && (
+                <Button
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(editor.id, draft.name)}
+                >
+                  <Trash2 className="size-4" />
+                  Delete account
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={closeEditor}>
+                Cancel
+              </Button>
+              <Button onClick={handleSubmit} disabled={!draft.name.trim()}>
+                {editor.kind === "create" ? "Create account" : "Save changes"}
+              </Button>
+            </div>
           </div>
         </DashboardCard>
       )}
@@ -228,9 +242,8 @@ export function PageAccounts() {
                 <TableHead>Account</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Institution</TableHead>
-                <TableHead className="w-40">Allocation</TableHead>
+                <TableHead className="w-44">Allocation</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
-                <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -238,10 +251,21 @@ export function PageAccounts() {
                 const meta = KIND_META[account.type];
                 const stocks = Math.round((account.assetWeights?.stocks ?? 0) * 100);
                 const bonds = Math.max(0, 100 - stocks);
+                const isEditing =
+                  editor?.kind === "edit" && editor.id === account.id;
                 return (
-                  <TableRow key={account.id}>
+                  <TableRow
+                    key={account.id}
+                    className={cn(
+                      "cursor-pointer",
+                      isEditing && "bg-muted/40",
+                    )}
+                    onClick={() => openEdit(account)}
+                  >
                     <TableCell>
-                      <span className="font-medium">{account.name}</span>
+                      <span className="font-medium hover:underline underline-offset-4">
+                        {account.name}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <span
@@ -263,24 +287,6 @@ export function PageAccounts() {
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold">
                       {fmtCurrency(currentBalance || 0)}
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Edit"
-                        onClick={() => openEdit(account)}
-                      >
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Delete"
-                        onClick={() => handleDelete(account.id, account.name)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
                     </TableCell>
                   </TableRow>
                 );
@@ -348,7 +354,6 @@ function AccountFormFields({
           step={1}
           onValueChange={(v) => onChange({ ...draft, stocksPct: v[0] ?? 0 })}
         />
-        <AllocationBar stocks={stocks} bonds={bonds} className="mt-3" />
       </div>
     </div>
   );
@@ -364,19 +369,25 @@ function AllocationBar({
   className?: string;
 }) {
   const total = stocks + bonds || 1;
+  const stocksPct = (stocks / total) * 100;
+  const bondsPct = 100 - stocksPct;
+  const stockColor = "var(--color-account-traditional, hsl(220 70% 55%))";
+  const bondColor = "var(--color-account-roth, hsl(160 55% 45%))";
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className="bg-muted relative h-1.5 flex-1 overflow-hidden rounded-full">
-        <div
-          className="absolute inset-y-0 left-0"
-          style={{
-            width: `${(stocks / total) * 100}%`,
-            background: "var(--color-account-traditional, hsl(220 70% 55%))",
-          }}
-        />
+      <div className="flex h-2 flex-1 overflow-hidden rounded-full">
+        {stocksPct > 0 && (
+          <div style={{ width: `${stocksPct}%`, background: stockColor }} />
+        )}
+        {bondsPct > 0 && (
+          <div style={{ width: `${bondsPct}%`, background: bondColor }} />
+        )}
       </div>
-      <span className="text-muted-foreground font-mono text-xs tabular-nums">
-        {stocks}/{bonds}
+      <span className="font-mono text-xs tabular-nums whitespace-nowrap">
+        <span className="text-foreground font-semibold">{stocks}</span>
+        <span className="text-muted-foreground">S · </span>
+        <span className="text-foreground font-semibold">{bonds}</span>
+        <span className="text-muted-foreground">B</span>
       </span>
     </div>
   );
