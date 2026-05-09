@@ -40,7 +40,6 @@ import {
 import {
   IncomeSourcesChart,
   PercentileBars,
-  ProbabilityRing,
   WealthFanChart,
 } from "@/components/ui/charts";
 import { fmtCurrency } from "../format";
@@ -339,12 +338,17 @@ export function PageProjections() {
         <Stat
           label="Success Probability"
           value={`${(successProb * 100).toFixed(0)}%`}
+          trend={
+            successProb >= 0.85
+              ? "Excellent"
+              : successProb >= 0.7
+              ? "On track"
+              : successProb >= 0.5
+              ? "At risk"
+              : "Off track"
+          }
           tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
-        >
-          <div className="mt-2 flex items-center gap-3">
-            <ProbabilityRing value={successProb} size={64} thickness={6} />
-          </div>
-        </Stat>
+        />
         <Stat
           label="Median Terminal Wealth"
           value={fmtCurrency(median, true)}
