@@ -40,6 +40,10 @@ interface BatchSimulationRequest {
   };
 }
 
+function useHistoricalBootstrapFor(plan: RetirementPlan): boolean {
+  return plan.assumptions.simulationModel !== 'parametric';
+}
+
 interface BatchSimulationResponse {
   id: string;
   result: SimulationResult;
@@ -63,7 +67,7 @@ async function runServerSideSimulation(plan: RetirementPlan): Promise<Simulation
       config: {
         paths: 5000,
         seed: 42,
-        useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+        useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
         blockSize: MONTE_CARLO_DEFAULTS.block_size,
       },
     }),
@@ -140,7 +144,7 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 1000 + age, // Unique seed per age
-            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
             blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
@@ -184,7 +188,7 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 2000 + annualSpending, // Unique seed per spending level
-            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
             blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
@@ -225,7 +229,7 @@ class SimulationServiceImpl implements SimulationService {
           config: {
             paths: 1000, // Reduced from 5000 for faster analysis
             seed: 3000 + retirementAge, // Unique seed per age
-            useHistoricalBootstrap: MONTE_CARLO_DEFAULTS.use_historical_bootstrap,
+            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
             blockSize: MONTE_CARLO_DEFAULTS.block_size,
           },
         }));
