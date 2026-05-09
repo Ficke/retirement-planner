@@ -35,8 +35,6 @@ describe('Domain Schemas', () => {
         manualOverride: false,
       },
       assumptions: createTestProjectionSettings({
-        preset: 'Moderate',
-        rebalanceAnnually: true,
         simulationModel: 'historical',
       }),
     };
@@ -78,8 +76,6 @@ describe('Domain Schemas', () => {
         manualOverride: false,
       },
       assumptions: createTestProjectionSettings({
-        preset: 'Moderate',
-        rebalanceAnnually: true,
         simulationModel: 'historical',
       }),
     };

@@ -46,27 +46,7 @@ export const socialSecuritySettingsSchema = z.object({
   manualOverride: z.boolean(),
 });
 
-export const marketAssumptionsSchema = z.object({
-  stocks: z.object({
-    mean: z.number().min(-0.5).max(0.5),
-    vol: z.number().min(0).max(1),
-  }),
-  bonds: z.object({
-    mean: z.number().min(-0.5).max(0.5),
-    vol: z.number().min(0).max(1),
-  }),
-  inflation: z.object({
-    mean: z.number().min(0).max(0.1),
-    vol: z.number().min(0).max(0.1),
-  }),
-  correlation: z.array(z.array(z.number().min(-1).max(1))),
-});
-
 export const projectionSettingsSchema = z.object({
-  preset: z.enum(['Conservative', 'Moderate', 'Aggressive'] as const),
-  customReturns: marketAssumptionsSchema.optional(),
-  rebalanceAnnually: z.boolean(),
-  longevityOverride: z.number().int().min(65).max(120).optional(),
   randomSeed: z.number().int().min(0).optional(),
   simulationModel: z.enum(['historical', 'parametric'] as const),
   useBackdoorRoth: z.boolean(),
@@ -85,7 +65,6 @@ export const retirementPlanSchema = z.object({
 export type InferredAccount = z.infer<typeof accountSchema>;
 export type InferredUserProfile = z.infer<typeof userProfileSchema>;
 export type InferredSocialSecuritySettings = z.infer<typeof socialSecuritySettingsSchema>;
-export type InferredMarketAssumptions = z.infer<typeof marketAssumptionsSchema>;
 export type InferredProjectionSettings = z.infer<typeof projectionSettingsSchema>;
 /** @deprecated Use InferredProjectionSettings instead */
 export type InferredAssumptionSettings = InferredProjectionSettings;

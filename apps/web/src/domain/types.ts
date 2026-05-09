@@ -57,8 +57,6 @@ export interface SocialSecuritySettings {
   manualOverride: boolean;
 }
 
-export type Preset = 'Conservative' | 'Moderate' | 'Aggressive';
-
 export interface SocialSecurityUpdate {
   enabled?: boolean;
   estimatedBenefit?: number;
@@ -75,10 +73,6 @@ export interface TaxBracket {
 export type SimulationModel = 'historical' | 'parametric';
 
 export interface ProjectionSettings {
-  preset: Preset;
-  customReturns?: MarketAssumptions;
-  rebalanceAnnually: boolean;
-  longevityOverride?: number;
   simulationModel: SimulationModel;
   randomSeed?: number;
   useBackdoorRoth: boolean;
@@ -86,13 +80,6 @@ export interface ProjectionSettings {
 
 /** @deprecated Use ProjectionSettings instead */
 export type AssumptionSettings = ProjectionSettings;
-
-export interface MarketAssumptions {
-  stocks: { mean: number; vol: number };
-  bonds: { mean: number; vol: number };
-  inflation: { mean: number; vol: number };
-  correlation: number[][];
-}
 
 export interface RetirementPlan {
   profile: UserProfile;

@@ -238,8 +238,6 @@ const defaultPlan: RetirementPlan = {
     manualOverride: false,
   },
   assumptions: {
-    preset: 'Moderate',
-    rebalanceAnnually: true,
     simulationModel: 'historical',
     useBackdoorRoth: true,
   },

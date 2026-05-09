@@ -61,7 +61,7 @@ describe('State Management - Simple Invalidation Logic', () => {
     });
 
     // Change any assumption
-    updateAssumptions({ rebalanceAnnually: false });
+    updateAssumptions({ useBackdoorRoth: false });
 
     // ALL analysis results should be cleared
     expect(usePlan.getState().retirementAgeAnalysisResult).toBeNull();

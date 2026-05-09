@@ -88,13 +88,6 @@ pub struct SocialSecuritySettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Preset {
-    Conservative,
-    Moderate,
-    Aggressive,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SimulationModel {
     #[serde(rename = "historical")]
     Historical,
@@ -103,28 +96,7 @@ pub enum SimulationModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketReturn {
-    pub mean: f64,
-    pub vol: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketAssumptions {
-    pub stocks: MarketReturn,
-    pub bonds: MarketReturn,
-    pub inflation: MarketReturn,
-    pub correlation: Vec<Vec<f64>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionSettings {
-    pub preset: Preset,
-    #[serde(rename = "customReturns")]
-    pub custom_returns: Option<MarketAssumptions>,
-    #[serde(rename = "rebalanceAnnually")]
-    pub rebalance_annually: bool,
-    #[serde(rename = "longevityOverride")]
-    pub longevity_override: Option<u32>,
     #[serde(rename = "simulationModel")]
     pub simulation_model: SimulationModel,
     #[serde(rename = "randomSeed")]

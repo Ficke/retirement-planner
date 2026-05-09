@@ -74,8 +74,6 @@ describe('RMD Calculation', () => {
         manualOverride: false
       },
       assumptions: {
-        preset: 'Moderate',
-        rebalanceAnnually: true,
         simulationModel: 'historical',
     useBackdoorRoth: false
       }
