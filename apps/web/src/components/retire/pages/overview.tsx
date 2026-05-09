@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Loader2 } from "lucide-react";
 import { usePlan, usePlanSelectors } from "@/state/usePlan";
 import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -125,15 +126,12 @@ export function PageOverview() {
         <Stat
           label="Plan Health"
           value={
-            hasEverComputed ? (
-              <span
-                className={cn(
-                  "transition-opacity duration-200",
-                  isUpdating && "opacity-60",
-                )}
-              >
-                {`${(successProb * 100).toFixed(0)}%`}
+            isUpdating ? (
+              <span className="text-muted-foreground inline-flex h-8 items-center">
+                <Loader2 className="size-6 animate-spin" />
               </span>
+            ) : hasEverComputed ? (
+              `${(successProb * 100).toFixed(0)}%`
             ) : (
               <span className="text-muted-foreground">—</span>
             )
