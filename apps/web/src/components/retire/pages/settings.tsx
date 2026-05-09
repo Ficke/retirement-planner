@@ -15,35 +15,24 @@ export function PageSettings() {
         <div>
           <h1>Settings</h1>
           <div className="sub">
-            Simulation runtime, randomness, and developer options. These don&rsquo;t change your plan — they change how the model is run.
+            Runtime, randomness, and strategy options. The market model itself lives on Assumptions.
           </div>
         </div>
       </div>
 
       <div className="r-section-title"><h2>Compute</h2></div>
       <Card>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-          <Setting label="Engine" helper="Where the simulation runs. Server is faster for large sweeps; local keeps your data on-device.">
-            <select
-              className="r-select"
-              value={useServerSideCalculations ? 'server' : 'local'}
-              onChange={e => setUseServerSideCalculations(e.target.value === 'server')}
-            >
-              <option value="server">Server (Rust microservice)</option>
-              <option value="local">Local (browser worker)</option>
-            </select>
-          </Setting>
-          <Setting label="Simulation model" helper="Historical bootstrap resamples real market sequences; parametric draws from a fitted distribution.">
-            <select
-              className="r-select"
-              value={a.simulationModel ?? 'historical'}
-              onChange={e => updateAssumptions({ simulationModel: e.target.value as 'historical' | 'parametric' })}
-            >
-              <option value="historical">Historical bootstrap (default)</option>
-              <option value="parametric">Parametric (normal)</option>
-            </select>
-          </Setting>
-        </div>
+        <Setting label="Engine" helper="Where the simulation runs. Server is faster for large sweeps; local keeps your data on-device.">
+          <select
+            className="r-select"
+            value={useServerSideCalculations ? 'server' : 'local'}
+            onChange={e => setUseServerSideCalculations(e.target.value === 'server')}
+            style={{ maxWidth: 320 }}
+          >
+            <option value="server">Server (Rust microservice)</option>
+            <option value="local">Local (browser worker)</option>
+          </select>
+        </Setting>
       </Card>
 
       <div className="r-section-title"><h2>Randomness</h2></div>
@@ -85,38 +74,14 @@ export function PageSettings() {
         </div>
       </Card>
 
-      <div className="r-section-title"><h2>Strategy &amp; display</h2></div>
+      <div className="r-section-title"><h2>Strategy</h2></div>
       <Card>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-          <Setting label="Backdoor Roth" helper="Convert post-tax dollars into Roth annually when income exceeds direct-Roth limits.">
-            <div style={{ display: 'flex', gap: 8 }}>
-              <RadioPill active={!!a.useBackdoorRoth} onClick={() => updateAssumptions({ useBackdoorRoth: true })}>On</RadioPill>
-              <RadioPill active={!a.useBackdoorRoth} onClick={() => updateAssumptions({ useBackdoorRoth: false })}>Off</RadioPill>
-            </div>
-          </Setting>
-          <Setting label="Annual rebalancing" helper="Rebalance to target weights at year-end. No transaction costs modeled.">
-            <div style={{ display: 'flex', gap: 8 }}>
-              <RadioPill active={!!a.rebalanceAnnually} onClick={() => updateAssumptions({ rebalanceAnnually: true })}>On</RadioPill>
-              <RadioPill active={!a.rebalanceAnnually} onClick={() => updateAssumptions({ rebalanceAnnually: false })}>Off</RadioPill>
-            </div>
-          </Setting>
-          <Setting label="Longevity override" helper="Optional. Override life expectancy to test horizon sensitivity.">
-            <input
-              className="r-input mono"
-              type="number"
-              value={a.longevityOverride ?? ''}
-              placeholder={String(plan.profile.lifeExpectancy)}
-              onChange={e => {
-                const v = e.target.value;
-                if (v === '') updateAssumptions({ longevityOverride: undefined });
-                else {
-                  const n = parseInt(v, 10);
-                  if (!isNaN(n) && n > 0) updateAssumptions({ longevityOverride: n });
-                }
-              }}
-            />
-          </Setting>
-        </div>
+        <Setting label="Backdoor Roth" helper="Convert post-tax dollars into Roth annually when income exceeds direct-Roth limits.">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <RadioPill active={!!a.useBackdoorRoth} onClick={() => updateAssumptions({ useBackdoorRoth: true })}>On</RadioPill>
+            <RadioPill active={!a.useBackdoorRoth} onClick={() => updateAssumptions({ useBackdoorRoth: false })}>Off</RadioPill>
+          </div>
+        </Setting>
       </Card>
 
       <div className="r-section-title"><h2>Developer</h2></div>
