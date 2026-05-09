@@ -2,18 +2,22 @@
 
 import { usePlan } from '@/state/usePlan';
 import type { SimulationModel } from '@/domain/types';
+import {
+  US_STOCK_REAL_RETURNS_1926_2024,
+  US_BOND_REAL_RETURNS_1926_2024,
+  US_INFLATION_1926_2024,
+  ASSET_CORRELATION_MATRIX_1926_2024,
+} from '@/data/market-history';
 import { Card } from '../primitives';
 import { Donut } from '../charts';
 
-// Engine constants — these are what the simulation actually uses,
-// hardcoded in apps/web/src/data/market-history.ts and mirrored in
-// rust-simulation-service/src/simulation/parametric_returns.rs.
-// Source: US 1926–2024 real returns.
+// What the simulation actually uses — hardcoded in market-history.ts
+// (TS engine) and mirrored in rust-simulation-service/.../parametric_returns.rs.
 const ENGINE = {
-  stocks: { mean: 0.071, vol: 0.201 },
-  bonds: { mean: 0.025, vol: 0.079 },
-  inflation: { mean: 0.029, vol: 0.042 },
-  correlation: 0.12,
+  stocks: { mean: US_STOCK_REAL_RETURNS_1926_2024.mean, vol: US_STOCK_REAL_RETURNS_1926_2024.volatility },
+  bonds: { mean: US_BOND_REAL_RETURNS_1926_2024.mean, vol: US_BOND_REAL_RETURNS_1926_2024.volatility },
+  inflation: { mean: US_INFLATION_1926_2024.mean, vol: US_INFLATION_1926_2024.volatility },
+  correlation: ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds,
 } as const;
 
 export function PageAssumptions() {

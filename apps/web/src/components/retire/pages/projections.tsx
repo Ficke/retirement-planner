@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import { usePlan } from '@/state/usePlan';
-import presets from '@/data/cma/presets.json';
+import {
+  US_STOCK_REAL_RETURNS_1926_2024,
+  US_BOND_REAL_RETURNS_1926_2024,
+  US_INFLATION_1926_2024,
+} from '@/data/market-history';
 import { Card, Chip, Toggle } from '../primitives';
 import { IncomeSourcesChart, PercentileBars, ProbabilityRing, WealthFanChart } from '../charts';
 import { fmtCurrency } from '../format';
@@ -10,8 +14,11 @@ import { fmtCurrency } from '../format';
 type ChartView = 'wealth' | 'income' | 'percentiles';
 type YearFilter = 'all' | 'work' | 'retired';
 
-type PresetEntry = { stocks: { mean: number; vol: number }; bonds: { mean: number; vol: number }; inflation: { mean: number; vol: number } };
-const PRESETS = presets as unknown as Record<string, PresetEntry>;
+const STOCK_MEAN = US_STOCK_REAL_RETURNS_1926_2024.mean;
+const STOCK_VOL = US_STOCK_REAL_RETURNS_1926_2024.volatility;
+const BOND_MEAN = US_BOND_REAL_RETURNS_1926_2024.mean;
+const BOND_VOL = US_BOND_REAL_RETURNS_1926_2024.volatility;
+const INFLATION_MEAN = US_INFLATION_1926_2024.mean;
 
 export function PageProjections() {
   const plan = usePlan(s => s.plan);
@@ -28,19 +35,18 @@ export function PageProjections() {
     return yearly;
   }, [yearly, yearFilter]);
 
-  // Derived from active preset + portfolio allocation
-  const presetKey = (plan.assumptions.preset ?? 'Moderate') as keyof typeof PRESETS;
-  const cma = PRESETS[presetKey] ?? PRESETS.Moderate;
+  // Engine-truth: weight US 1926–2024 real returns by current allocation.
   const stockWeight = plan.accounts.length
     ? plan.accounts.reduce((s, a) => s + (a.balance * a.assetWeights.stocks), 0) /
       Math.max(1, plan.accounts.reduce((s, a) => s + a.balance, 0))
     : 0.6;
   const bondWeight = 1 - stockWeight;
-  const expectedReturn = (cma.stocks.mean * stockWeight + cma.bonds.mean * bondWeight) * 100;
+  const expectedReturn = (STOCK_MEAN * stockWeight + BOND_MEAN * bondWeight) * 100;
   const expectedVol = Math.sqrt(
-    Math.pow(cma.stocks.vol * stockWeight, 2) + Math.pow(cma.bonds.vol * bondWeight, 2)
+    Math.pow(STOCK_VOL * stockWeight, 2) + Math.pow(BOND_VOL * bondWeight, 2)
   ) * 100;
   const horizon = plan.profile.lifeExpectancy - plan.profile.age;
+  const modelLabel = plan.assumptions.simulationModel === 'parametric' ? 'Parametric' : 'Historical bootstrap';
 
   const successProb = result?.successProbability ?? 0;
   const median = result?.medianTerminalWealth ?? 0;
@@ -69,11 +75,12 @@ export function PageProjections() {
         alignItems: 'center', fontSize: 11.5, color: 'var(--r-ink-3)', flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 14 }}>Model</span>
+        <Derived label="Method" value={modelLabel} />
         <Derived label="Expected return" value={expectedReturn.toFixed(1) + '%'} />
         <Derived label="Expected volatility" value={expectedVol.toFixed(1) + '%'} />
-        <Derived label="Inflation" value={(cma.inflation.mean * 100).toFixed(1) + '%'} />
+        <Derived label="Inflation" value={(INFLATION_MEAN * 100).toFixed(1) + '%'} />
         <Derived label="Horizon" value={`${horizon} yrs`} />
-        <span style={{ marginLeft: 'auto', fontStyle: 'italic' }}>Derived from Assumptions</span>
+        <span style={{ marginLeft: 'auto', fontStyle: 'italic' }}>From Assumptions</span>
       </div>
 
       <div className="r-kpi-row">
