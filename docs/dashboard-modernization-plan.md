@@ -2,6 +2,30 @@
 
 The `/retire` dashboard is hand-rolled (custom `r-*` CSS, bespoke SVG charts, inline styles). The repo already ships the modern stack — shadcn/ui, Radix, Recharts, Tailwind v4, lucide-react, react-hook-form + zod — but `apps/web/src/components/retire/` doesn't use any of it. This plan rebuilds the dashboard on those primitives and applies modern design best practices.
 
+## Architecture (the layered design system)
+
+The design system is **already chosen and partially in place** — this plan finishes wiring it up. The layers, top to bottom:
+
+| Layer | Role | Pick |
+|---|---|---|
+| Design tokens | colors, spacing, radius, typography | Tailwind v4 `@theme` + CSS vars |
+| Primitives | accessible widgets (button, dialog, select, slider, popover, …) | **shadcn/ui** (Radix-based, source lives in this repo at `components/ui/`) |
+| App composites | dashboard-shaped wrappers (`Stat`, `PageHeader`, `PageShell`, `KPIGrid`) | hand-built, thin, on top of shadcn — live in `components/retire/ui.tsx` |
+| Charts | data viz | **Recharts** + shadcn `ChartContainer` / `ChartTooltipContent` |
+| Forms | validation + state | **react-hook-form + zod** + shadcn `Form` |
+| Tables / data grids | sort / filter / virtualize | shadcn `Table` (markup) + **TanStack Table** (logic) |
+| Server / async state | fetching, caching, mutations | **Zustand** (current) — *not* TanStack Query |
+| Routing | pages | Next.js App Router |
+| Icons | iconography | **lucide-react** |
+
+**Boundary rule.** Generic-shaped components live in `components/ui/`. Dashboard-shaped composites live in `components/retire/ui.tsx`. Use **`class-variance-authority`** (already installed; the same pattern shadcn uses for its variants) for any component that needs visual variants — no `if (hero) ...` branches in JSX.
+
+**On TanStack.** TanStack is *not* a design system; it's a family of headless logic libraries that pair with shadcn at specific layers.
+- **Table — yes**, for the Projections year-by-year grid (column defs, sorting, sticky header). Add `@tanstack/react-virtual` only if row count exceeds ~100.
+- **Query — skip.** Zustand already owns async state; adding Query creates two parallel systems.
+- **Form — skip.** RHF + zod is the chosen form lib.
+- **Router — skip.** Next.js App Router owns routing.
+
 ## Goals
 
 1. Replace custom primitives and SVG charts with **shadcn/ui** + **Recharts**.
@@ -65,7 +89,7 @@ Then strip the ~600 lines of `.retire-app .r-*` rules from `globals.css`.
 
 ### Projections
 - [ ] Model strip → shadcn `Card` with `Badge`s; drop the inline `style={{}}` wrapper.
-- [ ] Year-by-Year table → `components/ui/table` with sticky header, virtualized if > 60 rows.
+- [ ] Year-by-Year table → shadcn `Table` (markup) + **`@tanstack/react-table`** (logic): column defs, sorting, sticky header. Virtualize via `@tanstack/react-virtual` only if rows exceed ~100.
 - [ ] Chart toggle → shadcn `Tabs`.
 
 ### Sensitivity
