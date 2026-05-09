@@ -7,6 +7,7 @@ import { useMigration } from "@/hooks/useMigration";
 import { usePlan } from "@/state/usePlan";
 import { Sidebar, type PageId } from "@/components/retire/sidebar";
 import { TweaksPanel, type SidebarStyle } from "@/components/retire/tweaks-panel";
+import { Button } from "@/components/ui/button";
 import { PageOverview } from "@/components/retire/pages/overview";
 import { PagePlan } from "@/components/retire/pages/plan";
 import { PageAccounts } from "@/components/retire/pages/accounts";
@@ -60,8 +61,12 @@ export default function Home() {
   const userEmail = user.email || "";
 
   return (
-    <div className="retire-app" data-theme={darkMode ? "dark" : "light"}>
-      <div className="r-app" data-collapsed={collapsed} data-sidebar={sidebarMode}>
+    <div
+      className={darkMode ? "retire-app dark" : "retire-app"}
+      data-theme={darkMode ? "dark" : "light"}
+      data-sidebar={sidebarMode}
+    >
+      <div className="bg-background text-foreground flex h-screen min-h-screen">
         <Sidebar
           active={page}
           onNav={setPage}
@@ -70,27 +75,28 @@ export default function Home() {
           userName={userName}
           userEmail={userEmail}
         />
-        <div className="r-content">
-          <div className="r-topbar">
-            <div className="r-crumbs">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="bg-background/80 border-border sticky top-0 z-20 flex min-h-14 items-center justify-between gap-4 border-b px-7 py-3 backdrop-blur">
+            <div className="text-muted-foreground flex items-center gap-2 text-xs">
               <span>Retire</span>
-              <span className="slash">/</span>
-              <b>{PAGES[page].label}</b>
+              <span className="opacity-40">/</span>
+              <b className="text-foreground font-semibold">{PAGES[page].label}</b>
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button
-                type="button"
-                className="r-btn r-btn-ghost"
-                onClick={() => setShowTweaks(s => !s)}
-                title="Tweaks"
+            <div className="flex gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowTweaks((s) => !s)}
               >
                 Tweaks
-              </button>
+              </Button>
             </div>
-          </div>
-          <div className="r-page">
-            <Page />
-          </div>
+          </header>
+          <main className="flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-[1400px] space-y-4 px-7 pt-6 pb-16">
+              <Page />
+            </div>
+          </main>
         </div>
       </div>
 
