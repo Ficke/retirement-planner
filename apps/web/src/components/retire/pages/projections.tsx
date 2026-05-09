@@ -265,7 +265,10 @@ export function PageProjections() {
   const [view, setView] = useState<ChartView>("wealth");
   const [yearFilter, setYearFilter] = useState<YearFilter>("all");
 
-  const yearly = result?.yearlyProjections ?? [];
+  const yearly = useMemo(
+    () => result?.yearlyProjections ?? [],
+    [result?.yearlyProjections],
+  );
   const filteredRows = useMemo<Row[]>(() => {
     const filtered =
       yearFilter === "work"

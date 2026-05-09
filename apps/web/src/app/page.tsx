@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/firebase";
 import { useMigration } from "@/hooks/useMigration";
-import { usePlan } from "@/state/usePlan";
 import { Sidebar, type PageId } from "@/components/retire/sidebar";
 import { TweaksPanel, type SidebarStyle } from "@/components/retire/tweaks-panel";
 import { Button } from "@/components/ui/button";
@@ -62,8 +61,7 @@ export default function Home() {
 
   return (
     <div
-      className={darkMode ? "retire-app dark" : "retire-app"}
-      data-theme={darkMode ? "dark" : "light"}
+      className={darkMode ? "dark" : undefined}
       data-sidebar={sidebarMode}
     >
       <div className="bg-background text-foreground flex h-screen min-h-screen">

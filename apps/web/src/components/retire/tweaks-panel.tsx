@@ -1,9 +1,16 @@
 "use client";
 
-export type SidebarStyle = 'expanded' | 'rail' | 'minimal';
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+
+export type SidebarStyle = "expanded" | "rail" | "minimal";
 
 export function TweaksPanel({
-  sidebarStyle, onSidebarStyle, darkMode, onDarkMode,
+  sidebarStyle,
+  onSidebarStyle,
+  darkMode,
+  onDarkMode,
 }: {
   sidebarStyle: SidebarStyle;
   onSidebarStyle: (s: SidebarStyle) => void;
@@ -11,48 +18,38 @@ export function TweaksPanel({
   onDarkMode: (v: boolean) => void;
 }) {
   return (
-    <div
-      className="r-tweaks"
-      style={{
-        background: 'var(--r-surface)',
-        border: '1px solid var(--r-line)',
-        borderRadius: 10,
-        padding: 12,
-        boxShadow: '0 12px 32px -16px rgba(0,0,0,0.20), 0 4px 12px -8px rgba(0,0,0,0.10)',
-        minWidth: 220,
-      }}
-    >
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--r-ink-3)', marginBottom: 10 }}>
+    <div className="bg-card border-border fixed right-4 bottom-4 z-50 flex min-w-56 flex-col gap-3 rounded-xl border p-3 shadow-lg">
+      <div className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">
         Tweaks
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 11, color: 'var(--r-ink-3)', marginBottom: 6 }}>Sidebar</div>
-        <div className="r-toggle">
-          {(['expanded', 'rail', 'minimal'] as const).map(opt => (
-            <button
-              key={opt}
-              type="button"
-              data-active={sidebarStyle === opt}
-              onClick={() => onSidebarStyle(opt)}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-col gap-2">
+        <Label className="text-muted-foreground text-xs">Sidebar</Label>
+        <ToggleGroup
+          type="single"
+          value={sidebarStyle}
+          onValueChange={(v) => v && onSidebarStyle(v as SidebarStyle)}
+          variant="outline"
+          size="sm"
+          className="w-full"
+        >
+          <ToggleGroupItem value="expanded" className="flex-1 capitalize">
+            expanded
+          </ToggleGroupItem>
+          <ToggleGroupItem value="rail" className="flex-1 capitalize">
+            rail
+          </ToggleGroupItem>
+          <ToggleGroupItem value="minimal" className="flex-1 capitalize">
+            minimal
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
-      <div>
-        <div style={{ fontSize: 11, color: 'var(--r-ink-3)', marginBottom: 6 }}>Theme</div>
-        <button
-          type="button"
-          className="r-btn"
-          onClick={() => onDarkMode(!darkMode)}
-          style={{ width: '100%', justifyContent: 'space-between' }}
-        >
-          <span>Dark mode</span>
-          <span className="mono">{darkMode ? 'on' : 'off'}</span>
-        </button>
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor="tweak-dark" className="text-foreground text-sm">
+          Dark mode
+        </Label>
+        <Switch id="tweak-dark" checked={darkMode} onCheckedChange={onDarkMode} />
       </div>
     </div>
   );
