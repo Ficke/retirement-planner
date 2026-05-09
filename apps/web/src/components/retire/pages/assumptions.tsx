@@ -238,8 +238,16 @@ export function PageAssumptions() {
           <TableBody>
             <RuleRow
               label="Method"
-              value="Historical bootstrap"
-              source="Resamples real US 1926–2024 years in 3-year blocks"
+              value={
+                plan.assumptions.simulationModel === "parametric"
+                  ? "Parametric (log-normal)"
+                  : "Historical bootstrap"
+              }
+              source={
+                plan.assumptions.simulationModel === "parametric"
+                  ? "Student-t (df=6) equities + Normal bonds, sampled in log space"
+                  : "Resamples real US 1926–2024 years in 3-year blocks"
+              }
             />
             <RuleRow
               label="Paths per simulation"

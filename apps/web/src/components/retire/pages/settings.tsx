@@ -5,6 +5,7 @@ import { useId } from "react";
 import { Info, RefreshCw } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
+import type { SimulationModel } from "@/domain/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,30 @@ export function PageSettings() {
                 <SelectItem value="local">Local (browser worker)</SelectItem>
               </SelectContent>
             </Select>
+          </Setting>
+        </DashboardCard>
+
+        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+          Market model
+        </h2>
+        <DashboardCard>
+          <Setting
+            label="Returns model"
+            helper="Bootstrap resamples real US 1926–2024 stock and bond years to capture historical sequences and joint behavior. Parametric draws from a Student-t (equities) and Normal (bonds) fit to that history — smoother percentiles, less regime detail."
+          >
+            <ToggleGroup
+              type="single"
+              value={a.simulationModel}
+              onValueChange={(v) => {
+                if (!v) return;
+                updateAssumptions({ simulationModel: v as SimulationModel });
+              }}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="historical">Historical bootstrap</ToggleGroupItem>
+              <ToggleGroupItem value="parametric">Parametric</ToggleGroupItem>
+            </ToggleGroup>
           </Setting>
         </DashboardCard>
 

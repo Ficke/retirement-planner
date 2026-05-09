@@ -77,62 +77,59 @@ export const MONTE_CARLO_DEFAULTS = {
 } as const;
 
 /**
- * Generate correlated annual returns for stocks and bonds
- * Uses Cholesky decomposition for proper correlation structure
+ * Convert documented arithmetic mean/vol to log-space parameters so that:
+ *   exp(mu_log + sigma_log * Z) - 1
+ * has the documented arithmetic mean and volatility (Z ~ N(0,1)).
+ */
+function toLogParams(mean: number, vol: number): { muLog: number; sigmaLog: number } {
+  const sigmaLog = Math.sqrt(Math.log(1 + Math.pow(vol / (1 + mean), 2)));
+  const muLog = Math.log(1 + mean) - 0.5 * sigmaLog * sigmaLog;
+  return { muLog, sigmaLog };
+}
+
+const STOCK_LOG = toLogParams(
+  US_STOCK_REAL_RETURNS_1926_2024.mean,
+  US_STOCK_REAL_RETURNS_1926_2024.volatility,
+);
+const BOND_LOG = toLogParams(
+  US_BOND_REAL_RETURNS_1926_2024.mean,
+  US_BOND_REAL_RETURNS_1926_2024.volatility,
+);
+
+/**
+ * Generate correlated annual real returns for stocks and bonds.
+ *
+ * Sampling is done in log-return space — equities use Student-t (df=6) shocks for
+ * fat tails; bonds use Normal shocks. Cholesky transforms preserve the
+ * documented stock/bond correlation. The final simple return is
+ *   R = exp(mu_log + sigma_log * Z) - 1
+ * which is bounded below by -1 (total loss) by construction. No artificial
+ * upper/lower clamps are applied — the chosen distributions are responsible
+ * for tail shape.
  */
 export function generateCorrelatedReturns(rng: SeededRNG): { stockReturn: number; bondReturn: number } {
   try {
-    // Generate independent shocks using proper distributions
-    const stockShock = rng.studentT(6); // Student-t with df=6 for equities per CLAUDE.md
-    const bondShock = rng.normal(); // Normal for bonds
+    const stockShock = rng.studentT(6);
+    const bondShock = rng.normal();
 
-    // Apply Cholesky transformation for correlation
     const correlation = [[1.0, ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds],
                         [ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds, 1.0]];
     const L = choleskyDecomposition(correlation);
 
     const correlatedShocks = [
       L[0][0] * stockShock,
-      L[1][0] * stockShock + L[1][1] * bondShock
+      L[1][0] * stockShock + L[1][1] * bondShock,
     ];
 
-    const stockReturn = US_STOCK_REAL_RETURNS_1926_2024.mean +
-      correlatedShocks[0] * US_STOCK_REAL_RETURNS_1926_2024.volatility;
-
-    const bondReturn = US_BOND_REAL_RETURNS_1926_2024.mean +
-      correlatedShocks[1] * US_BOND_REAL_RETURNS_1926_2024.volatility;
-
-    // Bound returns to prevent unrealistic values
-    // Historical worst year was -42.81% for stocks, -15.84% for bonds
-    // Allow 50% buffer for extreme cases
-    const maxStockReturn = 0.80; // 80% max gain
-    const minStockReturn = -0.60; // -60% max loss
-    const maxBondReturn = 0.50; // 50% max gain
-    const minBondReturn = -0.25; // -25% max loss
-
-    const boundedStockReturn = Math.max(minStockReturn, Math.min(maxStockReturn, stockReturn));
-    const boundedBondReturn = Math.max(minBondReturn, Math.min(maxBondReturn, bondReturn));
-
-    // Warn if bounds were applied (indicates potential issue)
-    if (boundedStockReturn !== stockReturn || boundedBondReturn !== bondReturn) {
-      console.warn('Return bounds applied:', {
-        stockReturn,
-        boundedStockReturn,
-        bondReturn,
-        boundedBondReturn
-      });
-    }
-
     return {
-      stockReturn: boundedStockReturn,
-      bondReturn: boundedBondReturn
+      stockReturn: Math.exp(STOCK_LOG.muLog + correlatedShocks[0] * STOCK_LOG.sigmaLog) - 1,
+      bondReturn: Math.exp(BOND_LOG.muLog + correlatedShocks[1] * BOND_LOG.sigmaLog) - 1,
     };
   } catch (error) {
-    // Fallback to historical mean returns if generation fails
     console.error('Failed to generate correlated returns, using mean returns:', error);
     return {
       stockReturn: US_STOCK_REAL_RETURNS_1926_2024.mean,
-      bondReturn: US_BOND_REAL_RETURNS_1926_2024.mean
+      bondReturn: US_BOND_REAL_RETURNS_1926_2024.mean,
     };
   }
 }
