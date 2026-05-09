@@ -25,14 +25,16 @@ were misleading or non-functional:
 
 | Knob | TS local engine | Rust server | Notes |
 |---|---|---|---|
-| `useHistoricalBootstrap` | ✅ honors `simulationModel` | ✅ now honored (was hardcoded) | Real toggle |
+| `useHistoricalBootstrap` | ✅ honors `simulationModel` | ✅ honored | Real toggle |
 | Stock/bond means + vols | hardcoded constants | hardcoded constants | No API to override |
 | Stock/bond correlation | hardcoded ~0.12 | hardcoded 0.12 | Single source: `market-history.ts` (TS) and `parametric_returns.rs` (Rust) — keep in sync manually |
-| `useBackdoorRoth` | ✅ wired | not yet verified | TODO: confirm Rust path |
-| `rebalanceAnnually` | ❌ not consumed | ❌ not consumed | Removed from UI; field still on type |
-| `longevityOverride` | ❌ not consumed | ❌ not consumed | Removed from UI; field still on type |
+| `useBackdoorRoth` | ✅ wired | ✅ wired (`projection.rs:202`) | Confirmed both paths |
 | `randomSeed` | ✅ | ✅ | |
 | `paths`, `block_size` | constants | constants | Not surfaced |
+
+`preset` / `customReturns` / `rebalanceAnnually` / `longevityOverride`
+have been deleted from both type systems (commit `797c81f`). Revisit
+only if we want to wire them up as real sensitivity knobs.
 
 ## Done (this session)
 
@@ -42,86 +44,27 @@ were misleading or non-functional:
 | 2 | `239d32c` | Assumptions page rewritten: drop CMA presets, surface bootstrap/parametric toggle, source numbers from `market-history.ts`, fix correlation |
 | 3 | `54e3a5c` | Projections "Model" strip now uses engine constants and shows active method |
 | 4 | `8d3322d` | Settings cleanup: drop duplicate model dropdown; remove dead `rebalanceAnnually` and `longevityOverride` controls |
+| 5 | `797c81f` | Delete dead `preset`, `customReturns`, `rebalanceAnnually`, `longevityOverride` fields and the orphan `assumptions-panel.tsx` from both engines |
+| 6 | _pending_ | Sidebar IA restructure: Your situation / Model / Results / Account; rename Plan→Profile in nav and page heading |
 
 ## Remaining work
 
-### 1. IA restructure: Inputs → Model → Results
+### 1. (Maybe) Wire up rebalance / longevity as real knobs
 
-Current sidebar mixes inputs and outputs. Proposed grouping:
+Both fields were deleted in `797c81f` rather than implemented. If the
+team wants real sensitivity controls:
 
-```
-Your situation        ← user-controlled facts about you
-  Profile             (rename from "Plan" — overloaded word)
-  Accounts
+- `rebalanceAnnually=false` lets allocation drift — stocks compound,
+  stock share creeps up, risk rises with age. Real engine work in
+  `engine/projection.ts` and `rust-simulation-service/src/simulation/projection.rs`.
+- `longevityOverride` — one-line `??` swap in each engine where it
+  reads `profile.lifeExpectancy`.
 
-Model                 ← what the engine assumes about the world
-  Assumptions
+If reintroduced, restore the fields on `ProjectionSettings`,
+`projectionSettingsSchema`, the API validation schema, and
+`rust-simulation-service/src/types.rs::ProjectionSettings`.
 
-Results               ← what the engine produces
-  Overview
-  Projections
-  Decisions
-
-Account
-  Settings
-```
-
-Rationale:
-- The Assumptions → Results dependency becomes visible in the nav.
-- "Profile" reads better than "Plan" (which is also the data structure
-  and the product name).
-- Settings becomes pure runtime/strategy with no model knobs.
-
-Files:
-- `apps/web/src/components/retire/sidebar.tsx` — `NAV` array + `PageId`.
-- `apps/web/src/app/page.tsx` — page router, default route.
-- `apps/web/src/components/retire/pages/plan.tsx` — rename heading to
-  "Profile" (file rename optional; trade churn vs clarity).
-
-### 2. Delete the dead CMA preset machinery
-
-Once nothing references it:
-
-- `apps/web/src/data/cma/presets.json` — the file.
-- `assumptions.preset: Preset` on `ProjectionSettings`
-  (`apps/web/src/domain/types.ts:78`) and the `Preset` type.
-- Default `preset: 'Moderate'` in `usePlan.ts:241`.
-- Schema entries in `apps/web/src/lib/validation.ts` and
-  `apps/web/src/domain/schemas.ts` if present.
-- `customReturns?: MarketAssumptions` on `ProjectionSettings` — also
-  unused. Drop alongside `preset`.
-
-Pre-flight: `grep -rn "preset\|customReturns\|presets.json" apps/web/src`
-to verify no remaining consumers.
-
-### 3. Decide the fate of `rebalanceAnnually` and `longevityOverride`
-
-Two paths:
-
-- **Wire them up.** `rebalanceAnnually=false` would mean letting
-  allocation drift with returns — a real and useful sensitivity. Modest
-  work in `engine/projection.ts` (and Rust mirror). `longevityOverride`
-  similarly: `engine/projection.ts` reads `plan.profile.lifeExpectancy`;
-  swap to `assumptions.longevityOverride ?? profile.lifeExpectancy`.
-- **Delete them.** Strip from `ProjectionSettings`, schemas, Rust
-  `types.rs`, default state. Aligns the type surface with the UI.
-
-Recommendation: wire them up. They're short, useful, and removing them
-loses real capability.
-
-### 4. Verify `useBackdoorRoth` on the Rust path
-
-The TS engine reads it (`engine/projection.ts:133`). Rust accepts it via
-`types.rs` but I didn't trace it through `projection.rs`. Confirm with:
-
-```
-grep -n "use_backdoor_roth\|backdoor" rust-simulation-service/src/simulation/*.rs
-```
-
-If unwired, mirror the TS behavior. Otherwise the toggle is half-dead
-the same way `simulationModel` was.
-
-### 5. (Optional) Real CMA presets
+### 2. (Optional) Real CMA presets
 
 If you ever want presets to mean something, the work is real:
 

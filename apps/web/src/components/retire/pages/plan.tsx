@@ -42,12 +42,12 @@ export function PagePlan() {
     <>
       <div className="r-page-head">
         <div>
-          <h1>Plan</h1>
-          <div className="sub">Your profile inputs. Auto-saves on change.</div>
+          <h1>Profile</h1>
+          <div className="sub">Facts about you. Auto-saves on change.</div>
         </div>
       </div>
 
-      <Card title="Profile">
+      <Card>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
           <Field label="Current age" type="number"
                  value={p.age} onChange={v => updateProfile({ age: Number(v) })} />

@@ -17,7 +17,7 @@ import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
   overview:    { label: "Overview",    Comp: PageOverview },
-  plan:        { label: "Plan",        Comp: PagePlan },
+  plan:        { label: "Profile",     Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
   projections: { label: "Projections", Comp: PageProjections },
   decisions:   { label: "Decisions",   Comp: PageDecisions },

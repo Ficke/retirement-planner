@@ -5,15 +5,17 @@ import { Icon, type IconName } from './icons';
 export type PageId = 'overview' | 'plan' | 'accounts' | 'projections' | 'decisions' | 'assumptions' | 'settings';
 
 const NAV: { section: string; items: { id: PageId; label: string; icon: IconName }[] }[] = [
-  { section: 'Plan', items: [
-    { id: 'overview', label: 'Overview', icon: 'home' },
-    { id: 'plan', label: 'Plan', icon: 'sliders' },
+  { section: 'Your situation', items: [
+    { id: 'plan', label: 'Profile', icon: 'sliders' },
     { id: 'accounts', label: 'Accounts', icon: 'wallet' },
   ]},
-  { section: 'Analyze', items: [
+  { section: 'Model', items: [
+    { id: 'assumptions', label: 'Assumptions', icon: 'globe' },
+  ]},
+  { section: 'Results', items: [
+    { id: 'overview', label: 'Overview', icon: 'home' },
     { id: 'projections', label: 'Projections', icon: 'chart' },
     { id: 'decisions', label: 'Decisions', icon: 'flask' },
-    { id: 'assumptions', label: 'Assumptions', icon: 'globe' },
   ]},
   { section: 'Account', items: [
     { id: 'settings', label: 'Settings', icon: 'gear' },
