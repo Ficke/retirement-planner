@@ -66,7 +66,6 @@ export const projectionSettingsSchema = z.object({
   preset: z.enum(['Conservative', 'Moderate', 'Aggressive'] as const),
   customReturns: marketAssumptionsSchema.optional(),
   rebalanceAnnually: z.boolean(),
-  realDollarDisplay: z.boolean(),
   longevityOverride: z.number().int().min(65).max(120).optional(),
   randomSeed: z.number().int().min(0).optional(),
   simulationModel: z.enum(['historical', 'parametric'] as const),

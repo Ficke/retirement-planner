@@ -76,7 +76,6 @@ describe('RMD Calculation', () => {
       assumptions: {
         preset: 'Moderate',
         rebalanceAnnually: true,
-        realDollarDisplay: true,
         simulationModel: 'historical',
     useBackdoorRoth: false
       }
@@ -85,7 +84,7 @@ describe('RMD Calculation', () => {
     it('should correctly handle RMD excess with precise taxation and reinvestment', () => {
       // Test scenario: Age 75, $1M traditional, $20k spending (low spending to create large excess)
       const plan = createTestPlan(75, 1000000, 20000);
-      const config = { paths: 1, seed: 42, realDollars: true };
+      const config = { paths: 1, seed: 42 };
       
       const result = projectScenario(plan, config);
       const firstYear = result.projections[0];
@@ -127,7 +126,7 @@ describe('RMD Calculation', () => {
     it('should meet RMD when spending equals or exceeds RMD', () => {
       // Age 73, $800k traditional, $50k spending (spending > RMD)
       const plan = createTestPlan(73, 800000, 50000);
-      const config = { paths: 1, seed: 42, realDollars: true };
+      const config = { paths: 1, seed: 42 };
       
       const result = projectScenario(plan, config);
       const firstYear = result.projections[0];
@@ -147,7 +146,7 @@ describe('RMD Calculation', () => {
     it('should correctly calculate marginal taxes on excess RMD', () => {
       // Simple scenario to test marginal tax calculation
       const plan = createTestPlan(73, 500000, 10000); // Low spending, moderate RMD
-      const config = { paths: 1, seed: 42, realDollars: true };
+      const config = { paths: 1, seed: 42 };
       
       const result = projectScenario(plan, config);
       const firstYear = result.projections[0];
@@ -175,7 +174,7 @@ describe('RMD Calculation', () => {
 
     it('should not require RMDs before age 73', () => {
       const plan = createTestPlan(72, 1000000, 40000);
-      const config = { paths: 1, seed: 42, realDollars: true };
+      const config = { paths: 1, seed: 42 };
       
       const result = projectScenario(plan, config);
       const firstYear = result.projections[0];
@@ -185,7 +184,7 @@ describe('RMD Calculation', () => {
 
     it('should track RMDs across multiple years', () => {
       const plan = createTestPlan(73, 1000000, 25000);
-      const config = { paths: 1, seed: 42, realDollars: true };
+      const config = { paths: 1, seed: 42 };
       
       const result = projectScenario(plan, config);
       

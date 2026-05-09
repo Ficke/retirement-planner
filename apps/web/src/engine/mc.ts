@@ -11,10 +11,10 @@ import type { WorkerAPI } from '@/workers/mc.worker';
 export interface MCConfig {
   paths: number;
   seed: number;
-  realDollars: boolean;
 }
 
 let workerInstance: Comlink.Remote<WorkerAPI> | null = null;
+let rawWorker: Worker | null = null;
 
 /**
  * Initialize Web Worker for Monte Carlo simulation.
@@ -24,13 +24,13 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
   if (workerInstance) {
     return workerInstance;
   }
-  
-  const worker = new Worker(
+
+  rawWorker = new Worker(
     new URL('@/workers/mc.worker.ts', import.meta.url),
     { type: 'module' }
   );
-  
-  workerInstance = Comlink.wrap<WorkerAPI>(worker);
+
+  workerInstance = Comlink.wrap<WorkerAPI>(rawWorker);
   return workerInstance;
 }
 
@@ -44,7 +44,7 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
  */
 export async function runMonteCarloSimulation(
   plan: RetirementPlan,
-  config: MCConfig = { paths: 5000, seed: 42, realDollars: true }
+  config: MCConfig = { paths: 5000, seed: 42 }
 ): Promise<SimulationResult> {
   try {
     const worker = await initializeWorker();
@@ -74,10 +74,11 @@ export async function getWorkerStatus(): Promise<{ ready: boolean; lastRuntime?:
  * Call when cleaning up or when worker is no longer needed.
  */
 export function terminateWorker(): void {
-  if (workerInstance) {
-    // TODO: Implement proper worker termination
-    workerInstance = null;
+  if (rawWorker) {
+    rawWorker.terminate();
+    rawWorker = null;
   }
+  workerInstance = null;
 }
 
 /**

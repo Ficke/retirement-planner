@@ -14,5 +14,5 @@ export default defineConfig({
       '@': resolve(__dirname, './src'),
     },
   },
-  envDir: './', // Load .env files from the current directory
+  envDir: './',
 });

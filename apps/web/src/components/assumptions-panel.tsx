@@ -22,10 +22,6 @@ export function AssumptionsPanel() {
     updateAssumptions({ rebalanceAnnually: checked });
   }, [updateAssumptions]);
 
-  const handleRealDisplayChange = useCallback((checked: boolean) => {
-    updateAssumptions({ realDollarDisplay: checked });
-  }, [updateAssumptions]);
-
   const handleServerSideChange = useCallback((checked: boolean) => {
     setUseServerSideCalculations(checked);
   }, [setUseServerSideCalculations]);
@@ -120,49 +116,6 @@ export function AssumptionsPanel() {
             checked={assumptions.rebalanceAnnually}
             onCheckedChange={handleRebalanceChange}
           />
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Label htmlFor="realDisplay">Dollar Display Mode</Label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Real = today&apos;s purchasing power (inflation-adjusted), Nominal = future dollar amounts</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <input
-                type="radio"
-                id="real-dollars"
-                name="dollar-mode"
-                checked={assumptions.realDollarDisplay}
-                onChange={() => handleRealDisplayChange(true)}
-                className="w-4 h-4"
-              />
-              <Label htmlFor="real-dollars" className="text-sm">Real Dollars</Label>
-            </div>
-            <div className="flex items-center space-x-2">
-              <input
-                type="radio"
-                id="nominal-dollars"
-                name="dollar-mode"
-                checked={!assumptions.realDollarDisplay}
-                onChange={() => handleRealDisplayChange(false)}
-                className="w-4 h-4"
-              />
-              <Label htmlFor="nominal-dollars" className="text-sm">Nominal Dollars</Label>
-            </div>
-          </div>
         </div>
 
         <div className="space-y-4">

@@ -11,7 +11,6 @@ import seedrandom from 'seedrandom';
 export interface ProjectionConfig {
   paths: number;
   seed: number;
-  realDollars: boolean;
 }
 
 /**
@@ -47,15 +46,10 @@ export function projectScenario(
   const dayOfYear = Math.floor((asOfDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
   const remainingYearFraction = Math.max(0, Math.min(1, (daysInYear - dayOfYear + 1) / daysInYear));
   
-  // TODO: Implement actual Monte Carlo simulation
-  // For now, return a deterministic stub that compiles
-  
   const yearsToRetirement = profile.retirementAge - profile.age;
   const retirementYears = profile.lifeExpectancy - profile.retirementAge;
   // Life expectancy is inclusive: simulate through that age
   const totalYears = yearsToRetirement + retirementYears + 1;
-
-  // DEBUG logging disabled - too verbose
 
   const yearlyProjections: PathProjection[] = [];
 
@@ -305,7 +299,7 @@ export function projectScenario(
       year: profile.age + year,
       age: currentAge,
       portfolioValue: currentPortfolioValue,
-      income: isRetired ? 0 : income, // No work income in retirement
+      income,
       spending,
       taxes,
       savings,
@@ -327,7 +321,8 @@ export function projectScenario(
   // Single-path projection result - no percentiles or aggregation
   // Monte Carlo worker aggregates multiple paths to create SimulationResult
   const finalWealth = currentPortfolioValue;
-  const success = finalWealth > 0;
+  const everHadInsufficientFunds = yearlyProjections.some(p => p.insufficientFunds);
+  const success = finalWealth > 0 && !everHadInsufficientFunds;
 
   return {
     terminalWealth: finalWealth,
@@ -684,9 +679,7 @@ function executeOptimalWithdrawals(
   insufficientFunds: boolean;
   depositTaxable: number;
 } {
-  // DEBUG: Check if target is zero/negative
   if (targetAfterTaxAmount <= 0) {
-    console.warn('⚠️ executeOptimalWithdrawals called with targetAfterTaxAmount:', targetAfterTaxAmount);
     return {
       withdrawalTaxable: 0,
       withdrawalTraditional: 0,

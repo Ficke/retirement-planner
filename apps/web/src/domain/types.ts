@@ -17,9 +17,9 @@ export interface Account {
   type: AccountType; // HSA | Traditional | Roth | Taxable
   user_id?: string | null; // Owner of this account (for multi-user support)
 
-  // Computed properties (from account_transactions)
-  balance: number; // Total portfolio value from holdings
-  assetWeights: AssetWeights; // Computed from security allocations
+  balance: number;
+  assetWeights: AssetWeights;
+  balanceAsOf?: string; // ISO date string
   taxable: boolean; // computed from type
 
   // Metadata
@@ -27,16 +27,14 @@ export interface Account {
   updatedAt: string; // ISO date string
 }
 
-// Helper types for account creation and updates
 export interface CreateAccountData {
   name: string;
   institution: string;
   type: AccountType;
-}
-
-export interface AccountWithHoldings {
-  account: Account;
-  currentBalance: number | null;
+  balance?: number;
+  stocksPct?: number;
+  bondsPct?: number;
+  userId?: string;
 }
 
 export interface UserProfile {
@@ -80,7 +78,6 @@ export interface ProjectionSettings {
   preset: Preset;
   customReturns?: MarketAssumptions;
   rebalanceAnnually: boolean;
-  realDollarDisplay: boolean;
   longevityOverride?: number;
   simulationModel: SimulationModel;
   randomSeed?: number;
@@ -111,6 +108,7 @@ export interface SimulationResult {
   percentile10TerminalWealth: number;
   percentile90TerminalWealth: number;
   yearlyProjections: YearlyProjection[];
+  medianPath?: PathProjection[];
   terminalWealthDistribution: number[];
   riskOfRuin: number;
   wealthThresholds: {
@@ -122,6 +120,8 @@ export interface SimulationResult {
     p50: number;
     p75: number;
   }>;
+  /** Which engine produced this result. Set by the simulation service, not the engine. */
+  source?: 'server' | 'client';
 }
 
 export interface SSAnalysisResult {
@@ -194,54 +194,7 @@ export interface YearlyProjection extends PathProjection {
   p90: number;
 }
 
-// Transaction types for account management
-export interface AccountTransaction {
-  id: string;
-  accountId: string;
-  symbol: string;
-  transactionType: TransactionType; // Keep existing field name for compatibility
-  shares: number;
-  pricePerShare?: number;
-  transactionDate: string; // ISO date string
-  description?: string;
-  createdAt: string; // ISO date string
-}
-
-export interface AccountSnapshot {
-  id: string;
-  accountId: string;
-  balance: number;
-  snapshotDate: string; // ISO date string
-  stocksWeight: number;
-  bondsWeight: number;
-  createdAt: string; // ISO date string
-}
-
-export interface CatchUpCalculation {
-  snapshotId: string;
-  targetDate: string; // ISO date string (usually today)
-  finalBalance: number;
-  returnsApplied: {
-    stocksReturn: number;
-    bondsReturn: number;
-    totalReturn: number;
-  };
-  methodology: string; // e.g., "historical-returns"
-  calculatedAt: string; // ISO date string
-}
-
-// Transaction creation types
-export interface CreateAccountTransactionData {
-  accountId: string;
-  symbol: string;
-  transactionType: TransactionType;
-  shares: number;
-  pricePerShare?: number;
-  transactionDate: string;
-  description?: string;
-}
-
-// Enhanced loading states with fail-fast design
+// Loading states
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
 export interface AccountLoadingState {
@@ -257,93 +210,3 @@ export interface AccountValidation {
   warnings: string[];
 }
 
-export interface CreateSnapshotData {
-  accountId: string;
-  balance: number;
-  snapshotDate: string;
-  stocksWeight: number;
-  bondsWeight: number;
-}
-
-export interface HoldingsSnapshot {
-  id: string;
-  accountId: string;
-  symbol: string;
-  shares: number;
-  averageCostBasis: number;
-  asOfDate: string; // ISO date string
-  lastTransactionId?: string;
-  calculationMethod: 'full_calc' | 'incremental';
-  createdAt: string; // ISO date string
-}
-
-export interface CreateHoldingsSnapshotData {
-  accountId: string;
-  symbol: string;
-  shares: number;
-  averageCostBasis: number;
-  asOfDate: string;
-  lastTransactionId?: string;
-  calculationMethod?: 'full_calc' | 'incremental';
-}
-
-// Securities-based holdings types
-export type SecurityType = 'ETF' | 'MUTUAL_FUND' | 'STOCK' | 'BOND' | 'OTHER';
-export type AssetClass = 'STOCK' | 'BOND' | 'CASH' | 'COMMODITY' | 'REIT' | 'OTHER';
-
-export interface SecurityAllocations {
-  stocks: number;
-  bonds: number;
-  cash?: number;
-  commodity?: number;
-  reit?: number;
-  other?: number;
-}
-
-export interface Security {
-  symbol: string;
-  name: string;
-  type: SecurityType;
-  assetClass: AssetClass;
-  // Risk multiplier for leveraged funds (1.0 = no leverage, 1.5 = 150% exposure)
-  riskMultiplier: number;
-  // Underlying asset allocations (should sum to riskMultiplier for leveraged funds)
-  underlyingAllocations: SecurityAllocations;
-  // Optional: expense ratio, provider, etc.
-  expenseRatio?: number;
-  provider?: string;
-  // Mutual fund pricing metadata (for securities that need ETF equivalents)
-  pricingSymbol?: string; // ETF symbol to use for pricing (if different from symbol)
-  priceMultiplier?: number; // Multiplier to convert ETF price to mutual fund price
-  priceAdjustmentFactor?: number; // HACK: Temporary factor to adjust price for specific securities
-}
-
-export type TransactionType = 'BUY' | 'SELL' | 'SPLIT' | 'DIVIDEND_REINVEST';
-
-export interface SecurityHolding {
-  accountId: string;
-  symbol: string;
-  totalShares: number;
-  averageCostBasis?: number;
-  currentValue: number;
-  currentPrice?: number;
-  asOfDate: string; // ISO date string
-  security: Security;
-}
-
-export interface SecurityPosition {
-  symbol: string;
-  shares: number;
-  currentValue: number;
-  allocation: SecurityAllocations;
-  security: Security;
-}
-
-// Aggregation result type
-export interface AccountAggregation {
-  accountType: AccountType;
-  totalBalance: number;
-  weightedAssetWeights: AssetWeights;
-  accountCount: number;
-  lastSnapshotDate: string | null;
-}

@@ -51,7 +51,6 @@
     "assumptions": {
       "preset": "Moderate",
       "rebalanceAnnually": true,
-      "realDollarDisplay": true,
       "simulationModel": "historical",
       "randomSeed": 42,
       "useBackdoorRoth": false
@@ -59,7 +58,6 @@
   },
   "config": {
     "paths": 1000,
-    "seed": 42,
-    "realDollars": true
+    "seed": 42
   }
 }

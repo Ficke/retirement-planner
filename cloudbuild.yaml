@@ -12,28 +12,62 @@ substitutions:
   _REGION: us-central1
   _REGISTRY: us-central1-docker.pkg.dev
   _REPOSITORY: retire-plan
+  # Firebase client config — baked into the Next.js JS bundle by next build.
+  # Not secrets (Firebase client config is intentionally public; security via Firebase Rules).
+  # Actual values are set in the Cloud Build trigger via Terraform build_substitutions.
+  _FIREBASE_API_KEY: ''
+  _FIREBASE_AUTH_DOMAIN: ''
+  _FIREBASE_PROJECT_ID: ''
+  _FIREBASE_STORAGE_BUCKET: ''
+  _FIREBASE_MESSAGING_SENDER_ID: ''
+  _FIREBASE_APP_ID: ''
+  _FIREBASE_MEASUREMENT_ID: ''
 
 steps:
-  # ===== RUST SIMULATION SERVICE =====
+  # ===== BUILD PHASE (parallel) =====
+  # Both images build concurrently. Neither service is deployed until both succeed.
+  # A broken Next.js build can no longer leave a half-deployed Rust service behind.
 
-  # Step 1: Build and push Rust service with Kaniko (with caching)
   - name: 'gcr.io/kaniko-project/executor:latest'
     id: 'build-and-push-rust'
+    waitFor: ['-']
     args:
       - '--context=dir://rust-simulation-service'
       - '--dockerfile=rust-simulation-service/Dockerfile'
       - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_RUST_SERVICE_NAME}:$COMMIT_SHA'
       - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_RUST_SERVICE_NAME}:latest'
       - '--cache=true'
-      - '--cache-ttl=720h'  # Cache for 30 days
-      - '--compressed-caching=false'  # Faster caching
-      - '--snapshot-mode=redo'  # More accurate layer detection
-      - '--use-new-run'  # Better RUN caching
+      - '--cache-ttl=720h'
+      - '--compressed-caching=false'
+      - '--snapshot-mode=redo'
+      - '--use-new-run'
 
-  # Step 2: Deploy Rust service to Cloud Run (internal-only)
+  - name: 'gcr.io/kaniko-project/executor:latest'
+    id: 'build-and-push'
+    waitFor: ['-']
+    args:
+      - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+      - '--cache=true'
+      - '--cache-ttl=720h'
+      - '--compressed-caching=false'
+      - '--snapshot-mode=redo'
+      - '--use-new-run'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${_FIREBASE_MESSAGING_SENDER_ID}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_APP_ID=${_FIREBASE_APP_ID}'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${_FIREBASE_MEASUREMENT_ID}'
+
+  # ===== DEPLOY PHASE =====
+  # Only runs if both builds above passed.
+
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-rust'
     entrypoint: gcloud
+    waitFor: ['build-and-push-rust', 'build-and-push']
     args:
       - 'run'
       - 'deploy'
@@ -59,51 +93,31 @@ steps:
       - '10'
       - '--timeout'
       - '120'
-    waitFor: ['build-and-push-rust']
 
-  # Step 3: Get Rust service URL and update Next.js env var
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'update-nextjs-env'
     entrypoint: 'sh'
+    waitFor: ['deploy-rust']
     args:
       - '-c'
       - |
-        # Get the Rust service URL
         RUST_URL=$$(gcloud run services describe ${_RUST_SERVICE_NAME} \
           --region ${_REGION} \
           --format 'value(status.url)')
         echo "Rust service URL: $$RUST_URL"
 
-        # Update Next.js service with RUST_SERVICE_URL (if service exists)
         if gcloud run services describe ${_SERVICE_NAME} --region ${_REGION} >/dev/null 2>&1; then
-          echo "Updating existing Next.js service with RUST_SERVICE_URL"
           gcloud run services update ${_SERVICE_NAME} \
             --region ${_REGION} \
             --update-env-vars RUST_SERVICE_URL=$$RUST_URL
         else
-          echo "Next.js service doesn't exist yet, will set env var during first deploy"
+          echo "Next.js service doesn't exist yet, env var will be set on first deploy"
         fi
-    waitFor: ['deploy-rust']
 
-  # ===== NEXT.JS APPLICATION =====
-  # Note: Tests run in GitHub Actions on PR. This pipeline only builds & deploys.
-
-  # Step 4: Build and push Next.js with Kaniko (Docker layer caching + pushes both tags)
-  - name: 'gcr.io/kaniko-project/executor:latest'
-    id: 'build-and-push'
-    args:
-      - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
-      - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
-      - '--cache=true'
-      - '--cache-ttl=720h'  # Cache for 30 days
-      - '--compressed-caching=false'  # Faster caching
-      - '--snapshot-mode=redo'  # More accurate layer detection
-      - '--use-new-run'  # Better RUN caching
-
-  # Step 5: Deploy Next.js to Cloud Run (must wait for Rust service and env update)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy'
     entrypoint: gcloud
+    waitFor: ['build-and-push', 'update-nextjs-env']
     args:
       - 'run'
       - 'deploy'
@@ -114,12 +128,11 @@ steps:
       - '${_REGION}'
       - '--platform'
       - 'managed'
-    waitFor: ['build-and-push', 'update-nextjs-env']
 
-  # Step 6: Verify deployment with health check
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'health-check'
     entrypoint: 'sh'
+    waitFor: ['deploy']
     args:
       - '-c'
       - |
@@ -129,7 +142,6 @@ steps:
           --format 'value(status.url)')
         curl -f -s -o /dev/null -w "%{http_code}" $$SERVICE_URL || exit 1
         echo "Deployment successful! Service is healthy."
-    waitFor: ['deploy']
 
 # Note: No 'images' section needed - Kaniko pushes images directly via --destination flags
 # Both Rust and Next.js images are built and pushed by Kaniko in one step

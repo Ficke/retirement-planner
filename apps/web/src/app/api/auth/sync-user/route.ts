@@ -41,38 +41,18 @@ export async function POST(request: NextRequest) {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Check if user already exists
-    const existing = await db.query<{ id: string; firebase_uid: string }>(
-      'SELECT id, firebase_uid FROM users WHERE firebase_uid = $1 OR email = $1',
-      [firebaseUid, email]
+    // Upsert user — Firebase UID is the primary key
+    await db.query(
+      `INSERT INTO users (id, email, name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET
+         email = $2, name = $3, updated_at = NOW()`,
+      [firebaseUid, email, name || null]
     );
-
-    let userId: string;
-
-    if (existing.rows.length > 0) {
-      // Update existing user
-      const result = await db.query<{ id: string }>(
-        `UPDATE users
-         SET firebase_uid = $1, email = $2, name = $3, updated_at = NOW()
-         WHERE id = $4
-         RETURNING id`,
-        [firebaseUid, email, name || null, existing.rows[0].id]
-      );
-      userId = result.rows[0].id;
-    } else {
-      // Create new user
-      const result = await db.query<{ id: string }>(
-        `INSERT INTO users (firebase_uid, email, name)
-         VALUES ($1, $2, $3)
-         RETURNING id`,
-        [firebaseUid, email, name || null]
-      );
-      userId = result.rows[0].id;
-    }
 
     return NextResponse.json({
       success: true,
-      userId,
+      userId: firebaseUid,
     });
   } catch (error) {
     console.error('Sync user error:', error);
