@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { usePlan, usePlanSelectors } from "@/state/usePlan";
+import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import {
@@ -12,6 +14,7 @@ import {
 } from "@/components/retire/ui";
 import { Donut, Sparkline, WealthFanChart } from "@/components/ui/charts";
 import { fmtCurrency, fmtPercent } from "../format";
+import { cn } from "@/lib/utils";
 
 const KIND_COLOR: Record<string, { label: string; color: string }> = {
   Taxable: { label: "Taxable", color: "var(--color-account-taxable)" },
@@ -58,9 +61,20 @@ function SliderRow({
 
 export function PageOverview() {
   const plan = usePlan((s) => s.plan);
-  const result = usePlan((s) => s.simulationResult);
+  const liveResult = usePlan((s) => s.simulationResult);
+  const isSimulating = usePlan((s) => s.isSimulatingMain);
   const updatePlan = usePlan((s) => s.updatePlan);
   const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
+
+  // Keep the last completed result visible while a new simulation runs,
+  // so slider drags don't flash "0% / Off track" between recomputes.
+  const lastResultRef = useRef<SimulationResult | null>(null);
+  useEffect(() => {
+    if (liveResult) lastResultRef.current = liveResult;
+  }, [liveResult]);
+  const result = liveResult ?? lastResultRef.current;
+  const isUpdating = isSimulating || !liveResult;
+  const hasEverComputed = result !== null;
 
   const netWorth = accountsWithHoldings.reduce(
     (s, a) => s + (a.currentBalance || 0),
@@ -110,9 +124,39 @@ export function PageOverview() {
       <KPIGrid cols={4}>
         <Stat
           label="Plan Health"
-          value={`${(successProb * 100).toFixed(0)}%`}
-          trend={`${successLabel} · simulated paths fund full retirement`}
-          tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
+          value={
+            hasEverComputed ? (
+              <span
+                className={cn(
+                  "transition-opacity duration-200",
+                  isUpdating && "opacity-60",
+                )}
+              >
+                {`${(successProb * 100).toFixed(0)}%`}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )
+          }
+          trend={
+            isUpdating ? (
+              <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
+                Updating projection…
+              </span>
+            ) : (
+              `${successLabel} · simulated paths fund full retirement`
+            )
+          }
+          tone={
+            isUpdating
+              ? "neutral"
+              : successProb >= 0.85
+              ? "positive"
+              : successProb >= 0.7
+              ? "neutral"
+              : "warn"
+          }
         />
         <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} trend="across all accounts">
           {sparkData.length > 0 && (
@@ -169,13 +213,21 @@ export function PageOverview() {
           description="Median path with 25–75 and 10–90 percentile bands."
         >
           {result?.yearlyProjections?.length ? (
-            <WealthFanChart
-              projections={result.yearlyProjections}
-              retirementAge={plan.profile.retirementAge}
-              height={260}
-            />
+            <div
+              className={cn(
+                "transition-opacity duration-200",
+                isUpdating && "opacity-60",
+              )}
+            >
+              <WealthFanChart
+                projections={result.yearlyProjections}
+                retirementAge={plan.profile.retirementAge}
+                height={260}
+              />
+            </div>
           ) : (
-            <div className="text-muted-foreground flex h-[260px] items-center justify-center text-sm">
+            <div className="text-muted-foreground flex h-[260px] items-center justify-center gap-2 text-sm">
+              <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
               Running simulation…
             </div>
           )}
