@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { usePlan, usePlanSelectors } from "@/state/usePlan";
-import type { AccountType, CreateAccountData } from "@/domain/types";
+import type { Account, AccountType, CreateAccountData } from "@/domain/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import {
   Table,
   TableBody,
@@ -39,21 +40,34 @@ const KIND_META: Record<AccountType, { label: string; color: string }> = {
 };
 const KIND_KEYS: AccountType[] = ["Taxable", "Traditional", "Roth", "HSA"];
 
+interface AccountDraft {
+  name: string;
+  institution: string;
+  type: AccountType;
+  balance: string;
+  stocksPct: number; // 0-100
+}
+
+const EMPTY_DRAFT: AccountDraft = {
+  name: "",
+  institution: "",
+  type: "Taxable",
+  balance: "",
+  stocksPct: 60,
+};
+
+type EditorMode =
+  | { kind: "create" }
+  | { kind: "edit"; id: string };
+
 export function PageAccounts() {
   const { loadAccounts, createAccount, deleteAccount, updateAccount } = usePlan();
   const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
   const isReady = usePlanSelectors.useIsReady();
 
   const [filter, setFilter] = useState<"all" | AccountType>("all");
-  const [showAdd, setShowAdd] = useState(false);
-  const [draft, setDraft] = useState<CreateAccountData>({
-    name: "",
-    institution: "",
-    type: "Taxable",
-  });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] =
-    useState<{ name: string; institution: string; type: AccountType } | null>(null);
+  const [editor, setEditor] = useState<EditorMode | null>(null);
+  const [draft, setDraft] = useState<AccountDraft>(EMPTY_DRAFT);
 
   useEffect(() => {
     loadAccounts();
@@ -70,23 +84,61 @@ export function PageAccounts() {
       ? accountsWithHoldings
       : accountsWithHoldings.filter((a) => a.account.type === filter);
 
-  const handleAdd = async () => {
-    if (!draft.name.trim() || !draft.institution.trim()) return;
-    await createAccount(draft);
-    setDraft({ name: "", institution: "", type: "Taxable" });
-    setShowAdd(false);
+  const openCreate = () => {
+    setDraft(EMPTY_DRAFT);
+    setEditor({ kind: "create" });
   };
 
-  const handleSaveEdit = async (id: string) => {
-    if (!editDraft) return;
-    await updateAccount(id, editDraft);
-    setEditingId(null);
-    setEditDraft(null);
+  const openEdit = (account: Account) => {
+    setDraft({
+      name: account.name,
+      institution: account.institution,
+      type: account.type,
+      balance: account.balance ? String(account.balance) : "",
+      stocksPct: Math.round((account.assetWeights?.stocks ?? 0.6) * 100),
+    });
+    setEditor({ kind: "edit", id: account.id });
+  };
+
+  const closeEditor = () => {
+    setEditor(null);
+    setDraft(EMPTY_DRAFT);
+  };
+
+  const handleSubmit = async () => {
+    if (!editor) return;
+    if (!draft.name.trim()) return;
+    const balance = parseFloat(draft.balance) || 0;
+    const stocks = Math.max(0, Math.min(1, draft.stocksPct / 100));
+    const bonds = 1 - stocks;
+
+    if (editor.kind === "create") {
+      const payload: CreateAccountData = {
+        name: draft.name.trim(),
+        institution: draft.institution.trim(),
+        type: draft.type,
+        balance,
+        stocksPct: stocks,
+        bondsPct: bonds,
+      };
+      await createAccount(payload);
+    } else {
+      await updateAccount(editor.id, {
+        name: draft.name.trim(),
+        institution: draft.institution.trim(),
+        type: draft.type,
+        balance,
+        assetWeights: { stocks, bonds },
+        balanceAsOf: new Date().toISOString().split("T")[0],
+      });
+    }
+    closeEditor();
   };
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete account "${name}"? This cannot be undone.`)) return;
     await deleteAccount(id);
+    if (editor?.kind === "edit" && editor.id === id) closeEditor();
   };
 
   const summary = `${accountsWithHoldings.length} ${
@@ -101,7 +153,7 @@ export function PageAccounts() {
         title="Accounts"
         description={summary}
         actions={
-          <Button onClick={() => setShowAdd((s) => !s)}>
+          <Button onClick={openCreate}>
             <Plus className="size-4" />
             Add account
           </Button>
@@ -133,39 +185,24 @@ export function PageAccounts() {
         ))}
       </div>
 
-      {showAdd && (
+      {editor && (
         <DashboardCard
-          title="New account"
+          title={editor.kind === "create" ? "New account" : "Edit account"}
           actions={
-            <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>
+            <Button variant="ghost" size="sm" onClick={closeEditor}>
               Cancel
             </Button>
           }
         >
-          <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[2fr_2fr_1fr_auto]">
-            <FieldInput
-              label="Name"
-              value={draft.name}
-              placeholder="e.g. Joint Brokerage"
-              onChange={(v) => setDraft({ ...draft, name: v })}
-            />
-            <FieldInput
-              label="Institution"
-              value={draft.institution}
-              placeholder="e.g. Fidelity"
-              onChange={(v) => setDraft({ ...draft, institution: v })}
-            />
-            <FieldSelect
-              label="Type"
-              value={draft.type}
-              onChange={(v) => setDraft({ ...draft, type: v as AccountType })}
-            />
-            <Button onClick={handleAdd}>Create</Button>
+          <AccountFormFields draft={draft} onChange={setDraft} />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeEditor}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={!draft.name.trim()}>
+              {editor.kind === "create" ? "Create account" : "Save changes"}
+            </Button>
           </div>
-          <p className="text-muted-foreground mt-2 text-[11px]">
-            New accounts start with $0. Add holdings or import a statement from the
-            account detail view.
-          </p>
         </DashboardCard>
       )}
 
@@ -191,129 +228,59 @@ export function PageAccounts() {
                 <TableHead>Account</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Institution</TableHead>
+                <TableHead className="w-40">Allocation</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
                 <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map(({ account, currentBalance }) => {
-                const isEditing = editingId === account.id;
                 const meta = KIND_META[account.type];
+                const stocks = Math.round((account.assetWeights?.stocks ?? 0) * 100);
+                const bonds = Math.max(0, 100 - stocks);
                 return (
                   <TableRow key={account.id}>
                     <TableCell>
-                      {isEditing ? (
-                        <Input
-                          value={editDraft?.name ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => (d ? { ...d, name: e.target.value } : d))
-                          }
-                        />
-                      ) : (
-                        <span className="font-medium">{account.name}</span>
-                      )}
+                      <span className="font-medium">{account.name}</span>
                     </TableCell>
                     <TableCell>
-                      {isEditing ? (
-                        <Select
-                          value={editDraft?.type ?? account.type}
-                          onValueChange={(v) =>
-                            setEditDraft((d) =>
-                              d ? { ...d, type: v as AccountType } : d,
-                            )
-                          }
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {KIND_KEYS.map((k) => (
-                              <SelectItem key={k} value={k}>
-                                {KIND_META[k].label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
+                      <span
+                        className="inline-flex items-center gap-1.5 rounded-full border bg-transparent px-2 py-0.5 text-xs"
+                        style={{ borderColor: meta.color, color: meta.color }}
+                      >
                         <span
-                          className="inline-flex items-center gap-1.5 rounded-full border bg-transparent px-2 py-0.5 text-xs"
-                          style={{ borderColor: meta.color, color: meta.color }}
-                        >
-                          <span
-                            className="size-2 rounded-full"
-                            style={{ background: meta.color }}
-                          />
-                          {meta.label}
-                        </span>
-                      )}
+                          className="size-2 rounded-full"
+                          style={{ background: meta.color }}
+                        />
+                        {meta.label}
+                      </span>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {isEditing ? (
-                        <Input
-                          value={editDraft?.institution ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) =>
-                              d ? { ...d, institution: e.target.value } : d,
-                            )
-                          }
-                        />
-                      ) : (
-                        account.institution
-                      )}
+                      {account.institution || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <AllocationBar stocks={stocks} bonds={bonds} />
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold">
                       {fmtCurrency(currentBalance || 0)}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
-                      {isEditing ? (
-                        <>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Save"
-                            onClick={() => handleSaveEdit(account.id)}
-                          >
-                            <Check className="size-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Cancel"
-                            onClick={() => {
-                              setEditingId(null);
-                              setEditDraft(null);
-                            }}
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Edit"
-                            onClick={() => {
-                              setEditingId(account.id);
-                              setEditDraft({
-                                name: account.name,
-                                institution: account.institution,
-                                type: account.type,
-                              });
-                            }}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label="Delete"
-                            onClick={() => handleDelete(account.id, account.name)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </>
-                      )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Edit"
+                        onClick={() => openEdit(account)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Delete"
+                        onClick={() => handleDelete(account.id, account.name)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 );
@@ -322,12 +289,96 @@ export function PageAccounts() {
           </Table>
         )}
       </DashboardCard>
-
-      <p className="text-muted-foreground text-[11px]">
-        Need to populate holdings? Open an account&rsquo;s detail view (legacy UI) to
-        upload a statement via OCR or add transactions.
-      </p>
     </PageShell>
+  );
+}
+
+function AccountFormFields({
+  draft,
+  onChange,
+}: {
+  draft: AccountDraft;
+  onChange: (d: AccountDraft) => void;
+}) {
+  const stocks = draft.stocksPct;
+  const bonds = 100 - stocks;
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <FieldInput
+        label="Name"
+        value={draft.name}
+        placeholder="e.g. Joint Brokerage"
+        onChange={(v) => onChange({ ...draft, name: v })}
+      />
+      <FieldInput
+        label="Institution"
+        value={draft.institution}
+        placeholder="e.g. Fidelity"
+        onChange={(v) => onChange({ ...draft, institution: v })}
+      />
+      <FieldSelect
+        label="Type"
+        value={draft.type}
+        onChange={(v) => onChange({ ...draft, type: v })}
+      />
+      <FieldInput
+        label="Balance"
+        value={draft.balance}
+        placeholder="0"
+        inputMode="decimal"
+        prefix="$"
+        onChange={(v) => onChange({ ...draft, balance: v.replace(/[^0-9.]/g, "") })}
+      />
+      <div className="md:col-span-2">
+        <div className="mb-2 flex items-baseline justify-between">
+          <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Allocation
+          </Label>
+          <div className="font-mono text-xs tabular-nums">
+            <span className="text-foreground font-semibold">{stocks}%</span>
+            <span className="text-muted-foreground"> stocks · </span>
+            <span className="text-foreground font-semibold">{bonds}%</span>
+            <span className="text-muted-foreground"> bonds</span>
+          </div>
+        </div>
+        <Slider
+          value={[stocks]}
+          min={0}
+          max={100}
+          step={1}
+          onValueChange={(v) => onChange({ ...draft, stocksPct: v[0] ?? 0 })}
+        />
+        <AllocationBar stocks={stocks} bonds={bonds} className="mt-3" />
+      </div>
+    </div>
+  );
+}
+
+function AllocationBar({
+  stocks,
+  bonds,
+  className,
+}: {
+  stocks: number;
+  bonds: number;
+  className?: string;
+}) {
+  const total = stocks + bonds || 1;
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      <div className="bg-muted relative h-1.5 flex-1 overflow-hidden rounded-full">
+        <div
+          className="absolute inset-y-0 left-0"
+          style={{
+            width: `${(stocks / total) * 100}%`,
+            background: "var(--color-account-traditional, hsl(220 70% 55%))",
+          }}
+        />
+      </div>
+      <span className="text-muted-foreground font-mono text-xs tabular-nums">
+        {stocks}/{bonds}
+      </span>
+    </div>
   );
 }
 
@@ -369,11 +420,15 @@ function FieldInput({
   value,
   placeholder,
   onChange,
+  inputMode,
+  prefix,
 }: {
   label: string;
   value: string;
   placeholder?: string;
   onChange: (v: string) => void;
+  inputMode?: "decimal" | "numeric" | "text";
+  prefix?: string;
 }) {
   const id = useId();
   return (
@@ -384,12 +439,21 @@ function FieldInput({
       >
         {label}
       </Label>
-      <Input
-        id={id}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <div className="relative">
+        {prefix && (
+          <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm">
+            {prefix}
+          </span>
+        )}
+        <Input
+          id={id}
+          value={value}
+          placeholder={placeholder}
+          inputMode={inputMode}
+          onChange={(e) => onChange(e.target.value)}
+          className={prefix ? "pl-7" : undefined}
+        />
+      </div>
     </div>
   );
 }
