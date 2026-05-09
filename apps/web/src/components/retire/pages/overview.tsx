@@ -1,31 +1,83 @@
 "use client";
 
-import { usePlan, usePlanSelectors } from '@/state/usePlan';
-import { Card, KPI, Sparkline, SliderField } from '../primitives';
-import { Donut, ProbabilityRing, WealthFanChart } from '../charts';
-import { fmtCurrency, fmtPercent } from '../format';
+import { usePlan, usePlanSelectors } from "@/state/usePlan";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import {
+  DashboardCard,
+  KPIGrid,
+  PageHeader,
+  PageShell,
+  Stat,
+} from "@/components/retire/ui";
+import {
+  Donut,
+  ProbabilityRing,
+  Sparkline,
+  WealthFanChart,
+} from "@/components/ui/charts";
+import { fmtCurrency, fmtPercent } from "../format";
 
 const KIND_COLOR: Record<string, { label: string; color: string }> = {
-  Taxable: { label: 'Taxable', color: 'var(--r-c-taxable)' },
-  Traditional: { label: 'Traditional', color: 'var(--r-c-traditional)' },
-  Roth: { label: 'Roth', color: 'var(--r-c-roth)' },
-  HSA: { label: 'HSA', color: 'var(--r-c-hsa)' },
+  Taxable: { label: "Taxable", color: "var(--color-account-taxable)" },
+  Traditional: { label: "Traditional", color: "var(--color-account-traditional)" },
+  Roth: { label: "Roth", color: "var(--color-account-roth)" },
+  HSA: { label: "HSA", color: "var(--color-account-hsa)" },
 };
 
+function SliderRow({
+  label,
+  value,
+  display,
+  min,
+  max,
+  step = 1,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  display: string;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+          {label}
+        </Label>
+        <span className="text-foreground font-mono text-xs font-semibold tabular-nums">
+          {display}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={step}
+        onValueChange={(v) => onChange(v[0])}
+      />
+    </div>
+  );
+}
+
 export function PageOverview() {
-  const plan = usePlan(s => s.plan);
-  const result = usePlan(s => s.simulationResult);
-  const updatePlan = usePlan(s => s.updatePlan);
+  const plan = usePlan((s) => s.plan);
+  const result = usePlan((s) => s.simulationResult);
+  const updatePlan = usePlan((s) => s.updatePlan);
   const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
 
-  const netWorth = accountsWithHoldings.reduce((s, a) => s + (a.currentBalance || 0), 0);
+  const netWorth = accountsWithHoldings.reduce(
+    (s, a) => s + (a.currentBalance || 0),
+    0,
+  );
   const yearsToRetire = Math.max(0, plan.profile.retirementAge - plan.profile.age);
   const retirementYear = new Date().getFullYear() + yearsToRetire;
   const successProb = result?.successProbability ?? 0;
 
-  const sparkData = (result?.yearlyProjections ?? [])
-    .slice(0, 24)
-    .map(p => p.p50);
+  const sparkData = (result?.yearlyProjections ?? []).slice(0, 24).map((p) => p.p50);
 
   const byKind: Record<string, number> = {};
   for (const a of accountsWithHoldings) {
@@ -35,95 +87,116 @@ export function PageOverview() {
   const allocData = Object.entries(byKind).map(([k, v]) => ({
     label: KIND_COLOR[k]?.label ?? k,
     value: v,
-    color: KIND_COLOR[k]?.color ?? 'var(--r-ink-3)',
+    color: KIND_COLOR[k]?.color ?? "var(--color-muted-foreground)",
   }));
 
   const monthlySpend = plan.profile.desiredSpending / 12;
-  const spendOfSalary = plan.profile.currentSalary > 0
-    ? plan.profile.desiredSpending / plan.profile.currentSalary
-    : 0;
-  const successLabel = successProb >= 0.85 ? 'Excellent' : successProb >= 0.7 ? 'On track' : successProb >= 0.5 ? 'At risk' : 'Off track';
+  const spendOfSalary =
+    plan.profile.currentSalary > 0
+      ? plan.profile.desiredSpending / plan.profile.currentSalary
+      : 0;
+  const successLabel =
+    successProb >= 0.85
+      ? "Excellent"
+      : successProb >= 0.7
+      ? "On track"
+      : successProb >= 0.5
+      ? "At risk"
+      : "Off track";
+
+  const asOf = new Date(plan.profile.asOfDate).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 
   return (
-    <>
-      <div className="r-page-head">
-        <div>
-          <h1>Overview</h1>
-          <div className="sub">
-            As of {new Date(plan.profile.asOfDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader title="Overview" description={`As of ${asOf}`} />
 
-      <div className="r-kpi-row" style={{ gridTemplateColumns: '1.6fr 1fr 1fr 1fr' }}>
-        <div className="r-kpi hero">
-          <div className="r-kpi-label">Plan Health</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <ProbabilityRing value={successProb} size={108} thickness={9} />
-            <div style={{ flex: 1 }}>
-              <div className="r-kpi-value" style={{ fontSize: 19, marginBottom: 4 }}>{successLabel}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--r-ink-3)', lineHeight: 1.5 }}>
-                {(successProb * 100).toFixed(0)}% of simulated paths fund your full retirement.
-              </div>
-            </div>
+      <KPIGrid cols={4}>
+        <Stat
+          label="Plan Health"
+          value={successLabel}
+          unit={`${(successProb * 100).toFixed(0)}%`}
+          tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
+        >
+          <div className="mt-2 flex items-center gap-3">
+            <ProbabilityRing value={successProb} size={72} thickness={7} />
+            <p className="text-muted-foreground text-xs leading-snug">
+              {(successProb * 100).toFixed(0)}% of simulated paths fund your full retirement.
+            </p>
           </div>
-        </div>
-        <KPI label="Net Worth" value={fmtCurrency(netWorth, true)} sub="across all accounts">
+        </Stat>
+        <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} trend="across all accounts">
           {sparkData.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <Sparkline data={sparkData} color="var(--r-accent)" />
+            <div className="mt-2">
+              <Sparkline data={sparkData} />
             </div>
           )}
-        </KPI>
-        <KPI
+        </Stat>
+        <Stat
           label="Retirement Date"
           value={String(retirementYear)}
-          sub={`Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
+          trend={`Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
         />
-        <KPI
+        <Stat
           label="Monthly Spending"
-          value={fmtCurrency(monthlySpend, false).replace('.00', '')}
-          sub={`${fmtPercent(spendOfSalary, 0)} of gross salary today`}
+          value={fmtCurrency(monthlySpend, false).replace(".00", "")}
+          trend={`${fmtPercent(spendOfSalary, 0)} of gross salary today`}
         />
-      </div>
+      </KPIGrid>
 
-      <Card title="Tweak the levers" sub="Sliders update your plan and re-run the simulation.">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 28 }}>
-          <SliderField
+      <DashboardCard title="Tweak the levers">
+        <div className="grid grid-cols-1 gap-7 md:grid-cols-3">
+          <SliderRow
             label="Retirement age"
             value={plan.profile.retirementAge}
-            min={50} max={75}
-            onChange={v => updatePlan({ profile: { retirementAge: v } })}
-            format={v => `Age ${v}`}
+            display={`Age ${plan.profile.retirementAge}`}
+            min={50}
+            max={75}
+            onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
           />
-          <SliderField
+          <SliderRow
             label="Annual spending in retirement"
             value={plan.profile.desiredSpending}
-            min={20000} max={200000} step={1000}
-            onChange={v => updatePlan({ profile: { desiredSpending: v } })}
-            format={v => fmtCurrency(v)}
+            display={fmtCurrency(plan.profile.desiredSpending)}
+            min={20000}
+            max={200000}
+            step={1000}
+            onChange={(v) => updatePlan({ profile: { desiredSpending: v } })}
           />
-          <SliderField
+          <SliderRow
             label="Claim Social Security at"
             value={plan.socialSecurity.claimAge}
-            min={62} max={70}
-            onChange={v => updatePlan({ socialSecurity: { claimAge: v } })}
-            format={v => `Age ${v}`}
+            display={`Age ${plan.socialSecurity.claimAge}`}
+            min={62}
+            max={70}
+            onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
           />
         </div>
-      </Card>
+      </DashboardCard>
 
-      <div className="r-split-2">
-        <Card title="Wealth Trajectory" sub="Median path with 25–75 and 10–90 percentile bands.">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DashboardCard
+          title="Wealth Trajectory"
+          description="Median path with 25–75 and 10–90 percentile bands."
+        >
           {result?.yearlyProjections?.length ? (
-            <WealthFanChart projections={result.yearlyProjections} retirementAge={plan.profile.retirementAge} height={260} />
+            <WealthFanChart
+              projections={result.yearlyProjections}
+              retirementAge={plan.profile.retirementAge}
+              height={260}
+            />
           ) : (
-            <div className="r-empty" style={{ height: 260 }}>Running simulation…</div>
+            <div className="text-muted-foreground flex h-[260px] items-center justify-center text-sm">
+              Running simulation…
+            </div>
           )}
-        </Card>
+        </DashboardCard>
 
-        <Card title="Allocation by Account Type" sub="Across all accounts">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+        <DashboardCard title="Allocation by Account Type" description="Across all accounts">
+          <div className="flex items-center gap-5">
             <Donut
               data={allocData}
               size={132}
@@ -131,22 +204,29 @@ export function PageOverview() {
               centerLabel="Total"
               centerValue={fmtCurrency(netWorth, true)}
             />
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {allocData.length === 0 && <div style={{ color: 'var(--r-ink-3)', fontSize: 12 }}>No accounts yet.</div>}
-              {allocData.map(a => (
-                <div key={a.label} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
-                  <span className="r-dot" style={{ background: a.color, width: 9, height: 9 }} />
-                  <span style={{ flex: 1 }}>{a.label}</span>
-                  <span className="mono" style={{ color: 'var(--r-ink-2)' }}>{fmtCurrency(a.value, true)}</span>
-                  <span className="mono" style={{ color: 'var(--r-ink-3)', minWidth: 40, textAlign: 'right' }}>
-                    {netWorth > 0 ? ((a.value / netWorth) * 100).toFixed(0) : '0'}%
+            <div className="flex flex-1 flex-col gap-2">
+              {allocData.length === 0 && (
+                <div className="text-muted-foreground text-xs">No accounts yet.</div>
+              )}
+              {allocData.map((a) => (
+                <div key={a.label} className="flex items-center gap-2.5 text-xs">
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: a.color }}
+                  />
+                  <span className="flex-1">{a.label}</span>
+                  <span className="text-foreground/80 font-mono">
+                    {fmtCurrency(a.value, true)}
+                  </span>
+                  <span className="text-muted-foreground min-w-10 text-right font-mono">
+                    {netWorth > 0 ? ((a.value / netWorth) * 100).toFixed(0) : "0"}%
                   </span>
                 </div>
               ))}
             </div>
           </div>
-        </Card>
+        </DashboardCard>
       </div>
-    </>
+    </PageShell>
   );
 }
