@@ -185,9 +185,11 @@ interface PlanState {
 
   // Plan management actions
   loadProfile: () => Promise<void>;
-  updateProfile: (profile: Partial<UserProfile>) => void;
-  updateSocialSecurity: (settings: Partial<SocialSecuritySettings>) => void;
-  updateAssumptions: (settings: Partial<AssumptionSettings>) => void;
+  updatePlan: (updates: {
+    profile?: Partial<UserProfile>;
+    socialSecurity?: Partial<SocialSecuritySettings>;
+    assumptions?: Partial<AssumptionSettings>;
+  }) => void;
   setSimulationResult: (result: SimulationResult | null) => void;
   validatePlan: () => Promise<boolean>;
   reset: () => void;
@@ -225,7 +227,7 @@ const defaultPlan: RetirementPlan = {
     filingStatus: 'Single',
     retirementAge: 65,
     currentSalary: 75000,
-    salaryGrowthRate: 0.03,
+    salaryGrowthRate: 0.01,
     desiredSpending: 50000,
     spendingGrowthRate: 0.00, // Constant real spending (no lifestyle inflation)
     lifeExpectancy: 90,
@@ -327,13 +329,14 @@ export const usePlan = create<PlanState>((set, get) => ({
     }
   },
 
-  updateProfile: (profileUpdates) =>
+  updatePlan: (updates) =>
     set((state) => {
-      // Update state and clear all results
       const newState = {
         plan: {
           ...state.plan,
-          profile: { ...state.plan.profile, ...profileUpdates },
+          ...(updates.profile && { profile: { ...state.plan.profile, ...updates.profile } }),
+          ...(updates.socialSecurity && { socialSecurity: { ...state.plan.socialSecurity, ...updates.socialSecurity } }),
+          ...(updates.assumptions && { assumptions: { ...state.plan.assumptions, ...updates.assumptions } }),
         },
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
@@ -341,9 +344,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         simulationResult: null,
       };
 
-      // Schedule all simulations
       scheduleSimulations(get);
-      // Persist to localStorage
       setTimeout(() => onProfileChanged(get), 0);
 
       return newState;
@@ -483,48 +484,6 @@ export const usePlan = create<PlanState>((set, get) => ({
       retirementAgeAnalysisResult: null,
     });
   },
-
-  updateSocialSecurity: (ssUpdates) =>
-    set((state) => {
-      // Update state and clear all results
-      const newState = {
-        plan: {
-          ...state.plan,
-          socialSecurity: { ...state.plan.socialSecurity, ...ssUpdates },
-        },
-        ssAnalysisResult: null,
-        spendingAnalysisResult: null,
-        retirementAgeAnalysisResult: null,
-        simulationResult: null,
-      };
-
-      // Schedule all simulations
-      scheduleSimulations(get);
-      setTimeout(() => onProfileChanged(get), 0);
-
-      return newState;
-    }),
-
-  updateAssumptions: (assumptionUpdates) =>
-    set((state) => {
-      // Update state and clear all results
-      const newState = {
-        plan: {
-          ...state.plan,
-          assumptions: { ...state.plan.assumptions, ...assumptionUpdates },
-        },
-        ssAnalysisResult: null,
-        spendingAnalysisResult: null,
-        retirementAgeAnalysisResult: null,
-        simulationResult: null,
-      };
-
-      // Schedule all simulations
-      scheduleSimulations(get);
-      setTimeout(() => onProfileChanged(get), 0);
-
-      return newState;
-    }),
 
   setUseServerSideCalculations: (useServerSide) =>
     set(() => {

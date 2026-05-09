@@ -2,24 +2,16 @@
 
 import { Icon, type IconName } from './icons';
 
-export type PageId = 'overview' | 'plan' | 'accounts' | 'projections' | 'decisions' | 'assumptions' | 'settings';
+export type PageId = 'overview' | 'sensitivity' | 'projections' | 'plan' | 'accounts' | 'assumptions' | 'settings';
 
-const NAV: { section: string; items: { id: PageId; label: string; icon: IconName }[] }[] = [
-  { section: 'Your situation', items: [
-    { id: 'plan', label: 'Profile', icon: 'sliders' },
-    { id: 'accounts', label: 'Accounts', icon: 'wallet' },
-  ]},
-  { section: 'Model', items: [
-    { id: 'assumptions', label: 'Assumptions', icon: 'globe' },
-  ]},
-  { section: 'Results', items: [
-    { id: 'overview', label: 'Overview', icon: 'home' },
-    { id: 'projections', label: 'Projections', icon: 'chart' },
-    { id: 'decisions', label: 'Decisions', icon: 'flask' },
-  ]},
-  { section: 'Account', items: [
-    { id: 'settings', label: 'Settings', icon: 'gear' },
-  ]},
+const NAV: { id: PageId; label: string; icon: IconName }[] = [
+  { id: 'overview', label: 'Overview', icon: 'home' },
+  { id: 'sensitivity', label: 'Sensitivity', icon: 'flask' },
+  { id: 'projections', label: 'Projections', icon: 'chart' },
+  { id: 'plan', label: 'Profile', icon: 'sliders' },
+  { id: 'accounts', label: 'Accounts', icon: 'wallet' },
+  { id: 'assumptions', label: 'Assumptions', icon: 'globe' },
+  { id: 'settings', label: 'Settings', icon: 'gear' },
 ];
 
 export function Sidebar({
@@ -46,24 +38,21 @@ export function Sidebar({
         </button>
       </div>
 
-      {NAV.map(sec => (
-        <div className="sb-section" key={sec.section}>
-          <div className="sb-section-label">{sec.section}</div>
-          {sec.items.map(item => (
-            <button
-              key={item.id}
-              type="button"
-              className="sb-item"
-              data-active={active === item.id}
-              onClick={() => onNav(item.id)}
-              title={item.label}
-            >
-              <span className="ico"><Icon name={item.icon} /></span>
-              <span className="lbl">{item.label}</span>
-            </button>
-          ))}
-        </div>
-      ))}
+      <div className="sb-section">
+        {NAV.map(item => (
+          <button
+            key={item.id}
+            type="button"
+            className="sb-item"
+            data-active={active === item.id}
+            onClick={() => onNav(item.id)}
+            title={item.label}
+          >
+            <span className="ico"><Icon name={item.icon} /></span>
+            <span className="lbl">{item.label}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="sb-foot">
         <div className="sb-user">

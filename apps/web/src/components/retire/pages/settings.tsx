@@ -6,7 +6,8 @@ import { Card, Chip } from '../primitives';
 import { Icon } from '../icons';
 
 export function PageSettings() {
-  const { plan, updateAssumptions, useServerSideCalculations, setUseServerSideCalculations } = usePlan();
+  const { plan, updatePlan, useServerSideCalculations, setUseServerSideCalculations } = usePlan();
+  const updateAssumptions = (assumptions: Parameters<typeof updatePlan>[0]['assumptions']) => updatePlan({ assumptions });
   const a = plan.assumptions;
 
   return (

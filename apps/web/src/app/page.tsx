@@ -11,16 +11,16 @@ import { PageOverview } from "@/components/retire/pages/overview";
 import { PagePlan } from "@/components/retire/pages/plan";
 import { PageAccounts } from "@/components/retire/pages/accounts";
 import { PageProjections } from "@/components/retire/pages/projections";
-import { PageDecisions } from "@/components/retire/pages/decisions";
+import { PageSensitivity } from "@/components/retire/pages/sensitivity";
 import { PageAssumptions } from "@/components/retire/pages/assumptions";
 import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
   overview:    { label: "Overview",    Comp: PageOverview },
+  sensitivity: { label: "Sensitivity", Comp: PageSensitivity },
+  projections: { label: "Projections", Comp: PageProjections },
   plan:        { label: "Profile",     Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
-  projections: { label: "Projections", Comp: PageProjections },
-  decisions:   { label: "Decisions",   Comp: PageDecisions },
   assumptions: { label: "Assumptions", Comp: PageAssumptions },
   settings:    { label: "Settings",    Comp: PageSettings },
 };
@@ -30,12 +30,6 @@ export default function Home() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
-  const loadAccounts = usePlan(s => s.loadAccounts);
-  const runMainSimulation = usePlan(s => s.runMainSimulation);
-  const runSSAnalysis = usePlan(s => s.runSSAnalysis);
-  const runSpendingAnalysis = usePlan(s => s.runSpendingAnalysis);
-  const runRetirementAgeAnalysis = usePlan(s => s.runRetirementAgeAnalysis);
-
   const [page, setPage] = useState<PageId>("overview");
   const [sidebarStyle, setSidebarStyle] = useState<SidebarStyle>("expanded");
   const [darkMode, setDarkMode] = useState(false);
@@ -44,18 +38,7 @@ export default function Home() {
   useEffect(() => {
     if (!loading && !user) router.push("/auth/signin");
   }, [user, loading, router]);
-
-  // Bootstrap data on mount once auth is ready.
-  useEffect(() => {
-    if (!user || !isReady) return;
-    (async () => {
-      await loadAccounts();
-      runMainSimulation();
-      runSSAnalysis();
-      runSpendingAnalysis();
-      runRetirementAgeAnalysis();
-    })();
-  }, [user, isReady, loadAccounts, runMainSimulation, runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis]);
+  // Bootstrap (loadProfile + loadAccounts → schedules all sims) is owned by useMigration.
 
   if (loading || !isReady || !user) {
     return (

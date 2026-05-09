@@ -1,7 +1,7 @@
 "use client";
 
 import { usePlan, usePlanSelectors } from '@/state/usePlan';
-import { Card, KPI, Sparkline } from '../primitives';
+import { Card, KPI, Sparkline, SliderField } from '../primitives';
 import { Donut, ProbabilityRing, WealthFanChart } from '../charts';
 import { fmtCurrency, fmtPercent } from '../format';
 
@@ -15,6 +15,7 @@ const KIND_COLOR: Record<string, { label: string; color: string }> = {
 export function PageOverview() {
   const plan = usePlan(s => s.plan);
   const result = usePlan(s => s.simulationResult);
+  const updatePlan = usePlan(s => s.updatePlan);
   const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
 
   const netWorth = accountsWithHoldings.reduce((s, a) => s + (a.currentBalance || 0), 0);
@@ -85,6 +86,32 @@ export function PageOverview() {
           sub={`${fmtPercent(spendOfSalary, 0)} of gross salary today`}
         />
       </div>
+
+      <Card title="Tweak the levers" sub="Sliders update your plan and re-run the simulation.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 28 }}>
+          <SliderField
+            label="Retirement age"
+            value={plan.profile.retirementAge}
+            min={50} max={75}
+            onChange={v => updatePlan({ profile: { retirementAge: v } })}
+            format={v => `Age ${v}`}
+          />
+          <SliderField
+            label="Annual spending in retirement"
+            value={plan.profile.desiredSpending}
+            min={20000} max={200000} step={1000}
+            onChange={v => updatePlan({ profile: { desiredSpending: v } })}
+            format={v => fmtCurrency(v)}
+          />
+          <SliderField
+            label="Claim Social Security at"
+            value={plan.socialSecurity.claimAge}
+            min={62} max={70}
+            onChange={v => updatePlan({ socialSecurity: { claimAge: v } })}
+            format={v => `Age ${v}`}
+          />
+        </div>
+      </Card>
 
       <div className="r-split-2">
         <Card title="Wealth Trajectory" sub="Median path with 25–75 and 10–90 percentile bands.">

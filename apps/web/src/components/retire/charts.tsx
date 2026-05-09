@@ -4,6 +4,20 @@ import { useMemo, useRef, useState } from 'react';
 import type { YearlyProjection } from '@/domain/types';
 import { fmtCurrency } from './format';
 
+function niceTicks(min: number, max: number, target = 6): number[] {
+  if (max <= min) return [min];
+  const span = max - min;
+  const raw = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const niceN = norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10;
+  const step = niceN * mag;
+  const ticks: number[] = [];
+  const start = Math.ceil(min / step) * step;
+  for (let v = start; v <= max + 1e-9; v += step) ticks.push(v);
+  return ticks;
+}
+
 type Projection = Pick<
   YearlyProjection,
   'age' | 'p5' | 'p10' | 'p15' | 'p25' | 'p50' | 'p75' | 'p90' | 'isRetired' | 'portfolioValue' |
@@ -31,7 +45,10 @@ export function WealthFanChart({
 
   const minAge = projections[0].age;
   const maxAge = projections[projections.length - 1].age;
-  const maxVal = Math.max(1, ...projections.map(p => p.p90 || 0)) * 1.05;
+  const p75Max = Math.max(1, ...projections.map(p => p.p75 || 0));
+  const p90Max = Math.max(1, ...projections.map(p => p.p90 || 0));
+  // Cap the y-axis so the median line isn't crushed when P90 balloons over a long horizon.
+  const maxVal = Math.min(p90Max, p75Max * 1.8) * 1.05;
 
   const x = (age: number) => padL + ((age - minAge) / (maxAge - minAge)) * innerW;
   const y = (v: number) => padT + innerH - (v / maxVal) * innerH;
@@ -44,11 +61,10 @@ export function WealthFanChart({
 
   const medianPath = projections.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.age)},${y(p.p50)}`).join(' ');
 
-  const yTicks: number[] = [];
-  const tickStep = maxVal > 5_000_000 ? 2_000_000 : maxVal > 2_000_000 ? 1_000_000 : 500_000;
-  for (let v = 0; v <= maxVal; v += tickStep) yTicks.push(v);
+  const yTicks = niceTicks(0, maxVal, 6);
   const xTicks: number[] = [];
-  for (let a = Math.ceil(minAge / 5) * 5; a <= maxAge; a += 5) xTicks.push(a);
+  const xStep = (maxAge - minAge) > 40 ? 10 : 5;
+  for (let a = Math.ceil(minAge / xStep) * xStep; a <= maxAge; a += xStep) xTicks.push(a);
 
   const onMove = (e: React.MouseEvent) => {
     if (!wrapRef.current) return;
@@ -56,7 +72,13 @@ export function WealthFanChart({
     const px = ((e.clientX - rect.left) / rect.width) * w;
     const age = Math.round(minAge + ((px - padL) / innerW) * (maxAge - minAge));
     const p = projections.find(p => p.age === age);
-    if (p) setHover({ p, px: (x(p.age) / w) * rect.width, py: (y(p.p50) / h) * rect.height });
+    if (p) {
+      const rawX = (x(p.age) / w) * rect.width;
+      const rawY = (y(p.p50) / h) * rect.height;
+      const tw = 200;
+      const clampedX = Math.max(tw / 2 + 8, Math.min(rect.width - tw / 2 - 8, rawX));
+      setHover({ p, px: clampedX, py: rawY });
+    }
   };
 
   const retX = retirementAge ? x(retirementAge) : null;
@@ -69,6 +91,9 @@ export function WealthFanChart({
             <stop offset="0%" stopColor="var(--r-accent)" stopOpacity="0.30" />
             <stop offset="100%" stopColor="var(--r-accent)" stopOpacity="0" />
           </linearGradient>
+          <clipPath id="chartClip">
+            <rect x={padL} y={padT} width={innerW} height={innerH} />
+          </clipPath>
         </defs>
         {showAxes && yTicks.map(v => (
           <g key={v}>
@@ -76,8 +101,10 @@ export function WealthFanChart({
             <text x={padL - 8} y={y(v) + 3} fontSize="9.5" fill="var(--r-ink-3)" textAnchor="end" fontFamily="var(--font-jetbrains-mono)">{fmtCurrency(v, true)}</text>
           </g>
         ))}
-        <path d={buildBand('p90', 'p10')} fill="var(--r-accent)" opacity="0.08" />
-        <path d={buildBand('p75', 'p25')} fill="var(--r-accent)" opacity="0.16" />
+        <g clipPath="url(#chartClip)">
+          <path d={buildBand('p90', 'p10')} fill="var(--r-accent)" opacity="0.08" />
+          <path d={buildBand('p75', 'p25')} fill="var(--r-accent)" opacity="0.16" />
+        </g>
         {retX != null && (
           <g>
             <line x1={retX} x2={retX} y1={padT} y2={h - padB} stroke="var(--r-ink-3)" strokeDasharray="3 3" strokeWidth="1" />
@@ -99,7 +126,16 @@ export function WealthFanChart({
         )}
       </svg>
       {hover && (
-        <div className="r-tt" style={{ left: hover.px, top: hover.py }}>
+        <div
+          className="r-tt"
+          style={{
+            left: hover.px,
+            top: hover.py,
+            transform: hover.py < 80
+              ? 'translate(-50%, 12px)'
+              : 'translate(-50%, calc(-100% - 12px))',
+          }}
+        >
           <div className="r-tt-row"><span className="r-tt-label">Age {hover.p.age}</span><span className="r-tt-val">{hover.p.isRetired ? 'Retired' : 'Working'}</span></div>
           <div className="r-tt-row"><span className="r-tt-label">Median</span><span className="r-tt-val">{fmtCurrency(hover.p.p50, true)}</span></div>
           <div className="r-tt-row"><span className="r-tt-label">P90 / P10</span><span className="r-tt-val">{fmtCurrency(hover.p.p90, true)} / {fmtCurrency(hover.p.p10, true)}</span></div>

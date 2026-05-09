@@ -1,7 +1,6 @@
 "use client";
 
 import { usePlan } from '@/state/usePlan';
-import type { SimulationModel } from '@/domain/types';
 import {
   US_STOCK_REAL_RETURNS_1926_2024,
   US_BOND_REAL_RETURNS_1926_2024,
@@ -21,7 +20,7 @@ const ENGINE = {
 } as const;
 
 export function PageAssumptions() {
-  const { plan, updateAssumptions } = usePlan();
+  const { plan } = usePlan();
 
   // Portfolio-weighted stocks/bonds from current accounts
   const totalBal = plan.accounts.reduce((s, a) => s + a.balance, 0);
@@ -32,10 +31,10 @@ export function PageAssumptions() {
 
   const expectedReturn = (ENGINE.stocks.mean * stockWeight + ENGINE.bonds.mean * bondWeight) * 100;
   const expectedVol = Math.sqrt(
-    Math.pow(ENGINE.stocks.vol * stockWeight, 2) + Math.pow(ENGINE.bonds.vol * bondWeight, 2)
+    Math.pow(ENGINE.stocks.vol * stockWeight, 2) +
+    Math.pow(ENGINE.bonds.vol * bondWeight, 2) +
+    2 * stockWeight * bondWeight * ENGINE.stocks.vol * ENGINE.bonds.vol * ENGINE.correlation
   ) * 100;
-
-  const model: SimulationModel = plan.assumptions.simulationModel ?? 'historical';
 
   return (
     <>
@@ -43,29 +42,10 @@ export function PageAssumptions() {
         <div>
           <h1>Assumptions</h1>
           <div className="sub">
-            What the Monte Carlo simulation assumes about the world. These are the engine&rsquo;s actual inputs — change the simulation method below to see how it shifts your outcomes.
+            What the Monte Carlo simulation assumes about the world. Engine constants from US 1926–2024 history, shown for transparency.
           </div>
         </div>
       </div>
-
-      <div className="r-section-title"><h2>Simulation method</h2></div>
-      <Card>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, alignItems: 'start' }}>
-          <ModelOption
-            active={model === 'historical'}
-            onClick={() => updateAssumptions({ simulationModel: 'historical' })}
-            title="Historical bootstrap"
-            tag="Default"
-            body="Resamples real US 1926–2024 market years in 3-year blocks. Preserves real-world sequences (e.g. 2008 → 2009 recoveries) and fat tails without assuming a distribution."
-          />
-          <ModelOption
-            active={model === 'parametric'}
-            onClick={() => updateAssumptions({ simulationModel: 'parametric' })}
-            title="Parametric"
-            body="Draws each year independently from a Student-t distribution (stocks) and Normal (bonds), correlated via Cholesky. Smoother tails; ignores actual market sequencing."
-          />
-        </div>
-      </Card>
 
       <div className="r-section-title"><h2>Market model</h2></div>
       <div className="r-split-2">
@@ -150,64 +130,14 @@ export function PageAssumptions() {
         <table className="r-tbl">
           <thead><tr><th>Parameter</th><th className="r">Value</th><th>Notes</th></tr></thead>
           <tbody>
+            <tr><td>Method</td><td className="r mono">Historical bootstrap</td><td style={{ color: 'var(--r-ink-3)' }}>Resamples real US 1926–2024 years in 3-year blocks</td></tr>
             <tr><td>Paths per simulation</td><td className="r mono">5,000</td><td style={{ color: 'var(--r-ink-3)' }}>Independent Monte Carlo trajectories</td></tr>
             <tr><td>Time horizon</td><td className="r mono">Age {plan.profile.age} → {plan.profile.lifeExpectancy}</td><td style={{ color: 'var(--r-ink-3)' }}>Set on Profile</td></tr>
             <tr><td>Step size</td><td className="r mono">Annual</td><td style={{ color: 'var(--r-ink-3)' }}>End-of-year valuation</td></tr>
-            <tr><td>Bootstrap block size</td><td className="r mono">3 years</td><td style={{ color: 'var(--r-ink-3)' }}>Used only in historical bootstrap mode</td></tr>
+            <tr><td>Bootstrap block size</td><td className="r mono">3 years</td><td style={{ color: 'var(--r-ink-3)' }}>Preserves multi-year sequences (e.g. 2008 → 2009)</td></tr>
           </tbody>
         </table>
       </Card>
     </>
-  );
-}
-
-function ModelOption({
-  active, onClick, title, tag, body,
-}: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  tag?: string;
-  body: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        textAlign: 'left',
-        background: active ? 'var(--r-bg-sunk)' : 'var(--r-surface)',
-        border: '1px solid ' + (active ? 'var(--r-ink)' : 'var(--r-line)'),
-        borderRadius: 8,
-        padding: 14,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          width: 14, height: 14, borderRadius: '50%',
-          border: '1px solid ' + (active ? 'var(--r-ink)' : 'var(--r-ink-3)'),
-          background: active ? 'var(--r-ink)' : 'transparent',
-          display: 'inline-block',
-          boxShadow: active ? 'inset 0 0 0 3px var(--r-surface)' : 'none',
-        }} />
-        <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--r-ink)' }}>{title}</span>
-        {tag && (
-          <span style={{
-            fontSize: 10, fontWeight: 600, letterSpacing: '0.05em',
-            textTransform: 'uppercase', color: 'var(--r-ink-3)',
-            border: '1px solid var(--r-line)', borderRadius: 4,
-            padding: '1px 6px',
-          }}>{tag}</span>
-        )}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--r-ink-2)', lineHeight: 1.55 }}>
-        {body}
-      </div>
-    </button>
   );
 }

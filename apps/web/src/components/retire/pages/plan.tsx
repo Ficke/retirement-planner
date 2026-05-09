@@ -20,7 +20,8 @@ const FILING_OPTIONS: [FilingStatus, string][] = [
 ];
 
 export function PagePlan() {
-  const { plan, updateProfile } = usePlan();
+  const { plan, updatePlan } = usePlan();
+  const updateProfile = (profile: Parameters<typeof updatePlan>[0]['profile']) => updatePlan({ profile });
   const p = plan.profile;
 
   const tax = useMemo(() => {

@@ -6,6 +6,7 @@ import {
   US_STOCK_REAL_RETURNS_1926_2024,
   US_BOND_REAL_RETURNS_1926_2024,
   US_INFLATION_1926_2024,
+  ASSET_CORRELATION_MATRIX_1926_2024,
 } from '@/data/market-history';
 import { Card, Chip, Toggle } from '../primitives';
 import { IncomeSourcesChart, PercentileBars, ProbabilityRing, WealthFanChart } from '../charts';
@@ -19,6 +20,7 @@ const STOCK_VOL = US_STOCK_REAL_RETURNS_1926_2024.volatility;
 const BOND_MEAN = US_BOND_REAL_RETURNS_1926_2024.mean;
 const BOND_VOL = US_BOND_REAL_RETURNS_1926_2024.volatility;
 const INFLATION_MEAN = US_INFLATION_1926_2024.mean;
+const STOCK_BOND_CORR = ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds;
 
 export function PageProjections() {
   const plan = usePlan(s => s.plan);
@@ -43,10 +45,11 @@ export function PageProjections() {
   const bondWeight = 1 - stockWeight;
   const expectedReturn = (STOCK_MEAN * stockWeight + BOND_MEAN * bondWeight) * 100;
   const expectedVol = Math.sqrt(
-    Math.pow(STOCK_VOL * stockWeight, 2) + Math.pow(BOND_VOL * bondWeight, 2)
+    Math.pow(STOCK_VOL * stockWeight, 2) +
+    Math.pow(BOND_VOL * bondWeight, 2) +
+    2 * stockWeight * bondWeight * STOCK_VOL * BOND_VOL * STOCK_BOND_CORR
   ) * 100;
   const horizon = plan.profile.lifeExpectancy - plan.profile.age;
-  const modelLabel = plan.assumptions.simulationModel === 'parametric' ? 'Parametric' : 'Historical bootstrap';
 
   const successProb = result?.successProbability ?? 0;
   const median = result?.medianTerminalWealth ?? 0;
@@ -75,7 +78,6 @@ export function PageProjections() {
         alignItems: 'center', fontSize: 11.5, color: 'var(--r-ink-3)', flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginRight: 14 }}>Model</span>
-        <Derived label="Method" value={modelLabel} />
         <Derived label="Expected return" value={expectedReturn.toFixed(1) + '%'} />
         <Derived label="Expected volatility" value={expectedVol.toFixed(1) + '%'} />
         <Derived label="Inflation" value={(INFLATION_MEAN * 100).toFixed(1) + '%'} />
