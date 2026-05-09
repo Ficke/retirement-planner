@@ -10,12 +10,7 @@ import {
   PageShell,
   Stat,
 } from "@/components/retire/ui";
-import {
-  Donut,
-  ProbabilityRing,
-  Sparkline,
-  WealthFanChart,
-} from "@/components/ui/charts";
+import { Donut, Sparkline, WealthFanChart } from "@/components/ui/charts";
 import { fmtCurrency, fmtPercent } from "../format";
 
 const KIND_COLOR: Record<string, { label: string; color: string }> = {
@@ -45,10 +40,8 @@ function SliderRow({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
-        <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          {label}
-        </Label>
-        <span className="text-foreground font-mono text-xs font-semibold tabular-nums">
+        <Label className="text-foreground text-sm font-medium">{label}</Label>
+        <span className="text-foreground font-mono text-sm font-semibold tabular-nums">
           {display}
         </span>
       </div>
@@ -117,17 +110,10 @@ export function PageOverview() {
       <KPIGrid cols={4}>
         <Stat
           label="Plan Health"
-          value={successLabel}
-          unit={`${(successProb * 100).toFixed(0)}%`}
+          value={`${(successProb * 100).toFixed(0)}%`}
+          trend={`${successLabel} · simulated paths fund full retirement`}
           tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
-        >
-          <div className="mt-2 flex items-center gap-3">
-            <ProbabilityRing value={successProb} size={72} thickness={7} />
-            <p className="text-muted-foreground text-xs leading-snug">
-              {(successProb * 100).toFixed(0)}% of simulated paths fund your full retirement.
-            </p>
-          </div>
-        </Stat>
+        />
         <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} trend="across all accounts">
           {sparkData.length > 0 && (
             <div className="mt-2">

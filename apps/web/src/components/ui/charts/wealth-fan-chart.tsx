@@ -62,7 +62,7 @@ export function WealthFanChart({
 
   return (
     <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
-      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 24, right: 12, left: 8, bottom: 0 }}>
         <XAxis
           dataKey="age"
           type="number"
@@ -111,8 +111,10 @@ export function WealthFanChart({
             strokeOpacity={0.5}
             label={{
               value: "RETIRE",
-              position: "top",
-              fill: "var(--color-foreground)",
+              position: "insideTopLeft",
+              offset: 6,
+              dy: -14,
+              fill: "var(--color-muted-foreground)",
               fontSize: 10,
               fontWeight: 600,
               letterSpacing: "0.04em",
