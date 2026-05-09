@@ -1,18 +1,23 @@
 "use client";
 
 import { usePlan } from '@/state/usePlan';
-import presets from '@/data/cma/presets.json';
+import type { SimulationModel } from '@/domain/types';
 import { Card } from '../primitives';
 import { Donut } from '../charts';
 
-type PresetKey = 'Conservative' | 'Moderate' | 'Aggressive';
-type PresetEntry = { name: string; description: string; stocks: { mean: number; vol: number }; bonds: { mean: number; vol: number }; inflation: { mean: number; vol: number } };
-const PRESETS = presets as unknown as Record<PresetKey, PresetEntry>;
+// Engine constants — these are what the simulation actually uses,
+// hardcoded in apps/web/src/data/market-history.ts and mirrored in
+// rust-simulation-service/src/simulation/parametric_returns.rs.
+// Source: US 1926–2024 real returns.
+const ENGINE = {
+  stocks: { mean: 0.071, vol: 0.201 },
+  bonds: { mean: 0.025, vol: 0.079 },
+  inflation: { mean: 0.029, vol: 0.042 },
+  correlation: 0.12,
+} as const;
 
 export function PageAssumptions() {
   const { plan, updateAssumptions } = usePlan();
-  const presetKey = (plan.assumptions.preset ?? 'Moderate') as PresetKey;
-  const cma = PRESETS[presetKey] ?? PRESETS.Moderate;
 
   // Portfolio-weighted stocks/bonds from current accounts
   const totalBal = plan.accounts.reduce((s, a) => s + a.balance, 0);
@@ -21,10 +26,12 @@ export function PageAssumptions() {
     : 0.6;
   const bondWeight = 1 - stockWeight;
 
-  const expectedReturn = (cma.stocks.mean * stockWeight + cma.bonds.mean * bondWeight) * 100;
+  const expectedReturn = (ENGINE.stocks.mean * stockWeight + ENGINE.bonds.mean * bondWeight) * 100;
   const expectedVol = Math.sqrt(
-    Math.pow(cma.stocks.vol * stockWeight, 2) + Math.pow(cma.bonds.vol * bondWeight, 2)
+    Math.pow(ENGINE.stocks.vol * stockWeight, 2) + Math.pow(ENGINE.bonds.vol * bondWeight, 2)
   ) * 100;
+
+  const model: SimulationModel = plan.assumptions.simulationModel ?? 'historical';
 
   return (
     <>
@@ -32,29 +39,34 @@ export function PageAssumptions() {
         <div>
           <h1>Assumptions</h1>
           <div className="sub">
-            The inputs your Monte Carlo simulation runs against. Change these to test how sensitive your plan is.
+            What the Monte Carlo simulation assumes about the world. These are the engine&rsquo;s actual inputs — change the simulation method below to see how it shifts your outcomes.
           </div>
         </div>
       </div>
 
+      <div className="r-section-title"><h2>Simulation method</h2></div>
+      <Card>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, alignItems: 'start' }}>
+          <ModelOption
+            active={model === 'historical'}
+            onClick={() => updateAssumptions({ simulationModel: 'historical' })}
+            title="Historical bootstrap"
+            tag="Default"
+            body="Resamples real US 1926–2024 market years in 3-year blocks. Preserves real-world sequences (e.g. 2008 → 2009 recoveries) and fat tails without assuming a distribution."
+          />
+          <ModelOption
+            active={model === 'parametric'}
+            onClick={() => updateAssumptions({ simulationModel: 'parametric' })}
+            title="Parametric"
+            body="Draws each year independently from a Student-t distribution (stocks) and Normal (bonds), correlated via Cholesky. Smoother tails; ignores actual market sequencing."
+          />
+        </div>
+      </Card>
+
       <div className="r-section-title"><h2>Market model</h2></div>
       <div className="r-split-2">
-        <Card title="Capital market expectations" sub="Per asset class, real (after-inflation)" flush>
-          <div style={{ padding: '10px 18px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <label style={{ fontSize: 11, color: 'var(--r-ink-3)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Preset</label>
-            <select
-              className="r-select"
-              value={presetKey}
-              onChange={e => updateAssumptions({ preset: e.target.value as PresetKey })}
-              style={{ width: 'auto' }}
-            >
-              {(Object.keys(PRESETS) as PresetKey[]).map(k => (
-                <option key={k} value={k}>{k}</option>
-              ))}
-            </select>
-            <span style={{ fontSize: 11.5, color: 'var(--r-ink-3)' }}>{cma.description}</span>
-          </div>
-          <table className="r-tbl" style={{ marginTop: 12 }}>
+        <Card title="Asset class assumptions" sub="Real (after-inflation) returns. Hardcoded from US 1926–2024 history." flush>
+          <table className="r-tbl">
             <thead>
               <tr>
                 <th>Asset class</th>
@@ -70,8 +82,8 @@ export function PageAssumptions() {
                   Stocks
                 </td>
                 <td className="r mono">{(stockWeight * 100).toFixed(0)}%</td>
-                <td className="r mono">{(cma.stocks.mean * 100).toFixed(1)}%</td>
-                <td className="r mono">{(cma.stocks.vol * 100).toFixed(1)}%</td>
+                <td className="r mono">{(ENGINE.stocks.mean * 100).toFixed(1)}%</td>
+                <td className="r mono">{(ENGINE.stocks.vol * 100).toFixed(1)}%</td>
               </tr>
               <tr>
                 <td>
@@ -79,8 +91,8 @@ export function PageAssumptions() {
                   Bonds
                 </td>
                 <td className="r mono">{(bondWeight * 100).toFixed(0)}%</td>
-                <td className="r mono">{(cma.bonds.mean * 100).toFixed(1)}%</td>
-                <td className="r mono">{(cma.bonds.vol * 100).toFixed(1)}%</td>
+                <td className="r mono">{(ENGINE.bonds.mean * 100).toFixed(1)}%</td>
+                <td className="r mono">{(ENGINE.bonds.vol * 100).toFixed(1)}%</td>
               </tr>
             </tbody>
             <tfoot>
@@ -92,8 +104,11 @@ export function PageAssumptions() {
               </tr>
             </tfoot>
           </table>
+          <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--r-ink-3)', borderTop: '1px solid var(--r-line)', background: 'var(--r-bg-sunk)' }}>
+            Asset-class returns and vol are baked into the engine. The parametric mode samples from these directly; the bootstrap mode resamples the historical sequences they were derived from.
+          </div>
         </Card>
-        <Card title="Allocation" sub="Stacks across all your accounts">
+        <Card title="Allocation" sub="Stock/bond split across all your accounts">
           <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
             <Donut
               data={[
@@ -106,7 +121,7 @@ export function PageAssumptions() {
               centerValue={(stockWeight * 100).toFixed(0) + '%'}
             />
             <div style={{ flex: 1, fontSize: 12.5, color: 'var(--r-ink-2)', lineHeight: 1.6 }}>
-              The simulation samples annual stock and bond returns from each preset using a joint distribution, with a fixed correlation calibrated to long-run history. Allocation comes from your accounts&rsquo; current asset weights.
+              Allocation is portfolio-weighted from each account&rsquo;s stock/bond split. Edit individual account allocations on the Accounts page.
             </div>
           </div>
         </Card>
@@ -117,8 +132,8 @@ export function PageAssumptions() {
         <table className="r-tbl">
           <thead><tr><th>Assumption</th><th className="r">Value</th><th>Source</th></tr></thead>
           <tbody>
-            <tr><td>Long-run inflation (CPI)</td><td className="r mono">{(cma.inflation.mean * 100).toFixed(1)}%</td><td style={{ color: 'var(--r-ink-3)' }}>Active CMA preset</td></tr>
-            <tr><td>Stock/bond correlation</td><td className="r mono">0.15</td><td style={{ color: 'var(--r-ink-3)' }}>Long-run historical, 30y</td></tr>
+            <tr><td>Long-run inflation (CPI)</td><td className="r mono">{(ENGINE.inflation.mean * 100).toFixed(1)}%</td><td style={{ color: 'var(--r-ink-3)' }}>US 1926–2024, real returns net of inflation</td></tr>
+            <tr><td>Stock/bond correlation</td><td className="r mono">{ENGINE.correlation.toFixed(2)}</td><td style={{ color: 'var(--r-ink-3)' }}>US 1926–2024 historical</td></tr>
             <tr><td>Tax brackets</td><td className="r mono">{plan.profile.state === 'CA' ? 'Federal 2025 + CA 2025' : 'Federal 2025'}</td><td style={{ color: 'var(--r-ink-3)' }}>IRS{plan.profile.state === 'CA' ? ' / FTB' : ''}</td></tr>
             <tr><td>RMD table</td><td className="r mono">SECURE 2.0 (2024+)</td><td style={{ color: 'var(--r-ink-3)' }}>IRS Pub. 590-B</td></tr>
             <tr><td>Contribution limits</td><td className="r mono">2025</td><td style={{ color: 'var(--r-ink-3)' }}>IRS</td></tr>
@@ -131,13 +146,64 @@ export function PageAssumptions() {
         <table className="r-tbl">
           <thead><tr><th>Parameter</th><th className="r">Value</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td>Time horizon</td><td className="r mono">Age → life expectancy</td><td style={{ color: 'var(--r-ink-3)' }}>Set on Plan</td></tr>
+            <tr><td>Paths per simulation</td><td className="r mono">5,000</td><td style={{ color: 'var(--r-ink-3)' }}>Independent Monte Carlo trajectories</td></tr>
+            <tr><td>Time horizon</td><td className="r mono">Age {plan.profile.age} → {plan.profile.lifeExpectancy}</td><td style={{ color: 'var(--r-ink-3)' }}>Set on Profile</td></tr>
             <tr><td>Step size</td><td className="r mono">Annual</td><td style={{ color: 'var(--r-ink-3)' }}>End-of-year valuation</td></tr>
-            <tr><td>Rebalancing</td><td className="r mono">{plan.assumptions.rebalanceAnnually ? 'Annual to target' : 'Off'}</td><td style={{ color: 'var(--r-ink-3)' }}>Toggleable in Settings</td></tr>
-            <tr><td>Simulation model</td><td className="r mono">{plan.assumptions.simulationModel === 'parametric' ? 'Parametric' : 'Historical bootstrap'}</td><td style={{ color: 'var(--r-ink-3)' }}>Toggleable in Settings</td></tr>
+            <tr><td>Bootstrap block size</td><td className="r mono">3 years</td><td style={{ color: 'var(--r-ink-3)' }}>Used only in historical bootstrap mode</td></tr>
           </tbody>
         </table>
       </Card>
     </>
+  );
+}
+
+function ModelOption({
+  active, onClick, title, tag, body,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  tag?: string;
+  body: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        textAlign: 'left',
+        background: active ? 'var(--r-bg-sunk)' : 'var(--r-surface)',
+        border: '1px solid ' + (active ? 'var(--r-ink)' : 'var(--r-line)'),
+        borderRadius: 8,
+        padding: 14,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          width: 14, height: 14, borderRadius: '50%',
+          border: '1px solid ' + (active ? 'var(--r-ink)' : 'var(--r-ink-3)'),
+          background: active ? 'var(--r-ink)' : 'transparent',
+          display: 'inline-block',
+          boxShadow: active ? 'inset 0 0 0 3px var(--r-surface)' : 'none',
+        }} />
+        <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--r-ink)' }}>{title}</span>
+        {tag && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: '0.05em',
+            textTransform: 'uppercase', color: 'var(--r-ink-3)',
+            border: '1px solid var(--r-line)', borderRadius: 4,
+            padding: '1px 6px',
+          }}>{tag}</span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--r-ink-2)', lineHeight: 1.55 }}>
+        {body}
+      </div>
+    </button>
   );
 }
