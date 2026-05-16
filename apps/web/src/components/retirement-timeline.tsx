@@ -113,7 +113,7 @@ export function RetirementTimeline({ projections }: RetirementTimelineProps) {
             stroke="#10b981"
             strokeWidth={3}
             dot={false}
-            name="Work Income ($k)"
+            name="Work Income"
             connectNulls={false}
           />
           
@@ -124,7 +124,7 @@ export function RetirementTimeline({ projections }: RetirementTimelineProps) {
             stroke="#3b82f6"
             strokeWidth={3}
             dot={false}
-            name="Annual Spending ($k)"
+            name="Annual Spending"
             strokeDasharray="5 3"
           />
           
@@ -135,7 +135,7 @@ export function RetirementTimeline({ projections }: RetirementTimelineProps) {
             stroke="#f59e0b"
             strokeWidth={2}
             dot={false}
-            name="Annual Taxes ($k)"
+            name="Annual Taxes"
             strokeDasharray="3 2"
           />
         </ComposedChart>

@@ -56,8 +56,6 @@ const testPlan: RetirementPlan = {
     manualOverride: false,
   },
   assumptions: createTestProjectionSettings({
-    preset: 'Moderate',
-    rebalanceAnnually: true,
     simulationModel: 'historical',
   }),
 };

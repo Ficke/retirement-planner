@@ -672,7 +672,7 @@ fn is_leap_year(year: i32) -> bool {
 mod tests {
     use super::*;
     use crate::types::{
-        AssetWeights, MarketAssumptions, MarketReturn, Preset, ProjectionSettings,
+        AssetWeights, ProjectionSettings,
         SimulationModel, SocialSecuritySettings, UserProfile,
     };
 
@@ -723,15 +723,6 @@ mod tests {
                 manual_override: false,
             },
             assumptions: ProjectionSettings {
-                preset: Preset::Moderate,
-                custom_returns: Some(MarketAssumptions {
-                    stocks: MarketReturn { mean: 0.07, vol: 0.15 },
-                    bonds: MarketReturn { mean: 0.03, vol: 0.05 },
-                    inflation: MarketReturn { mean: 0.025, vol: 0.01 },
-                    correlation: vec![vec![1.0, 0.0], vec![0.0, 1.0]],
-                }),
-                rebalance_annually: true,
-                longevity_override: None,
                 simulation_model: SimulationModel::Parametric,
                 random_seed: Some(42),
                 use_backdoor_roth: false,

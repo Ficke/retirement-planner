@@ -73,8 +73,6 @@ describe('HSA Withdrawal Logic Fix', () => {
       manualOverride: false,
     },
     assumptions: {
-      preset: 'Conservative', // Use conservative to minimize volatility
-      rebalanceAnnually: true,
       simulationModel: 'historical',
       useBackdoorRoth: false,
     },

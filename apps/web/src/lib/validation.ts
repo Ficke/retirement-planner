@@ -46,10 +46,6 @@ export const SaveProfileSchema = z.object({
     manualOverride: z.boolean(),
   }).optional(),
   assumptions: z.object({
-    preset: z.enum(['Conservative', 'Moderate', 'Aggressive']),
-    customReturns: z.any().optional(),
-    rebalanceAnnually: z.boolean(),
-    longevityOverride: z.number().optional(),
     simulationModel: z.enum(['historical', 'parametric']),
     randomSeed: z.number().optional(),
     useBackdoorRoth: z.boolean(),

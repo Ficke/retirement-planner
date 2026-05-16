@@ -169,7 +169,7 @@ export function ModernAccountsManager() {
           <span>Accounts</span>
         </CardTitle>
         <CardDescription>
-          Set your account balances and stock/bond allocation. Click the pencil to edit.
+          Balances and stock/bond allocation per account.
         </CardDescription>
       </CardHeader>
       <CardContent>

@@ -49,8 +49,6 @@ describe('Retirement Age Analysis', () => {
       manualOverride: false
     },
     assumptions: createTestProjectionSettings({
-      preset: 'Moderate',
-      rebalanceAnnually: true,
       simulationModel: 'historical'
     })
   };
