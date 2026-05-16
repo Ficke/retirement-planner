@@ -10,12 +10,10 @@ terraform {
     }
   }
 
-  # Backend configuration for state management
-  # Uncomment and configure after creating GCS bucket
-  # backend "gcs" {
-  #   bucket = "retire-plan-terraform-state"
-  #   prefix = "terraform/state"
-  # }
+  backend "gcs" {
+    bucket = "retire-plan-tfstate-gen-lang-client-0372385774"
+    prefix = "terraform/state/prod"
+  }
 }
 
 provider "google" {
