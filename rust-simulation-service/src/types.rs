@@ -179,6 +179,23 @@ pub struct WealthAtAge {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomeSourcesRow {
+    pub age: u32,
+    #[serde(rename = "isRetired")]
+    pub is_retired: bool,
+    #[serde(rename = "socialSecurityBenefit")]
+    pub social_security_benefit: f64,
+    #[serde(rename = "withdrawalTaxable")]
+    pub withdrawal_taxable: f64,
+    #[serde(rename = "withdrawalTraditional")]
+    pub withdrawal_traditional: f64,
+    #[serde(rename = "withdrawalRoth")]
+    pub withdrawal_roth: f64,
+    #[serde(rename = "withdrawalHSA")]
+    pub withdrawal_hsa: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WealthThresholds {
     pub below1m: f64,
     pub below500k: f64,
@@ -206,6 +223,8 @@ pub struct SimulationResult {
     pub wealth_thresholds: WealthThresholds,
     #[serde(rename = "wealthAtAge")]
     pub wealth_at_age: HashMap<u32, WealthAtAge>,
+    #[serde(rename = "incomeSourcesPath", skip_serializing_if = "Vec::is_empty", default)]
+    pub income_sources_path: Vec<IncomeSourcesRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

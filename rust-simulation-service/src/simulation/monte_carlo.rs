@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use tracing::info;
 
 use crate::types::{
-    RetirementPlan, SimulationResult, PathResult, PathProjection, 
-    YearlyProjection, MCConfig, WealthThresholds, WealthAtAge
+    RetirementPlan, SimulationResult, PathResult, PathProjection,
+    YearlyProjection, MCConfig, WealthThresholds, WealthAtAge, IncomeSourcesRow
 };
 use crate::simulation::projection::{project_scenario, ProjectionConfig};
 
@@ -100,10 +100,15 @@ fn aggregate_results(mut path_results: Vec<PathResult>) -> Result<SimulationResu
     
     // Create yearly projections with percentiles
     let yearly_projections = create_yearly_projections(&mut path_results)?;
-    
+
+    // Smoothed income-sources path (mean of [p25, p75] terminal-wealth band)
+    let p25_wealth = terminal_wealths[((num_paths * 0.25) as usize).min(terminal_wealths.len() - 1)];
+    let p75_wealth = terminal_wealths[((num_paths * 0.75) as usize).min(terminal_wealths.len() - 1)];
+    let income_sources_path = create_income_sources_path(&path_results, p25_wealth, p75_wealth);
+
     // Create wealth at age snapshots
     let wealth_at_age = create_wealth_at_age_snapshots(&path_results);
-    
+
     Ok(SimulationResult {
         success_probability,
         median_terminal_wealth,
@@ -115,7 +120,49 @@ fn aggregate_results(mut path_results: Vec<PathResult>) -> Result<SimulationResu
         risk_of_ruin,
         wealth_thresholds,
         wealth_at_age,
+        income_sources_path,
     })
+}
+
+fn create_income_sources_path(
+    path_results: &[PathResult],
+    p25_wealth: f64,
+    p75_wealth: f64,
+) -> Vec<IncomeSourcesRow> {
+    let band: Vec<&PathResult> = path_results
+        .iter()
+        .filter(|r| r.terminal_wealth >= p25_wealth && r.terminal_wealth <= p75_wealth)
+        .collect();
+
+    if band.is_empty() {
+        return Vec::new();
+    }
+
+    let num_years = band[0].projections.len();
+    let mut rows = Vec::with_capacity(num_years);
+    for year_idx in 0..num_years {
+        let projections: Vec<&PathProjection> = band
+            .iter()
+            .filter_map(|r| r.projections.get(year_idx))
+            .collect();
+        if projections.is_empty() {
+            continue;
+        }
+        let n = projections.len() as f64;
+        let mean = |sel: fn(&PathProjection) -> f64| -> f64 {
+            projections.iter().map(|p| sel(*p)).sum::<f64>() / n
+        };
+        rows.push(IncomeSourcesRow {
+            age: projections[0].age,
+            is_retired: projections[0].is_retired,
+            social_security_benefit: mean(|p| p.social_security_benefit),
+            withdrawal_taxable: mean(|p| p.withdrawal_taxable),
+            withdrawal_traditional: mean(|p| p.withdrawal_traditional),
+            withdrawal_roth: mean(|p| p.withdrawal_roth),
+            withdrawal_hsa: mean(|p| p.withdrawal_hsa),
+        });
+    }
+    rows
 }
 
 /// Create yearly projections with percentiles across all paths

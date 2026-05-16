@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import type { RetirementPlan, SimulationResult, YearlyProjection, PathProjection, PathResult } from '@/domain/types';
+import type { RetirementPlan, SimulationResult, YearlyProjection, PathProjection, PathResult, IncomeSourcesRow } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
 
 /**
@@ -358,6 +358,35 @@ async function runSimulation(
       }
     }
 
+    // Smoothed income-sources path: mean of coherent paths in the [p25, p75]
+    // terminal-wealth band. Keeps the typical withdrawal strategy intact while
+    // smoothing the per-path noise that makes a single median path look jagged.
+    const p25Wealth = terminalWealths[p25Index];
+    const p75Wealth = terminalWealths[p75Index];
+    const bandPaths = allProjections.filter((projections) => {
+      const last = projections[projections.length - 1];
+      return last && last.portfolioValue >= p25Wealth && last.portfolioValue <= p75Wealth;
+    });
+    const incomeSourcesPath: IncomeSourcesRow[] = [];
+    if (bandPaths.length > 0) {
+      const yearCount = bandPaths[0].length;
+      for (let y = 0; y < yearCount; y++) {
+        const rows = bandPaths.map((p) => p[y]).filter(Boolean);
+        if (rows.length === 0) continue;
+        const mean = (sel: (r: PathProjection) => number) =>
+          rows.reduce((s, r) => s + sel(r), 0) / rows.length;
+        incomeSourcesPath.push({
+          age: rows[0].age,
+          isRetired: rows[0].isRetired,
+          socialSecurityBenefit: mean((r) => r.socialSecurityBenefit),
+          withdrawalTaxable: mean((r) => r.withdrawalTaxable),
+          withdrawalTraditional: mean((r) => r.withdrawalTraditional),
+          withdrawalRoth: mean((r) => r.withdrawalRoth),
+          withdrawalHSA: mean((r) => r.withdrawalHSA),
+        });
+      }
+    }
+
     return {
       successProbability: successCount / paths,
       medianTerminalWealth,
@@ -366,6 +395,7 @@ async function runSimulation(
       percentile90TerminalWealth: terminalWealths[p90Index],
       yearlyProjections,
       medianPath,
+      incomeSourcesPath,
       terminalWealthDistribution: terminalWealths,
       riskOfRuin: ruinCount / paths,
       wealthThresholds: {

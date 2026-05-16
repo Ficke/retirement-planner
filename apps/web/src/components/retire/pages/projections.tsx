@@ -12,12 +12,6 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
-import {
-  US_STOCK_REAL_RETURNS_1926_2024,
-  US_BOND_REAL_RETURNS_1926_2024,
-  US_INFLATION_1926_2024,
-  ASSET_CORRELATION_MATRIX_1926_2024,
-} from "@/data/market-history";
 import type { YearlyProjection } from "@/domain/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,54 +33,13 @@ import {
 } from "@/components/retire/ui";
 import {
   IncomeSourcesChart,
-  PercentileBars,
   WealthFanChart,
 } from "@/components/ui/charts";
 import { fmtCurrency } from "../format";
 import { cn } from "@/lib/utils";
 
-type ChartView = "wealth" | "income" | "percentiles";
+type ChartView = "wealth" | "income";
 type YearFilter = "all" | "work" | "retired";
-
-const STOCK_MEAN = US_STOCK_REAL_RETURNS_1926_2024.mean;
-const STOCK_VOL = US_STOCK_REAL_RETURNS_1926_2024.volatility;
-const BOND_MEAN = US_BOND_REAL_RETURNS_1926_2024.mean;
-const BOND_VOL = US_BOND_REAL_RETURNS_1926_2024.volatility;
-const INFLATION_MEAN = US_INFLATION_1926_2024.mean;
-const STOCK_BOND_CORR = ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds;
-
-function ModelStrip({
-  expectedReturn,
-  expectedVol,
-  inflation,
-  horizon,
-}: {
-  expectedReturn: number;
-  expectedVol: number;
-  inflation: number;
-  horizon: number;
-}) {
-  const items = [
-    { label: "Expected return", value: `${expectedReturn.toFixed(1)}%` },
-    { label: "Expected volatility", value: `${expectedVol.toFixed(1)}%` },
-    { label: "Inflation", value: `${(inflation * 100).toFixed(1)}%` },
-    { label: "Horizon", value: `${horizon} yrs` },
-  ];
-  return (
-    <div className="bg-muted/40 border-border flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border px-4 py-2.5 text-xs">
-      <Badge variant="secondary" className="text-[10px] tracking-wider uppercase">
-        Model
-      </Badge>
-      {items.map((it) => (
-        <span key={it.label} className="flex items-baseline gap-1.5">
-          <span className="text-muted-foreground">{it.label}</span>
-          <span className="text-foreground font-mono font-semibold">{it.value}</span>
-        </span>
-      ))}
-      <span className="text-muted-foreground ml-auto italic">From Assumptions</span>
-    </div>
-  );
-}
 
 type Row = YearlyProjection & { externalIncome: number };
 
@@ -281,23 +234,6 @@ export function PageProjections() {
     }));
   }, [yearly, yearFilter]);
 
-  const stockWeight = plan.accounts.length
-    ? plan.accounts.reduce((s, a) => s + a.balance * a.assetWeights.stocks, 0) /
-      Math.max(
-        1,
-        plan.accounts.reduce((s, a) => s + a.balance, 0),
-      )
-    : 0.6;
-  const bondWeight = 1 - stockWeight;
-  const expectedReturn = (STOCK_MEAN * stockWeight + BOND_MEAN * bondWeight) * 100;
-  const expectedVol =
-    Math.sqrt(
-      Math.pow(STOCK_VOL * stockWeight, 2) +
-        Math.pow(BOND_VOL * bondWeight, 2) +
-        2 * stockWeight * bondWeight * STOCK_VOL * BOND_VOL * STOCK_BOND_CORR,
-    ) * 100;
-  const horizon = plan.profile.lifeExpectancy - plan.profile.age;
-
   const successProb = result?.successProbability ?? 0;
   const median = result?.medianTerminalWealth ?? 0;
   const p10 = result?.percentile10TerminalWealth ?? 0;
@@ -325,13 +261,6 @@ export function PageProjections() {
             {isSimulating ? "Recalculating" : "Up to date"}
           </Badge>
         }
-      />
-
-      <ModelStrip
-        expectedReturn={expectedReturn}
-        expectedVol={expectedVol}
-        inflation={INFLATION_MEAN}
-        horizon={horizon}
       />
 
       <KPIGrid cols={4}>
@@ -369,8 +298,12 @@ export function PageProjections() {
       </KPIGrid>
 
       <DashboardCard
-        title="Outcome Distribution"
-        description="Projected portfolio value across percentiles"
+        title={view === "wealth" ? "Wealth Trajectory" : "Income Sources"}
+        description={
+          view === "wealth"
+            ? "Median portfolio value with 10–90 percentile bands"
+            : "Average annual income, by source, across paths near the median outcome"
+        }
         actions={
           <SegmentedTabs<ChartView>
             value={view}
@@ -378,7 +311,6 @@ export function PageProjections() {
             options={[
               { value: "wealth", label: "Trajectory" },
               { value: "income", label: "Income sources" },
-              { value: "percentiles", label: "Percentiles" },
             ]}
           />
         }
@@ -395,12 +327,11 @@ export function PageProjections() {
             retirementAge={plan.profile.retirementAge}
             height={340}
           />
-        ) : view === "income" ? (
-          <IncomeSourcesChart projections={yearly} height={300} />
         ) : (
-          <div className="px-4 py-6">
-            <PercentileBars projections={yearly} />
-          </div>
+          <IncomeSourcesChart
+            projections={result?.incomeSourcesPath ?? yearly}
+            height={300}
+          />
         )}
       </DashboardCard>
 

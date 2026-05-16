@@ -96,6 +96,13 @@ export interface SimulationResult {
   percentile90TerminalWealth: number;
   yearlyProjections: YearlyProjection[];
   medianPath?: PathProjection[];
+  /**
+   * Smoothed income-sources path: per-year mean of withdrawal/SS amounts
+   * across paths whose terminal wealth lands in the [p25, p75] band.
+   * Each row reflects a coherent withdrawal strategy averaged over similar
+   * outcomes, so summed components match the average net spending target.
+   */
+  incomeSourcesPath?: IncomeSourcesRow[];
   terminalWealthDistribution: number[];
   riskOfRuin: number;
   wealthThresholds: {
@@ -171,6 +178,16 @@ export interface PathResult {
  * Created by mc.worker.ts after running 5000+ paths and calculating percentiles.
  * This is what the UI displays.
  */
+export interface IncomeSourcesRow {
+  age: number;
+  isRetired: boolean;
+  socialSecurityBenefit: number;
+  withdrawalTaxable: number;
+  withdrawalTraditional: number;
+  withdrawalRoth: number;
+  withdrawalHSA: number;
+}
+
 export interface YearlyProjection extends PathProjection {
   p5: number;
   p10: number;
