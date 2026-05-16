@@ -79,20 +79,32 @@ resource "google_cloud_run_v2_service" "main" {
       }
 
       # Liveness probe
-      liveness_probe {
-        http_get {
-          path = "/"
+      dynamic "liveness_probe" {
+        for_each = var.liveness_probe_path == null ? [] : [1]
+        content {
+          http_get {
+            path = var.liveness_probe_path
+          }
+          initial_delay_seconds = 10
+          timeout_seconds       = 3
+          period_seconds        = 10
+          failure_threshold     = 3
         }
-        initial_delay_seconds = 10
-        timeout_seconds       = 3
-        period_seconds        = 10
-        failure_threshold     = 3
       }
 
-      # Startup probe
+      # Startup probe — HTTP if startup_probe_path is set, else TCP on container_port
       startup_probe {
-        http_get {
-          path = "/"
+        dynamic "http_get" {
+          for_each = var.startup_probe_path == null ? [] : [1]
+          content {
+            path = var.startup_probe_path
+          }
+        }
+        dynamic "tcp_socket" {
+          for_each = var.startup_probe_path == null ? [1] : []
+          content {
+            port = var.container_port
+          }
         }
         initial_delay_seconds = 0
         timeout_seconds       = 3

@@ -85,6 +85,12 @@ module "rust_simulation" {
   # Custom container port for Rust service
   container_port = 8081
 
+  # Liveness hits /healthz (added in main.rs). Startup probe stays TCP because
+  # warp binds the listener before route registration completes; HTTP startup
+  # would race with binary boot.
+  liveness_probe_path = "/healthz"
+  startup_probe_path  = null
+
   depends_on = [
     google_project_service.required_apis
   ]

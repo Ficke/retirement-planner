@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build routes
     let routes = routes();
 
-    // Health check endpoint
+    // Detailed health endpoint (kept for backward compat / human use)
     let health = warp::path("health")
         .and(warp::get())
         .map(|| {
@@ -38,7 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }))
         });
 
-    let all_routes = health.or(routes);
+    // Liveness/startup probe target — no I/O, returns 200 immediately
+    let healthz = warp::path("healthz")
+        .and(warp::get())
+        .map(|| warp::reply::with_status("ok", warp::http::StatusCode::OK));
+
+    let all_routes = healthz.or(health).or(routes);
 
     // Start server
     info!("Retirement simulation service running on http://0.0.0.0:{}", port);

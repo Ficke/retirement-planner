@@ -88,3 +88,15 @@ variable "container_port" {
   type        = number
   default     = 3000
 }
+
+variable "liveness_probe_path" {
+  description = "HTTP path for the liveness probe. Set to null to disable."
+  type        = string
+  default     = "/healthz"
+}
+
+variable "startup_probe_path" {
+  description = "HTTP path for the startup probe. Set to null to use a TCP probe on container_port instead."
+  type        = string
+  default     = "/healthz"
+}
