@@ -1,95 +1,95 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { UserMenu } from "@/components/user-menu";
-import { InputsForm } from "@/components/inputs-form";
-import { ModernAccountsManager } from "@/components/modern-accounts-manager";
-import { AssumptionsPanel } from "@/components/assumptions-panel";
-import { ResultsPanel } from "@/components/results-panel";
-import { SimulationControls } from "@/components/simulation-controls";
-import { SimulationAnalyzer } from "@/components/SimulationAnalyzer";
-import { DeveloperTools } from "@/components/developer-tools";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMigration } from "@/hooks/useMigration";
+import { Moon, Sun } from "lucide-react";
 import { useAuth } from "@/lib/firebase";
+import { useMigration } from "@/hooks/useMigration";
+import { Sidebar, type PageId } from "@/components/retire/sidebar";
+import { Button } from "@/components/ui/button";
+import { PageOverview } from "@/components/retire/pages/overview";
+import { PagePlan } from "@/components/retire/pages/plan";
+import { PageAccounts } from "@/components/retire/pages/accounts";
+import { PageProjections } from "@/components/retire/pages/projections";
+import { PageSensitivity } from "@/components/retire/pages/sensitivity";
+import { PageAssumptions } from "@/components/retire/pages/assumptions";
+import { PageSettings } from "@/components/retire/pages/settings";
+
+const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
+  overview:    { label: "Overview",    Comp: PageOverview },
+  sensitivity: { label: "Sensitivity", Comp: PageSensitivity },
+  projections: { label: "Projections", Comp: PageProjections },
+  plan:        { label: "Profile",     Comp: PagePlan },
+  accounts:    { label: "Accounts",    Comp: PageAccounts },
+  assumptions: { label: "Assumptions", Comp: PageAssumptions },
+  settings:    { label: "Settings",    Comp: PageSettings },
+};
 
 export default function Home() {
   const { migrationStatus, isReady } = useMigration();
   const { user, loading } = useAuth();
   const router = useRouter();
 
-  // Redirect to sign-in if not authenticated
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/auth/signin');
-    }
-  }, [user, loading, router]);
+  const [page, setPage] = useState<PageId>("overview");
+  const [collapsed, setCollapsed] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
 
-  // Show loading state while checking auth or during migration
+  useEffect(() => {
+    if (!loading && !user) router.push("/auth/signin");
+  }, [user, loading, router]);
+  // Bootstrap (loadProfile + loadAccounts → schedules all sims) is owned by useMigration.
+
   if (loading || !isReady || !user) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground">
-            {loading ? 'Loading...' : migrationStatus === 'running' ? 'Updating account system...' : 'Initializing...'}
+            {loading ? "Loading…" : migrationStatus === "running" ? "Updating account system…" : "Initializing…"}
           </p>
         </div>
       </div>
     );
   }
+
+  const Page = PAGES[page].Comp;
+  const userName = user.displayName || user.email?.split("@")[0] || "You";
+  const userEmail = user.email || "";
+
   return (
-    <div className="min-h-screen bg-background">
-      <nav className="border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <h1 className="text-xl font-bold">RetirePlan</h1>
+    <div className={darkMode ? "dark" : undefined}>
+      <div className="bg-background text-foreground flex h-screen min-h-screen">
+        <Sidebar
+          active={page}
+          onNav={setPage}
+          collapsed={collapsed}
+          onToggleCollapsed={() => setCollapsed((c) => !c)}
+          userName={userName}
+          userEmail={userEmail}
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="bg-background/80 border-border sticky top-0 z-20 flex min-h-14 items-center justify-between gap-4 border-b px-7 py-3 backdrop-blur">
+            <div className="text-muted-foreground flex items-center gap-2 text-xs">
+              <span>Retire</span>
+              <span className="opacity-40">/</span>
+              <b className="text-foreground font-semibold">{PAGES[page].label}</b>
             </div>
-            <div className="flex items-center gap-4">
-              <UserMenu />
-              <ThemeToggle />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setDarkMode((d) => !d)}
+              aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {darkMode ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </Button>
+          </header>
+          <main className="flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-[1400px] space-y-4 px-7 pt-6 pb-16">
+              <Page />
             </div>
-          </div>
+          </main>
         </div>
-      </nav>
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-8">
-          {/* Interactive Simulation Controls */}
-          <SimulationControls />
-
-          {/* Scenario Analysis */}
-          <SimulationAnalyzer />
-
-          {/* Simulation Results - Front and Center */}
-          <ResultsPanel />
-
-          {/* Modern Account Management - Top Level */}
-          <ModernAccountsManager />
-
-          {/* Configuration Options - Secondary */}
-          <Tabs defaultValue="inputs" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="inputs">Inputs & Profile</TabsTrigger>
-              <TabsTrigger value="assumptions">Market Assumptions</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="inputs" className="mt-6">
-              <InputsForm />
-            </TabsContent>
-
-            <TabsContent value="assumptions" className="mt-6">
-              <AssumptionsPanel />
-            </TabsContent>
-          </Tabs>
-        </div>
-      </main>
-
-      {/* Developer Tools - Only shown in development */}
-      <DeveloperTools />
+      </div>
     </div>
   );
 }

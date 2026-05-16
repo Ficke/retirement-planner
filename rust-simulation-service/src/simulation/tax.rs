@@ -12,13 +12,7 @@ pub struct TaxBracket {
 
 #[derive(Debug, Clone)]
 pub struct TaxResult {
-    pub federal_tax: f64,
-    pub state_tax: f64,
-    pub fica_tax: f64,
     pub total_tax: f64,
-    pub effective_rate: f64,
-    pub marginal_rate: f64,
-    pub taxable_income: f64,
     pub hsa_contribution: f64,
     pub k401_contribution: f64,
 }
@@ -205,16 +199,6 @@ pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
     tax
 }
 
-/// Get marginal tax rate at specific income level
-fn get_marginal_tax_rate(income: f64, brackets: &[TaxBracket]) -> f64 {
-    for bracket in brackets.iter().rev() {
-        if income > bracket.min {
-            return bracket.rate;
-        }
-    }
-    brackets.first().map(|b| b.rate).unwrap_or(0.0)
-}
-
 /// Calculate federal and state income taxes during working years
 /// Matches TypeScript calculateTax() function
 pub fn calculate_tax(
@@ -294,27 +278,9 @@ pub fn calculate_tax(
     let fica_tax = social_security_tax + medicare_tax + additional_medicare_tax;
     
     let total_tax = federal_tax + state_tax + fica_tax;
-    
-    // Marginal rates
-    let federal_marginal_rate = get_marginal_tax_rate(federal_taxable_income, &federal_brackets);
-    let state_marginal_rate = match state {
-        State::CA => {
-            let ca_deduction = get_ca_standard_deduction(filing_status);
-            let ca_taxable = (after_k401_income - ca_deduction).max(0.0);
-            let ca_brackets = get_ca_brackets(filing_status);
-            get_marginal_tax_rate(ca_taxable, &ca_brackets)
-        }
-        _ => 0.0,
-    };
-    
+
     TaxResult {
-        federal_tax,
-        state_tax,
-        fica_tax,
         total_tax,
-        effective_rate: if gross_income > 0.0 { total_tax / gross_income } else { 0.0 },
-        marginal_rate: federal_marginal_rate + state_marginal_rate,
-        taxable_income: federal_taxable_income,
         hsa_contribution,
         k401_contribution,
     }
@@ -364,31 +330,10 @@ pub fn calculate_retirement_tax(
     };
     
     // No FICA in retirement
-    let fica_tax = 0.0;
     let total_tax = total_federal_tax + state_tax;
-    
-    // Marginal rates
-    let federal_marginal_rate = get_marginal_tax_rate(federal_taxable_income, &federal_brackets);
-    let state_marginal_rate = match state {
-        State::CA => {
-            let ca_deduction = get_ca_standard_deduction(filing_status);
-            let ca_taxable = (total_ordinary_income - ca_deduction).max(0.0);
-            let ca_brackets = get_ca_brackets(filing_status);
-            get_marginal_tax_rate(ca_taxable, &ca_brackets)
-        }
-        _ => 0.0,
-    };
-    
-    let total_income = traditional_withdrawals + social_security_benefit + qualified_income;
-    
+
     TaxResult {
-        federal_tax: total_federal_tax,
-        state_tax,
-        fica_tax,
         total_tax,
-        effective_rate: if total_income > 0.0 { total_tax / total_income } else { 0.0 },
-        marginal_rate: federal_marginal_rate + state_marginal_rate,
-        taxable_income: federal_taxable_income,
         hsa_contribution: 0.0,
         k401_contribution: 0.0,
     }

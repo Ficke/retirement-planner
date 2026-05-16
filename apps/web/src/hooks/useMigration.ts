@@ -3,22 +3,30 @@
  * Ensures clean transitions between architectural changes.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clearLegacyAccountData, hasLegacyData, type MigrationResult } from '@/lib/migration';
 import { usePlan } from '@/state/usePlan';
+import { useAuth } from '@/lib/firebase';
 
 export function useMigration() {
   const [migrationStatus, setMigrationStatus] = useState<'pending' | 'running' | 'completed' | 'error'>('pending');
   const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
-  const { updateAccounts } = usePlan();
+  const { loadProfile, loadAccounts } = usePlan();
+  const { user, loading: authLoading } = useAuth();
+  const startedRef = useRef(false);
 
   useEffect(() => {
+    if (authLoading || !user) return;
+    if (startedRef.current) return;
+    startedRef.current = true;
+
     const runMigration = async () => {
       // Check if migration is needed
       if (!hasLegacyData()) {
-        // No migration needed, but still load accounts into plan
-        console.log('No legacy data found, loading current accounts into plan...');
-        await updateAccounts();
+        // No migration needed, but still load profile and accounts
+        console.log('No legacy data found, loading profile and accounts...');
+        await loadProfile();
+        await loadAccounts();
         setMigrationStatus('completed');
         return;
       }
@@ -32,11 +40,12 @@ export function useMigration() {
         setMigrationResult(result);
 
         if (result.success) {
-          // After migration success, load current accounts into plan
-          console.log('Migration completed successfully, loading current accounts...');
-          await updateAccounts();
+          // After migration success, load profile and accounts
+          console.log('Migration completed successfully, loading profile and accounts...');
+          await loadProfile();
+          await loadAccounts();
           setMigrationStatus('completed');
-          console.log('Migration and account loading completed:', result.message);
+          console.log('Migration and loading completed:', result.message);
         } else {
           setMigrationStatus('error');
           console.error('Migration failed:', result.message);
@@ -53,7 +62,7 @@ export function useMigration() {
     };
 
     runMigration();
-  }, []);
+  }, [authLoading, user]);
 
   return {
     migrationStatus,

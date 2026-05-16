@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
-import type { Account, FilingStatus, Preset } from '@/domain/types';
+import type { Account, FilingStatus } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
 
 // Import the function we want to test by temporarily exposing it
@@ -197,9 +197,6 @@ describe('Withdrawal Logic', () => {
         manualOverride: false
       },
       assumptions: {
-        preset: 'Moderate' as Preset,
-        rebalanceAnnually: true,
-        realDollarDisplay: true,
         simulationModel: 'historical' as const,
     useBackdoorRoth: false
       }
@@ -208,7 +205,6 @@ describe('Withdrawal Logic', () => {
     const config: ProjectionConfig = {
       paths: 1,
       seed: 12345,
-      realDollars: true
     };
 
     const result = projectScenario(plan, config);

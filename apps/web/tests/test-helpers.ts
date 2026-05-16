@@ -25,9 +25,6 @@ export function createTestAccount(partial: Partial<Account> & { type: Account['t
  */
 export function createTestProjectionSettings(partial?: Partial<ProjectionSettings>): ProjectionSettings {
   return {
-    preset: partial?.preset || 'Moderate',
-    rebalanceAnnually: partial?.rebalanceAnnually ?? true,
-    realDollarDisplay: partial?.realDollarDisplay ?? true,
     simulationModel: partial?.simulationModel || 'historical',
     useBackdoorRoth: partial?.useBackdoorRoth ?? false,
   };

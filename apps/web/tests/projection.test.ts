@@ -56,9 +56,6 @@ const testPlan: RetirementPlan = {
     manualOverride: false,
   },
   assumptions: createTestProjectionSettings({
-    preset: 'Moderate',
-    rebalanceAnnually: true,
-    realDollarDisplay: true,
     simulationModel: 'historical',
   }),
 };
@@ -67,15 +64,15 @@ const testPlan: RetirementPlan = {
 
 describe('Projection Engine', () => {
   it('should generate reproducible results with same seed', () => {
-    const result1 = projectScenario(testPlan, { paths: 1, seed: 42, realDollars: true });
-    const result2 = projectScenario(testPlan, { paths: 1, seed: 42, realDollars: true });
+    const result1 = projectScenario(testPlan, { paths: 1, seed: 42 });
+    const result2 = projectScenario(testPlan, { paths: 1, seed: 42 });
 
     expect(result1.terminalWealth).toBe(result2.terminalWealth);
     expect(result1.projections.length).toBe(result2.projections.length);
   });
 
   it('should show portfolio growth during working years', () => {
-    const result = projectScenario(testPlan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(testPlan, { paths: 1, seed: 42 });
     
     // Should have working years + retirement years
     expect(result.projections.length).toBe(51); // 35 through 85 (inclusive)
@@ -89,7 +86,7 @@ describe('Projection Engine', () => {
   });
 
   it('should properly handle withdrawal ordering during retirement', () => {
-    const result = projectScenario(testPlan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(testPlan, { paths: 1, seed: 42 });
     
     // Find first retirement year
     const retirementYears = result.projections.filter(p => p.isRetired);
@@ -108,7 +105,7 @@ describe('Projection Engine', () => {
   });
 
   it('should show negative savings during retirement', () => {
-    const result = projectScenario(testPlan, { paths: 1, seed: 42, realDollars: true });
+    const result = projectScenario(testPlan, { paths: 1, seed: 42 });
     
     const retirementYears = result.projections.filter(p => p.isRetired);
     
@@ -151,10 +148,10 @@ describe('Projection Engine', () => {
     });
 
     // Test with first seed
-    const result1 = projectScenario(createAllocationTestPlan(), { paths: 1, seed: 999, realDollars: true });
+    const result1 = projectScenario(createAllocationTestPlan(), { paths: 1, seed: 999 });
     
     // Test with second seed  
-    const result2 = projectScenario(createAllocationTestPlan(), { paths: 1, seed: 123, realDollars: true });
+    const result2 = projectScenario(createAllocationTestPlan(), { paths: 1, seed: 123 });
     
     // Both projections should complete successfully
     expect(result1.projections.length).toBe(16); // 60 through 75 (inclusive)
@@ -175,7 +172,7 @@ describe('Projection Engine', () => {
   });
 
   it('should track detailed cash flows per account type', () => {
-    const result = projectScenario(testPlan, { paths: 1, seed: 12345, realDollars: true });
+    const result = projectScenario(testPlan, { paths: 1, seed: 12345 });
     
     const workingPhaseYear = result.projections.find(p => !p.isRetired);
     const retiredPhaseYear = result.projections.find(p => p.isRetired);

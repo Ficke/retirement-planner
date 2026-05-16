@@ -47,9 +47,6 @@ const mockPlan: RetirementPlan = {
     manualOverride: false,
   },
   assumptions: createTestProjectionSettings({
-    preset: 'Moderate',
-    rebalanceAnnually: true,
-    realDollarDisplay: true,
     simulationModel: 'historical',
   }),
 };

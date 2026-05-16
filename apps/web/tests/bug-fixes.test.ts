@@ -6,9 +6,9 @@ describe('Bug Fixes', () => {
   describe('Social Security Age Adjustment Bug', () => {
     const testSalaryHistory = Array(35).fill(80000); // 35 years at $80k for consistent testing
     
-    it('should apply early claiming penalty at age 62', () => {
+    it('should apply early claiming penalty at age 62 (FRA 67 → 30% reduction)', () => {
       const result = calculateSSABenefit(testSalaryHistory, 62);
-      expect(result.claimAdjustment).toBe(0.75); // 25% reduction
+      expect(result.claimAdjustment).toBe(0.70);
       expect(result.annualBenefit).toBeGreaterThan(0);
     });
     
@@ -35,7 +35,7 @@ describe('Bug Fixes', () => {
       
       // Verify approximate ratios
       expect(benefit70.annualBenefit / benefit67.annualBenefit).toBeCloseTo(1.24, 2);
-      expect(benefit62.annualBenefit / benefit67.annualBenefit).toBeCloseTo(0.75, 2);
+      expect(benefit62.annualBenefit / benefit67.annualBenefit).toBeCloseTo(0.70, 2);
     });
   });
   

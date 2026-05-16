@@ -88,13 +88,6 @@ pub struct SocialSecuritySettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Preset {
-    Conservative,
-    Moderate,
-    Aggressive,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SimulationModel {
     #[serde(rename = "historical")]
     Historical,
@@ -103,30 +96,7 @@ pub enum SimulationModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketReturn {
-    pub mean: f64,
-    pub vol: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketAssumptions {
-    pub stocks: MarketReturn,
-    pub bonds: MarketReturn,
-    pub inflation: MarketReturn,
-    pub correlation: Vec<Vec<f64>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionSettings {
-    pub preset: Preset,
-    #[serde(rename = "customReturns")]
-    pub custom_returns: Option<MarketAssumptions>,
-    #[serde(rename = "rebalanceAnnually")]
-    pub rebalance_annually: bool,
-    #[serde(rename = "realDollarDisplay")]
-    pub real_dollar_display: bool,
-    #[serde(rename = "longevityOverride")]
-    pub longevity_override: Option<u32>,
     #[serde(rename = "simulationModel")]
     pub simulation_model: SimulationModel,
     #[serde(rename = "randomSeed")]
@@ -209,6 +179,23 @@ pub struct WealthAtAge {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomeSourcesRow {
+    pub age: u32,
+    #[serde(rename = "isRetired")]
+    pub is_retired: bool,
+    #[serde(rename = "socialSecurityBenefit")]
+    pub social_security_benefit: f64,
+    #[serde(rename = "withdrawalTaxable")]
+    pub withdrawal_taxable: f64,
+    #[serde(rename = "withdrawalTraditional")]
+    pub withdrawal_traditional: f64,
+    #[serde(rename = "withdrawalRoth")]
+    pub withdrawal_roth: f64,
+    #[serde(rename = "withdrawalHSA")]
+    pub withdrawal_hsa: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WealthThresholds {
     pub below1m: f64,
     pub below500k: f64,
@@ -236,15 +223,24 @@ pub struct SimulationResult {
     pub wealth_thresholds: WealthThresholds,
     #[serde(rename = "wealthAtAge")]
     pub wealth_at_age: HashMap<u32, WealthAtAge>,
+    #[serde(rename = "incomeSourcesPath", skip_serializing_if = "Vec::is_empty", default)]
+    pub income_sources_path: Vec<IncomeSourcesRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCConfig {
     pub paths: u32,
     pub seed: u64,
-    #[serde(rename = "realDollars")]
-    pub real_dollars: bool,
+    /// When Historical mode, true → block bootstrap, false → single-year bootstrap.
+    /// Defaults to true to match MONTE_CARLO_DEFAULTS.use_historical_bootstrap.
+    #[serde(rename = "useHistoricalBootstrap", default = "default_use_historical_bootstrap")]
+    pub use_historical_bootstrap: bool,
+    #[serde(rename = "blockSize", default = "default_block_size")]
+    pub block_size: usize,
 }
+
+fn default_use_historical_bootstrap() -> bool { true }
+fn default_block_size() -> usize { 3 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationRequest {

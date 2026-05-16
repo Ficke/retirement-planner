@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import type { RetirementPlan, SimulationResult, YearlyProjection, PathProjection, PathResult } from '@/domain/types';
+import type { RetirementPlan, SimulationResult, YearlyProjection, PathProjection, PathResult, IncomeSourcesRow } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
 
 /**
@@ -25,13 +25,11 @@ interface ExtendedPathResult extends PathResult {
  */
 function processPath(
   plan: RetirementPlan,
-  pathSeed: number,
-  realDollars: boolean
+  pathSeed: number
 ): ExtendedPathResult {
   const projectionConfig: ProjectionConfig = {
     paths: 1,
     seed: pathSeed,
-    realDollars,
   };
 
   const pathResult = projectScenario(plan, projectionConfig);
@@ -83,7 +81,6 @@ function processPath(
 export interface WorkerMCConfig {
   paths: number;
   seed: number;
-  realDollars: boolean;
 }
 
 /**
@@ -110,7 +107,7 @@ async function runSimulation(
   plan: RetirementPlan,
   config: WorkerMCConfig
 ): Promise<SimulationResult> {
-  const { paths, seed, realDollars } = config;
+  const { paths, seed } = config;
 
   // Initialize performance tracking
   const metrics: PerformanceMetrics = {
@@ -155,7 +152,7 @@ async function runSimulation(
         const chunkPromises = Array.from({ length: actualChunkSize }, async (_, i) => {
           const pathIndex = chunkStart + i;
           try {
-            return await processPath(plan, seed + pathIndex, realDollars);
+            return await processPath(plan, seed + pathIndex);
           } catch (pathError) {
             // Log individual path failure but don't fail entire simulation
             console.warn(`Path ${pathIndex + 1}/${paths} failed:`, pathError);
@@ -267,8 +264,13 @@ async function runSimulation(
     const yearWithdrawalTaxable = validProjections.map(projection => projection[yearIndex].withdrawalTaxable);
     const yearWithdrawalTraditional = validProjections.map(projection => projection[yearIndex].withdrawalTraditional);
     const yearWithdrawalRoth = validProjections.map(projection => projection[yearIndex].withdrawalRoth);
+    const yearWithdrawalHSA = validProjections.map(projection => projection[yearIndex].withdrawalHSA);
     const yearRMD = validProjections.map(projection => projection[yearIndex].rmdAmount);
-    
+    const yearDepositTaxable = validProjections.map(projection => projection[yearIndex].depositTaxable);
+    const yearDepositTraditional = validProjections.map(projection => projection[yearIndex].depositTraditional);
+    const yearDepositRoth = validProjections.map(projection => projection[yearIndex].depositRoth);
+    const yearDepositHSA = validProjections.map(projection => projection[yearIndex].depositHSA);
+
     // Sort all arrays for percentile calculation
     yearPortfolioValues.sort((a, b) => a - b);
     yearIncomes.sort((a, b) => a - b);
@@ -279,7 +281,12 @@ async function runSimulation(
     yearWithdrawalTaxable.sort((a, b) => a - b);
     yearWithdrawalTraditional.sort((a, b) => a - b);
     yearWithdrawalRoth.sort((a, b) => a - b);
+    yearWithdrawalHSA.sort((a, b) => a - b);
     yearRMD.sort((a, b) => a - b);
+    yearDepositTaxable.sort((a, b) => a - b);
+    yearDepositTraditional.sort((a, b) => a - b);
+    yearDepositRoth.sort((a, b) => a - b);
+    yearDepositHSA.sort((a, b) => a - b);
 
     // Use first valid path as template for non-financial data
     const baseProjection = validProjections[0][yearIndex];
@@ -301,14 +308,14 @@ async function runSimulation(
       withdrawalTaxable: yearWithdrawalTaxable[p50Index],
       withdrawalTraditional: yearWithdrawalTraditional[p50Index],
       withdrawalRoth: yearWithdrawalRoth[p50Index],
-      withdrawalHSA: baseProjection.withdrawalHSA,
+      withdrawalHSA: yearWithdrawalHSA[p50Index],
       rmdAmount: yearRMD[p50Index],
-      
-      // Use base projection values for detailed cash flows (they should be consistent across paths)
-      depositTaxable: baseProjection.depositTaxable,
-      depositTraditional: baseProjection.depositTraditional,
-      depositRoth: baseProjection.depositRoth,
-      depositHSA: baseProjection.depositHSA,
+
+      // Median across paths — deposits/withdrawals vary per path (e.g. RMD excess reinvestment)
+      depositTaxable: yearDepositTaxable[p50Index],
+      depositTraditional: yearDepositTraditional[p50Index],
+      depositRoth: yearDepositRoth[p50Index],
+      depositHSA: yearDepositHSA[p50Index],
       insufficientFunds: baseProjection.insufficientFunds,
       
       // Add percentile ranges for fan charts
@@ -335,13 +342,60 @@ async function runSimulation(
     }
   }
 
+    // Extract median path: find the simulation path closest to median terminal wealth
+    const medianTerminalWealth = terminalWealths[p50Index];
+    let medianPath: PathProjection[] = [];
+    if (allProjections.length > 0) {
+      let closestDistance = Infinity;
+      for (const projections of allProjections) {
+        const lastYear = projections[projections.length - 1];
+        if (!lastYear) continue;
+        const distance = Math.abs(lastYear.portfolioValue - medianTerminalWealth);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          medianPath = projections;
+        }
+      }
+    }
+
+    // Smoothed income-sources path: mean of coherent paths in the [p25, p75]
+    // terminal-wealth band. Keeps the typical withdrawal strategy intact while
+    // smoothing the per-path noise that makes a single median path look jagged.
+    const p25Wealth = terminalWealths[p25Index];
+    const p75Wealth = terminalWealths[p75Index];
+    const bandPaths = allProjections.filter((projections) => {
+      const last = projections[projections.length - 1];
+      return last && last.portfolioValue >= p25Wealth && last.portfolioValue <= p75Wealth;
+    });
+    const incomeSourcesPath: IncomeSourcesRow[] = [];
+    if (bandPaths.length > 0) {
+      const yearCount = bandPaths[0].length;
+      for (let y = 0; y < yearCount; y++) {
+        const rows = bandPaths.map((p) => p[y]).filter(Boolean);
+        if (rows.length === 0) continue;
+        const mean = (sel: (r: PathProjection) => number) =>
+          rows.reduce((s, r) => s + sel(r), 0) / rows.length;
+        incomeSourcesPath.push({
+          age: rows[0].age,
+          isRetired: rows[0].isRetired,
+          socialSecurityBenefit: mean((r) => r.socialSecurityBenefit),
+          withdrawalTaxable: mean((r) => r.withdrawalTaxable),
+          withdrawalTraditional: mean((r) => r.withdrawalTraditional),
+          withdrawalRoth: mean((r) => r.withdrawalRoth),
+          withdrawalHSA: mean((r) => r.withdrawalHSA),
+        });
+      }
+    }
+
     return {
       successProbability: successCount / paths,
-      medianTerminalWealth: terminalWealths[p50Index],
+      medianTerminalWealth,
       percentile5TerminalWealth: terminalWealths[p5Index],
       percentile10TerminalWealth: terminalWealths[p10Index],
       percentile90TerminalWealth: terminalWealths[p90Index],
       yearlyProjections,
+      medianPath,
+      incomeSourcesPath,
       terminalWealthDistribution: terminalWealths,
       riskOfRuin: ruinCount / paths,
       wealthThresholds: {

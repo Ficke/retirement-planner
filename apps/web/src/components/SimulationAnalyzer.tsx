@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { usePlan } from '@/state/usePlan';
 import { useSimulationState } from '@/hooks/useSimulationState';
 import { Button } from '@/components/ui/button';
@@ -330,7 +330,7 @@ function EnhancedSpendingTable({ results, best }: EnhancedSpendingTableProps) {
 }
 
 function SocialSecurityAnalysis() {
-  const { runSSAnalysis, ssAnalysisResult, plan } = usePlan();
+  const { ssAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -422,7 +422,7 @@ function SocialSecurityAnalysis() {
 }
 
 function SpendingAnalysis() {
-  const { runSpendingAnalysis, spendingAnalysisResult, plan } = usePlan();
+  const { spendingAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -606,7 +606,7 @@ function SpendingAnalysis() {
 }
 
 function RetirementAgeAnalysis() {
-  const { runRetirementAgeAnalysis, retirementAgeAnalysisResult, plan } = usePlan();
+  const { retirementAgeAnalysisResult, plan } = usePlan();
   const { isSimulationRunning } = useSimulationState();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -786,26 +786,28 @@ function RetirementAgeAnalysis() {
 
 export function SimulationAnalyzer() {
   const [isExpanded, setIsExpanded] = useState(true);
-  const { runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis, plan } = usePlan();
-
-  // Get the current analysis results for display only
-  const { ssAnalysisResult, spendingAnalysisResult, retirementAgeAnalysisResult } = usePlan();
-
-  // Only run analyses on initial mount if results are missing
-  useEffect(() => {
-    if (isExpanded) {
-      if (!ssAnalysisResult) runSSAnalysis();
-      if (!spendingAnalysisResult) runSpendingAnalysis();
-      if (!retirementAgeAnalysisResult) runRetirementAgeAnalysis();
-    }
-  }, [isExpanded]); // Only depend on isExpanded - state management now handles scheduling
+  const { plan } = usePlan();
 
   return (
     <Card>
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-xl font-semibold">Scenario Analysis</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-xl font-semibold">Scenario Analysis</CardTitle>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 cursor-help">
+                      lower fidelity
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Each scenario runs 1,000 paths vs. 5,000 for the main simulation — results are directional, not directly comparable.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <p className="text-sm text-muted-foreground mt-1">
               Analyze different strategies to optimize your retirement plan
             </p>

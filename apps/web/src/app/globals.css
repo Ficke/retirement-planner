@@ -28,6 +28,16 @@
   --color-phase-working: var(--chart-2);
   --color-phase-early: var(--chart-3);
   --color-phase-full: var(--chart-4);
+  --color-success: var(--success);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-account-taxable: var(--account-taxable);
+  --color-account-traditional: var(--account-traditional);
+  --color-account-roth: var(--account-roth);
+  --color-account-hsa: var(--account-hsa);
+  --color-account-ss: var(--account-ss);
+  --color-account-salary: var(--account-salary);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -103,6 +113,16 @@ details[open] summary ~ * {
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --success: oklch(54% 0.10 160);
+  --warn: oklch(70% 0.14 75);
+  --danger: oklch(56% 0.14 25);
+  --info: oklch(56% 0.10 240);
+  --account-taxable: oklch(56% 0.08 240);
+  --account-traditional: oklch(58% 0.09 280);
+  --account-roth: oklch(58% 0.10 320);
+  --account-hsa: oklch(58% 0.09 190);
+  --account-ss: oklch(58% 0.09 70);
+  --account-salary: oklch(58% 0.10 160);
 }
 
 .dark {
@@ -144,6 +164,16 @@ details[open] summary ~ * {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --success: oklch(68% 0.14 160);
+  --warn: oklch(78% 0.16 75);
+  --danger: oklch(68% 0.18 25);
+  --info: oklch(70% 0.12 240);
+  --account-taxable: oklch(68% 0.10 240);
+  --account-traditional: oklch(70% 0.11 280);
+  --account-roth: oklch(70% 0.12 320);
+  --account-hsa: oklch(70% 0.11 190);
+  --account-ss: oklch(72% 0.12 70);
+  --account-salary: oklch(70% 0.12 160);
 }
 
 @layer base {
@@ -154,3 +184,4 @@ details[open] summary ~ * {
     @apply bg-background text-foreground;
   }
 }
+

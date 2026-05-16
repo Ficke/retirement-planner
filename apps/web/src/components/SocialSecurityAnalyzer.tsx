@@ -192,7 +192,21 @@ export function SocialSecurityAnalyzer() {
       {analysis && (
         <Card>
           <CardHeader className="flex items-center justify-between">
-            <CardTitle>Claim Age Recommendation</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>Claim Age Recommendation</CardTitle>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 cursor-help">
+                      lower fidelity
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Analysis uses 1,000 paths per scenario vs. 5,000 for the main simulation — numbers are directional, not directly comparable.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <Button
               variant="ghost"
               size="sm"

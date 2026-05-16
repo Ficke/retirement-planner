@@ -20,14 +20,6 @@ pub const US_BOND_REAL_RETURNS: MarketStats = MarketStats {
 /// Stock-Bond Correlation (1926-2024)
 pub const STOCKS_BONDS_CORRELATION: f64 = 0.12; // Low positive correlation historically
 
-/// Return bounds to prevent unrealistic values
-/// Historical worst year was -42.81% for stocks, -15.84% for bonds
-/// Allow 50% buffer for extreme cases
-pub const MAX_STOCK_RETURN: f64 = 0.80;  // 80% max gain
-pub const MIN_STOCK_RETURN: f64 = -0.60; // -60% max loss
-pub const MAX_BOND_RETURN: f64 = 0.50;   // 50% max gain
-pub const MIN_BOND_RETURN: f64 = -0.25;  // -25% max loss
-
 #[derive(Debug, Clone, Copy)]
 pub struct MarketStats {
     pub mean: f64,
@@ -40,51 +32,43 @@ pub struct MarketReturns {
     pub bond_return: f64,
 }
 
-/// Generate correlated annual returns for stocks and bonds using parametric approach.
-/// Matches TypeScript implementation exactly:
-/// - Student's t-distribution with 6 degrees of freedom for equities
-/// - Normal distribution for bonds  
-/// - Cholesky decomposition for proper correlation structure
-/// - Return bounds to prevent unrealistic values
+/// Convert documented arithmetic mean/vol to log-space parameters so that
+///   exp(mu_log + sigma_log * Z) - 1
+/// has the documented arithmetic mean and volatility for Z ~ N(0, 1).
+fn to_log_params(stats: MarketStats) -> (f64, f64) {
+    let sigma_log = (1.0 + (stats.volatility / (1.0 + stats.mean)).powi(2)).ln().sqrt();
+    let mu_log = (1.0 + stats.mean).ln() - 0.5 * sigma_log * sigma_log;
+    (mu_log, sigma_log)
+}
+
+/// Generate correlated annual real returns for stocks and bonds.
+///
+/// Sampling is done in log-return space: equities use Student-t (df=6) shocks
+/// for fat tails, bonds use Normal shocks, and Cholesky preserves the documented
+/// stock/bond correlation. The final simple return is
+///   R = exp(mu_log + sigma_log * Z) - 1
+/// which is bounded below by -1 (total loss) by construction. No artificial
+/// upper/lower clamps are applied — the chosen distributions own tail shape.
 pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns> {
-    // Generate independent shocks using proper distributions
-    let student_t = StudentT::new(6.0)?; // Student-t with df=6 for equities
-    let normal = Normal::new(0.0, 1.0)?; // Standard normal for bonds
-    
+    let student_t = StudentT::new(6.0)?;
+    let normal = Normal::new(0.0, 1.0)?;
+
     let stock_shock = student_t.sample(rng);
     let bond_shock = normal.sample(rng);
-    
-    // Apply Cholesky transformation for correlation
-    // Correlation matrix: [[1.0, r], [r, 1.0]] where r = STOCKS_BONDS_CORRELATION
+
+    // Cholesky for [[1, r], [r, 1]] correlation structure.
     let cholesky = cholesky_decomposition_2x2(STOCKS_BONDS_CORRELATION);
-    
     let correlated_shocks = [
         cholesky[0][0] * stock_shock,
         cholesky[1][0] * stock_shock + cholesky[1][1] * bond_shock,
     ];
-    
-    // Apply mean and volatility
-    let stock_return = US_STOCK_REAL_RETURNS.mean + 
-        correlated_shocks[0] * US_STOCK_REAL_RETURNS.volatility;
-    let bond_return = US_BOND_REAL_RETURNS.mean + 
-        correlated_shocks[1] * US_BOND_REAL_RETURNS.volatility;
-    
-    // Bound returns to prevent unrealistic values
-    let bounded_stock_return = stock_return.clamp(MIN_STOCK_RETURN, MAX_STOCK_RETURN);
-    let bounded_bond_return = bond_return.clamp(MIN_BOND_RETURN, MAX_BOND_RETURN);
-    
-    // Warn if bounds were applied (indicates potential issue)
-    if (bounded_stock_return - stock_return).abs() > f64::EPSILON ||
-       (bounded_bond_return - bond_return).abs() > f64::EPSILON {
-        tracing::warn!(
-            "Return bounds applied: stock {} -> {}, bond {} -> {}",
-            stock_return, bounded_stock_return, bond_return, bounded_bond_return
-        );
-    }
-    
+
+    let (stock_mu_log, stock_sigma_log) = to_log_params(US_STOCK_REAL_RETURNS);
+    let (bond_mu_log, bond_sigma_log) = to_log_params(US_BOND_REAL_RETURNS);
+
     Ok(MarketReturns {
-        stock_return: bounded_stock_return,
-        bond_return: bounded_bond_return,
+        stock_return: (stock_mu_log + correlated_shocks[0] * stock_sigma_log).exp() - 1.0,
+        bond_return: (bond_mu_log + correlated_shocks[1] * bond_sigma_log).exp() - 1.0,
     })
 }
 
@@ -140,14 +124,15 @@ mod tests {
             bond_returns.push(returns.bond_return);
         }
         
-        // Check that returns are within bounds
+        // Log-space sampling: returns are bounded below by -1 by construction
+        // (total loss). No artificial upper bound — the distribution decides.
         for &ret in &stock_returns {
-            assert!(ret >= MIN_STOCK_RETURN && ret <= MAX_STOCK_RETURN);
+            assert!(ret > -1.0);
         }
         for &ret in &bond_returns {
-            assert!(ret >= MIN_BOND_RETURN && ret <= MAX_BOND_RETURN);
+            assert!(ret > -1.0);
         }
-        
+
         // Check approximate means (should be close to target with large sample)
         let stock_mean = stock_returns.iter().sum::<f64>() / stock_returns.len() as f64;
         let bond_mean = bond_returns.iter().sum::<f64>() / bond_returns.len() as f64;

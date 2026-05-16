@@ -78,7 +78,7 @@ resource "google_cloud_run_v2_service" "main" {
         container_port = var.container_port
       }
 
-      # Liveness probe
+      # Liveness probe — omitted if liveness_probe_path is null
       dynamic "liveness_probe" {
         for_each = var.liveness_probe_path == null ? [] : [1]
         content {

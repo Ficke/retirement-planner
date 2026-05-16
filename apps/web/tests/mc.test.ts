@@ -32,9 +32,6 @@ const testPlan: RetirementPlan = {
     manualOverride: false,
   },
   assumptions: {
-    preset: 'Moderate',
-    rebalanceAnnually: true,
-    realDollarDisplay: true,
     simulationModel: 'historical',
     useBackdoorRoth: false,
   },
