@@ -10,12 +10,10 @@ terraform {
     }
   }
 
-  # Backend configuration for state management
-  # Uncomment and configure after creating GCS bucket
-  # backend "gcs" {
-  #   bucket = "retire-plan-terraform-state"
-  #   prefix = "terraform/state"
-  # }
+  backend "gcs" {
+    bucket = "retire-plan-tfstate-gen-lang-client-0372385774"
+    prefix = "terraform/state/prod"
+  }
 }
 
 provider "google" {
@@ -86,7 +84,12 @@ module "rust_simulation" {
 
   # Custom container port for Rust service
   container_port = 8081
-  use_tcp_probe  = true
+
+  # Liveness hits /healthz (added in main.rs). Startup probe stays TCP because
+  # warp binds the listener before route registration completes; HTTP startup
+  # would race with binary boot.
+  liveness_probe_path = "/healthz"
+  startup_probe_path  = null
 
   depends_on = [
     google_project_service.required_apis

@@ -89,8 +89,14 @@ variable "container_port" {
   default     = 3000
 }
 
-variable "use_tcp_probe" {
-  description = "Use TCP socket for startup/liveness probes instead of HTTP GET (for non-HTTP services)"
-  type        = bool
-  default     = false
+variable "liveness_probe_path" {
+  description = "HTTP path for the liveness probe. Set to null to disable."
+  type        = string
+  default     = "/healthz"
+}
+
+variable "startup_probe_path" {
+  description = "HTTP path for the startup probe. Set to null to use a TCP probe on container_port instead."
+  type        = string
+  default     = "/healthz"
 }

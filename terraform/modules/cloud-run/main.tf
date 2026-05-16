@@ -78,27 +78,30 @@ resource "google_cloud_run_v2_service" "main" {
         container_port = var.container_port
       }
 
-      # Liveness probe — Cloud Run only supports HTTP GET (not TCP) for liveness
-      liveness_probe {
-        http_get {
-          path = "/"
+      # Liveness probe — omitted if liveness_probe_path is null
+      dynamic "liveness_probe" {
+        for_each = var.liveness_probe_path == null ? [] : [1]
+        content {
+          http_get {
+            path = var.liveness_probe_path
+          }
+          initial_delay_seconds = 10
+          timeout_seconds       = 3
+          period_seconds        = 10
+          failure_threshold     = 3
         }
-        initial_delay_seconds = 10
-        timeout_seconds       = 3
-        period_seconds        = 10
-        failure_threshold     = 3
       }
 
-      # Startup probe — TCP socket supported for non-HTTP services (e.g. Rust on 8081)
+      # Startup probe — HTTP if startup_probe_path is set, else TCP on container_port
       startup_probe {
         dynamic "http_get" {
-          for_each = var.use_tcp_probe ? [] : [1]
+          for_each = var.startup_probe_path == null ? [] : [1]
           content {
-            path = "/"
+            path = var.startup_probe_path
           }
         }
         dynamic "tcp_socket" {
-          for_each = var.use_tcp_probe ? [1] : []
+          for_each = var.startup_probe_path == null ? [1] : []
           content {
             port = var.container_port
           }
