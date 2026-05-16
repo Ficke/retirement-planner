@@ -141,17 +141,10 @@ export function PageAccounts() {
     if (editor?.kind === "edit" && editor.id === id) closeEditor();
   };
 
-  const summary = `${accountsWithHoldings.length} ${
-    accountsWithHoldings.length === 1 ? "account" : "accounts"
-  } across ${Object.keys(totals).length || 0} ${
-    Object.keys(totals).length === 1 ? "category" : "categories"
-  }. Total ${fmtCurrency(grand, true)}.`;
-
   return (
     <PageShell>
       <PageHeader
         title="Accounts"
-        description={summary}
         actions={
           <Button onClick={openCreate}>
             <Plus className="size-4" />
@@ -222,9 +215,6 @@ export function PageAccounts() {
 
       <DashboardCard
         title={filter === "all" ? "All accounts" : `${KIND_META[filter].label} accounts`}
-        description={`${filtered.length} ${
-          filtered.length === 1 ? "account" : "accounts"
-        }`}
         flush
       >
         {!isReady && filtered.length === 0 ? (
@@ -383,11 +373,13 @@ function AllocationBar({
           <div style={{ width: `${bondsPct}%`, background: bondColor }} />
         )}
       </div>
-      <span className="font-mono text-xs tabular-nums whitespace-nowrap">
-        <span className="text-foreground font-semibold">{stocks}</span>
-        <span className="text-muted-foreground">S · </span>
-        <span className="text-foreground font-semibold">{bonds}</span>
-        <span className="text-muted-foreground">B</span>
+      <span
+        className="text-xs tabular-nums whitespace-nowrap text-muted-foreground"
+        title={`${stocks}% stocks · ${bonds}% bonds`}
+      >
+        <span className="text-foreground font-medium">{stocks}%</span>
+        <span> / </span>
+        <span className="text-foreground font-medium">{bonds}%</span>
       </span>
     </div>
   );

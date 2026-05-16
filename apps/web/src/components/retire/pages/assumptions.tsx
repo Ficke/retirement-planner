@@ -71,7 +71,7 @@ export function PageAssumptions() {
     <PageShell>
       <PageHeader
         title="Assumptions"
-        description="What the Monte Carlo simulation assumes about the world. Engine constants from US 1926–2024 history, shown for transparency."
+        description="The inputs behind the simulation. Returns reflect US asset-class history (1926–2024)."
       />
 
       <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -80,7 +80,7 @@ export function PageAssumptions() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <DashboardCard
           title="Asset class assumptions"
-          description="Real (after-inflation) returns. Hardcoded from US 1926–2024 history."
+          description="Real (after-inflation) returns."
           flush
         >
           <Table>
@@ -151,17 +151,9 @@ export function PageAssumptions() {
               </TableRow>
             </TableFooter>
           </Table>
-          <div className="bg-muted/40 border-border text-muted-foreground border-t px-4 py-2.5 text-[11px]">
-            Asset-class returns and vol are baked into the engine. The parametric mode
-            samples from these directly; the bootstrap mode resamples the historical
-            sequences they were derived from.
-          </div>
         </DashboardCard>
 
-        <DashboardCard
-          title="Allocation"
-          description="Stock/bond split across all your accounts"
-        >
+        <DashboardCard title="Allocation">
           <div className="flex items-center gap-6">
             <Donut
               data={[

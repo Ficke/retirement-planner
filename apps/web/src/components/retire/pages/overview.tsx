@@ -112,15 +112,9 @@ export function PageOverview() {
       ? "At risk"
       : "Off track";
 
-  const asOf = new Date(plan.profile.asOfDate).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-
   return (
     <PageShell>
-      <PageHeader title="Overview" description={`As of ${asOf}`} />
+      <PageHeader title="Overview" />
 
       <KPIGrid cols={4}>
         <Stat
@@ -156,7 +150,7 @@ export function PageOverview() {
               : "warn"
           }
         />
-        <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} trend="across all accounts">
+        <Stat label="Net Worth" value={fmtCurrency(netWorth, true)}>
           {sparkData.length > 0 && (
             <div className="mt-2">
               <Sparkline data={sparkData} />
@@ -206,10 +200,7 @@ export function PageOverview() {
       </DashboardCard>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <DashboardCard
-          title="Wealth Trajectory"
-          description="Median path with 25–75 and 10–90 percentile bands."
-        >
+        <DashboardCard title="Wealth Trajectory">
           {result?.yearlyProjections?.length ? (
             <div
               className={cn(
@@ -231,7 +222,7 @@ export function PageOverview() {
           )}
         </DashboardCard>
 
-        <DashboardCard title="Allocation by Account Type" description="Across all accounts">
+        <DashboardCard title="Allocation by Account Type">
           <div className="flex items-center gap-5">
             <Donut
               data={allocData}

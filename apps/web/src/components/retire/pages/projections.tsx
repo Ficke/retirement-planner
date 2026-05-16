@@ -128,7 +128,7 @@ function YearlyTable({ data }: { data: Row[] }) {
       },
       {
         id: "range",
-        header: () => <span className="block text-right">P10 / P90</span>,
+        header: () => <span className="block text-right">Range</span>,
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-muted-foreground block text-right font-mono text-xs">
@@ -243,7 +243,6 @@ export function PageProjections() {
     <PageShell>
       <PageHeader
         title="Projections"
-        description={`Monte Carlo simulation from age ${plan.profile.age} to ${plan.profile.lifeExpectancy}.`}
         actions={
           <Badge
             variant="secondary"
@@ -279,31 +278,24 @@ export function PageProjections() {
           tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
         />
         <Stat
-          label="Median Terminal Wealth"
+          label="Median wealth"
           value={fmtCurrency(median, true)}
           trend={`at age ${plan.profile.lifeExpectancy}`}
         />
         <Stat
-          label="P10 (worst 10%)"
+          label="Downside (10th %)"
           value={fmtCurrency(p10, true)}
-          trend="downside scenario"
           tone="warn"
         />
         <Stat
-          label="P90 (best 10%)"
+          label="Upside (90th %)"
           value={fmtCurrency(p90, true)}
-          trend="upside scenario"
           tone="positive"
         />
       </KPIGrid>
 
       <DashboardCard
         title={view === "wealth" ? "Wealth Trajectory" : "Income Sources"}
-        description={
-          view === "wealth"
-            ? "Median portfolio value with 10–90 percentile bands"
-            : "Average annual income, by source, across paths near the median outcome"
-        }
         actions={
           <SegmentedTabs<ChartView>
             value={view}

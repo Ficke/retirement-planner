@@ -170,10 +170,7 @@ export function PagePlan() {
           </TableBody>
         </Table>
         <div className="bg-muted/40 border-border text-muted-foreground border-t px-4 py-2.5 text-[11px]">
-          Taxes derived from{" "}
-          {p.state === "CA" ? "Federal + California 2025" : "Federal 2025"} brackets and
-          FICA. Per-bucket allocation (401k / HSA / Roth / Taxable) is determined
-          automatically by the simulation engine using current contribution limits.
+          {p.state === "CA" ? "Federal + California 2025" : "Federal 2025"} brackets and FICA.
         </div>
       </DashboardCard>
     </PageShell>

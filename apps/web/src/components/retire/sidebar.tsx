@@ -83,14 +83,9 @@ export function Sidebar({
             R
           </div>
           {!collapsed && (
-            <div className="flex min-w-0 flex-col leading-tight">
-              <span className="text-sidebar-foreground text-sm font-semibold tracking-tight">
-                Retire
-              </span>
-              <span className="text-muted-foreground text-[10px] tracking-wider uppercase">
-                v3.0
-              </span>
-            </div>
+            <span className="text-sidebar-foreground min-w-0 truncate text-sm font-semibold tracking-tight">
+              Retire
+            </span>
           )}
         </div>
 

@@ -122,7 +122,7 @@ function SensitivityCard({
   }
 
   return (
-    <DashboardCard title={title} description="Success probability across range">
+    <DashboardCard title={title}>
       {points.length === 0 ? (
         <Skeleton className="h-[200px] w-full" />
       ) : (

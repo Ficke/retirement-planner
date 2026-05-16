@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useId } from "react";
-import { Info, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
 import type { SimulationModel } from "@/domain/types";
@@ -18,12 +18,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   DashboardCard,
   PageHeader,
@@ -47,8 +41,7 @@ export function PageSettings() {
   const seedMode = a.randomSeed != null ? "fixed" : "random";
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <PageShell>
+    <PageShell>
         <PageHeader
           title="Settings"
           description="Runtime, randomness, and strategy options. The market model itself lives on Assumptions."
@@ -60,27 +53,15 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Engine"
-            helper="Where the simulation runs. Server is faster for large sweeps; local keeps your data on-device."
+            helper="Server is faster. Local keeps the calculation on your device."
             badge={
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="secondary"
-                    className="bg-success/15 text-success cursor-help gap-1.5"
-                  >
-                    <span className="bg-success size-1.5 rounded-full" />
-                    {useServerSideCalculations ? "Server (Rust)" : "Local (worker)"}
-                    <Info className="size-3 opacity-70" />
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-xs space-y-1">
-                  <div>
-                    Tax tables: 2025 (Federal
-                    {plan.profile.state === "CA" ? " + CA" : ""})
-                  </div>
-                  <div>RMD table: SECURE 2.0 (2024+ uniform lifetime)</div>
-                </TooltipContent>
-              </Tooltip>
+              <Badge
+                variant="secondary"
+                className="bg-success/15 text-success gap-1.5"
+              >
+                <span className="bg-success size-1.5 rounded-full" />
+                {useServerSideCalculations ? "Server" : "Local"}
+              </Badge>
             }
           >
             <Select
@@ -104,7 +85,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Account storage"
-            helper="Private mode keeps your accounts in this browser only — they're never written to our database. Simulations still send the values to the compute service for the run, but nothing is stored. Switching off will reload accounts saved in your account."
+            helper="Private: accounts stay in this browser. Stored: synced to your account across devices."
           >
             <ToggleGroup
               type="single"
@@ -128,7 +109,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Returns model"
-            helper="Bootstrap resamples real US 1926–2024 stock and bond years to capture historical sequences and joint behavior. Parametric draws from a Student-t (equities) and Normal (bonds) fit to that history — smoother percentiles, less regime detail."
+            helper="Historical: replays past US market years (1926–2024). Parametric: samples from a statistical model fit to that history."
           >
             <ToggleGroup
               type="single"
@@ -202,7 +183,6 @@ export function PageSettings() {
           </Setting>
         </DashboardCard>
       </PageShell>
-    </TooltipProvider>
   );
 }
 

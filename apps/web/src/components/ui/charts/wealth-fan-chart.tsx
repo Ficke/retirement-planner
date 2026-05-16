@@ -20,8 +20,8 @@ type Pick4 = Pick<
 >;
 
 const config = {
-  band90: { label: "P10–P90", color: "var(--color-success)" },
-  band75: { label: "P25–P75", color: "var(--color-success)" },
+  band90: { label: "10th–90th", color: "var(--color-success)" },
+  band75: { label: "25th–75th", color: "var(--color-success)" },
   p50: { label: "Median", color: "var(--color-success)" },
 } as const;
 
@@ -125,13 +125,19 @@ export function WealthFanChart({
           cursor={{ stroke: "var(--color-foreground)", strokeOpacity: 0.4 }}
           content={
             <ChartTooltipContent
-              labelFormatter={(label) => `Age ${label}`}
+              labelFormatter={(_, payload) => {
+                const age = payload?.[0]?.payload?.age;
+                return age != null ? `Age ${age}` : "";
+              }}
               formatter={(value, name) => {
                 const v = Array.isArray(value) ? value : [value];
                 const label = config[name as keyof typeof config]?.label ?? String(name);
                 return (
-                  <span className="font-mono">
-                    {label}: {v.map((n) => fmtCurrency(Number(n), true)).join(" – ")}
+                  <span className="flex w-full justify-between gap-3">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="font-medium tabular-nums text-foreground">
+                      {v.map((n) => fmtCurrency(Number(n), true)).join(" – ")}
+                    </span>
                   </span>
                 );
               }}
