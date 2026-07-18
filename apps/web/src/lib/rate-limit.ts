@@ -95,30 +95,6 @@ class RateLimiter {
 // Singleton instance
 const rateLimiter = new RateLimiter();
 
-// Preset configurations
-export const RateLimitConfig = {
-  // Authentication endpoints - strict limits
-  AUTH: {
-    limit: 5,
-    windowMs: 15 * 60 * 1000, // 5 requests per 15 minutes
-  },
-  // OCR endpoint - expensive AI calls
-  OCR: {
-    limit: 10,
-    windowMs: 60 * 60 * 1000, // 10 requests per hour
-  },
-  // Regular API endpoints
-  API: {
-    limit: 100,
-    windowMs: 60 * 1000, // 100 requests per minute
-  },
-  // Create/Update/Delete operations
-  MUTATION: {
-    limit: 30,
-    windowMs: 60 * 1000, // 30 requests per minute
-  },
-} as const;
-
 /**
  * Rate limit a request based on IP address
  */

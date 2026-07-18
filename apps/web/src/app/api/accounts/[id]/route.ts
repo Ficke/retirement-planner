@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/firebase/server';
 import { getUnifiedDatabaseService } from '@/services/server/database';
+import { UpdateAccountSchema, validateRequest } from '@/lib/validation';
 import type { Account } from '@/domain/types';
 
 export async function GET(
@@ -60,7 +61,16 @@ export async function PATCH(
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const updates: Partial<Omit<Account, 'id' | 'createdAt'>> = await request.json();
+    const body = await request.json();
+    const validation = validateRequest(UpdateAccountSchema, body);
+    if (!validation.success) {
+      return NextResponse.json(
+        { error: 'Validation failed', errors: validation.errors },
+        { status: 400 }
+      );
+    }
+
+    const updates = validation.data as Partial<Omit<Account, 'id' | 'createdAt'>>;
     const account = await db.updateAccount(id, updates);
 
     return NextResponse.json(account);

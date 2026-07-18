@@ -1,84 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { RetirementPlan, SimulationResult } from '@/domain/types';
-
-interface BatchSimulationRequest {
-  id: string;
-  plan: RetirementPlan;
-  config: {
-    paths: number;
-    seed: number;
-    useHistoricalBootstrap?: boolean;
-    blockSize?: number;
-  };
-}
-
-interface BatchSimulationResponse {
-  id: string;
-  result: SimulationResult;
-}
-
-interface BatchRequest {
-  simulations: BatchSimulationRequest[];
-}
-
-interface BatchResponse {
-  results: BatchSimulationResponse[];
-}
+import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { batchRequestSchema, SIMULATION_RATE_LIMIT } from '@/lib/simulation-request';
 
 const RUST_SERVICE_URL = process.env.RUST_SERVICE_URL || 'http://localhost:8081';
 
 /**
- * Next.js API endpoint that proxies batch Monte Carlo simulation requests to the Rust service.
- * Allows multiple simulations to be processed in a single HTTP request for better performance.
+ * Proxies batch Monte Carlo requests (sensitivity sweeps) to the Rust service.
+ *
+ * Publicly reachable (anonymous mode may use cloud compute), so requests are
+ * rate-limited per IP and batch size / path counts are clamped before any
+ * compute is spent. Nothing from the request body is persisted.
  */
 export async function POST(request: NextRequest) {
   try {
-    const body: BatchRequest = await request.json();
-
-    // Validate request
-    if (!body.simulations || !Array.isArray(body.simulations) || body.simulations.length === 0) {
+    const ip = getClientIp(request.headers);
+    const limited = await rateLimit(`simulate:${ip}`, SIMULATION_RATE_LIMIT);
+    if (!limited.success) {
       return NextResponse.json(
-        { error: 'Invalid request: simulations array is required' },
+        { error: 'Too many simulation requests — slow down and retry shortly' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((limited.reset - Date.now()) / 1000)) } }
+      );
+    }
+
+    const body = await request.json();
+    const validation = batchRequestSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json(
+        { error: 'Invalid batch simulation request', details: validation.error.issues.slice(0, 5) },
         { status: 400 }
       );
     }
 
-    const totalPaths = body.simulations.reduce((sum, sim) => sum + sim.config.paths, 0);
-    console.log(`🦀 Proxying batch simulation request to Rust service: ${body.simulations.length} simulations, ${totalPaths} total paths`);
-
-    // Forward request to Rust service
     const rustResponse = await fetch(`${RUST_SERVICE_URL}/api/batch`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      // Increase timeout for batch requests
-      signal: AbortSignal.timeout(60000), // 60 second timeout
+      signal: AbortSignal.timeout(60000),
     });
 
     if (!rustResponse.ok) {
       const errorText = await rustResponse.text();
       console.error(`Rust service error: ${rustResponse.status} ${errorText}`);
       return NextResponse.json(
-        {
-          error: 'Batch simulation service unavailable',
-          details: `Rust service returned ${rustResponse.status}`
-        },
+        { error: 'Batch simulation service unavailable', details: `Rust service returned ${rustResponse.status}` },
         { status: 502 }
       );
     }
 
-    const result: BatchResponse = await rustResponse.json();
-
-    console.log(`✅ Rust batch simulation completed: ${result.results.length} simulations processed`);
-
+    const result = await rustResponse.json();
     return NextResponse.json(result);
-
   } catch (error) {
     console.error('Batch simulation proxy error:', error);
 
-    // Return structured error for frontend handling
     if (error instanceof Error) {
       if (error.name === 'AbortError' || error.message.includes('timeout')) {
         return NextResponse.json(
@@ -86,7 +59,6 @@ export async function POST(request: NextRequest) {
           { status: 504 }
         );
       }
-
       if (error.message.includes('fetch')) {
         return NextResponse.json(
           { error: 'Service unavailable', details: 'Cannot connect to simulation service' },
