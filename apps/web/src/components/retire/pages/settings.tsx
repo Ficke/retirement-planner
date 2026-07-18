@@ -109,7 +109,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Returns model"
-            helper="Historical: replays past US market years (1926–2024). Parametric: samples from a statistical model fit to that history."
+            helper="Historical: replays past US market years (1928–2024). Parametric: samples from a statistical model fit to that history."
           >
             <ToggleGroup
               type="single"

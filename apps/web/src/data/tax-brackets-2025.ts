@@ -84,9 +84,11 @@ export const CA_TAX_BRACKETS_2025: Record<FilingStatus, TaxBracket[]> = {
     { min: 104910, max: 132590, rate: 0.08 },
     { min: 132590, max: 677278, rate: 0.093 },
     { min: 677278, max: 812728, rate: 0.103 },
-    { min: 812728, max: 1354556, rate: 0.113 },
-    { min: 1354556, max: 1000000, rate: 0.123 },
-    { min: 1000000, max: null, rate: 0.133 }, // Mental Health Services Tax
+    // 11.3% statutory bracket runs to 1,354,556, but the 1% Mental Health
+    // Services Tax applies above 1,000,000 — split accordingly.
+    { min: 812728, max: 1000000, rate: 0.113 },
+    { min: 1000000, max: 1354556, rate: 0.123 },
+    { min: 1354556, max: null, rate: 0.133 },
   ],
   MarriedFilingSeparately: [
     { min: 0, max: 10099, rate: 0.01 },

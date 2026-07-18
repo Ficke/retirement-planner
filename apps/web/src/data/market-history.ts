@@ -1,191 +1,104 @@
 /**
- * Historical US Market Returns (1926-2024)
- * Source: Ibbotson SBBI, Federal Reserve, Robert Shiller data
- * Real returns (inflation-adjusted) for Monte Carlo simulation
+ * Market model statistics and parametric return generation.
+ *
+ * All statistics are DERIVED from the canonical historical dataset
+ * (market-history-annual.ts, 1928–2024) — real (inflation-adjusted) annual
+ * returns. There are no hand-maintained market constants; edit the dataset
+ * and every consumer (parametric model, Assumptions page) follows.
  */
 
-// Import SeededRNG for proper random number generation
 import type { SeededRNG } from '@/engine/projection';
+import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 
-// Historical US Stock Market Real Returns (1926-2024)
-// Source: S&P 500 total return index, inflation-adjusted
-export const US_STOCK_REAL_RETURNS_1926_2024 = {
-  mean: 0.071, // 7.1% real return
-  volatility: 0.201, // 20.1% standard deviation
-  distribution: 'normal', // Approximate distribution for Monte Carlo
-  
-  // Key statistics from 98-year period
-  worst_year: -0.4281, // 1931: -42.81%
-  best_year: 0.5736, // 1935: +57.36%
-  worst_decade: -0.0049, // 1930s: -0.49% annualized
-  best_decade: 0.1716, // 1950s: +17.16% annualized
-  
-  // Percentile data for validation
-  p10: -0.123, // 10th percentile return
-  p25: -0.047, // 25th percentile return
-  p50: 0.085, // Median return
-  p75: 0.204, // 75th percentile return
-  p90: 0.329, // 90th percentile return
+function mean(xs: number[]): number {
+  return xs.reduce((s, v) => s + v, 0) / xs.length;
+}
+
+function stdDev(xs: number[]): number {
+  const m = mean(xs);
+  return Math.sqrt(mean(xs.map((v) => (v - m) ** 2)));
+}
+
+function correlation(xs: number[], ys: number[]): number {
+  const mx = mean(xs);
+  const my = mean(ys);
+  const cov = mean(xs.map((v, i) => (v - mx) * (ys[i] - my)));
+  return cov / (stdDev(xs) * stdDev(ys));
+}
+
+const realStock = HISTORICAL_RETURNS.map(
+  (r) => (1 + r.stock_return) / (1 + r.inflation_rate) - 1,
+);
+const realBond = HISTORICAL_RETURNS.map(
+  (r) => (1 + r.bond_return) / (1 + r.inflation_rate) - 1,
+);
+const inflation = HISTORICAL_RETURNS.map((r) => r.inflation_rate);
+
+export const DATA_FIRST_YEAR = HISTORICAL_RETURNS[0].year;
+export const DATA_LAST_YEAR = HISTORICAL_RETURNS[HISTORICAL_RETURNS.length - 1].year;
+
+/** Real (after-inflation) US stock statistics derived from the dataset. */
+export const US_STOCK_REAL_RETURNS = {
+  mean: mean(realStock),
+  volatility: stdDev(realStock),
 } as const;
 
-// Historical US Bond Real Returns (1926-2024)
-// Source: Long-term government bonds, inflation-adjusted
-export const US_BOND_REAL_RETURNS_1926_2024 = {
-  mean: 0.025, // 2.5% real return
-  volatility: 0.079, // 7.9% standard deviation
-  distribution: 'normal',
-  
-  // Key statistics
-  worst_year: -0.1584, // 1967: -15.84%
-  best_year: 0.3508, // 1982: +35.08%
-  worst_decade: -0.0334, // 1970s: -3.34% annualized
-  best_decade: 0.0889, // 1980s: +8.89% annualized
-  
-  // Percentile data
-  p10: -0.067,
-  p25: -0.025,
-  p50: 0.031,
-  p75: 0.081,
-  p90: 0.134,
+/** Real (after-inflation) US 10-year Treasury statistics derived from the dataset. */
+export const US_BOND_REAL_RETURNS = {
+  mean: mean(realBond),
+  volatility: stdDev(realBond),
 } as const;
 
-// Stock-Bond Correlation Matrix (1926-2024)
-export const ASSET_CORRELATION_MATRIX_1926_2024 = {
-  stocks_bonds: 0.12, // Low positive correlation historically
-  stocks_inflation: -0.05, // Slight negative correlation
-  bonds_inflation: -0.35, // Moderate negative correlation
+/** Stock/bond correlation of real annual returns. */
+export const STOCK_BOND_CORRELATION = correlation(realStock, realBond);
+
+/** CPI-U statistics (context only — the engines work in real dollars). */
+export const US_INFLATION = {
+  mean: mean(inflation),
+  volatility: stdDev(inflation),
 } as const;
 
-// Inflation Statistics (1926-2024)
-export const US_INFLATION_1926_2024 = {
-  mean: 0.029, // 2.9% average inflation
-  volatility: 0.042, // 4.2% standard deviation
-  worst_year: -0.1029, // 1932: -10.29% (deflation)
-  best_year: 0.1979, // 1946: +19.79%
-} as const;
-
-// Monte Carlo Simulation Parameters
 export const MONTE_CARLO_DEFAULTS = {
-  paths: 5000, // Professional-grade simulation paths (was 10000 for research, 5000 optimal for production)
-  years_to_simulate: 50, // Maximum projection horizon
-  rebalance_frequency: 1, // Annual rebalancing
-  sequence_risk_adjustment: true, // Account for early retirement risk
-
-  // Bootstrap vs parametric sampling
-  use_historical_bootstrap: true, // Use block bootstrap (well-regarded approach)
-  block_size: 3, // For block bootstrap if enabled
+  paths: 5000,
+  // Block bootstrap preserves multi-year sequences (e.g. 2008 → 2009)
+  use_historical_bootstrap: true,
+  block_size: 3,
 } as const;
 
 /**
- * Convert documented arithmetic mean/vol to log-space parameters so that:
+ * Convert arithmetic mean/vol to log-space parameters so that:
  *   exp(mu_log + sigma_log * Z) - 1
- * has the documented arithmetic mean and volatility (Z ~ N(0,1)).
+ * has the given arithmetic mean and volatility (Z ~ N(0,1)).
  */
-function toLogParams(mean: number, vol: number): { muLog: number; sigmaLog: number } {
-  const sigmaLog = Math.sqrt(Math.log(1 + Math.pow(vol / (1 + mean), 2)));
-  const muLog = Math.log(1 + mean) - 0.5 * sigmaLog * sigmaLog;
+function toLogParams(m: number, vol: number): { muLog: number; sigmaLog: number } {
+  const sigmaLog = Math.sqrt(Math.log(1 + (vol / (1 + m)) ** 2));
+  const muLog = Math.log(1 + m) - 0.5 * sigmaLog * sigmaLog;
   return { muLog, sigmaLog };
 }
 
-const STOCK_LOG = toLogParams(
-  US_STOCK_REAL_RETURNS_1926_2024.mean,
-  US_STOCK_REAL_RETURNS_1926_2024.volatility,
-);
-const BOND_LOG = toLogParams(
-  US_BOND_REAL_RETURNS_1926_2024.mean,
-  US_BOND_REAL_RETURNS_1926_2024.volatility,
-);
+const STOCK_LOG = toLogParams(US_STOCK_REAL_RETURNS.mean, US_STOCK_REAL_RETURNS.volatility);
+const BOND_LOG = toLogParams(US_BOND_REAL_RETURNS.mean, US_BOND_REAL_RETURNS.volatility);
 
 /**
  * Generate correlated annual real returns for stocks and bonds.
  *
- * Sampling is done in log-return space — equities use Student-t (df=6) shocks for
- * fat tails; bonds use Normal shocks. Cholesky transforms preserve the
- * documented stock/bond correlation. The final simple return is
+ * Sampling is done in log-return space — equities use Student-t (df=6) shocks
+ * for fat tails; bonds use Normal shocks. A 2x2 Cholesky transform preserves
+ * the dataset's stock/bond correlation. The final simple return
  *   R = exp(mu_log + sigma_log * Z) - 1
- * which is bounded below by -1 (total loss) by construction. No artificial
- * upper/lower clamps are applied — the chosen distributions are responsible
- * for tail shape.
+ * is bounded below by -1 (total loss) by construction; no artificial clamps.
  */
 export function generateCorrelatedReturns(rng: SeededRNG): { stockReturn: number; bondReturn: number } {
-  try {
-    const stockShock = rng.studentT(6);
-    const bondShock = rng.normal();
+  const stockShock = rng.studentT(6);
+  const bondShock = rng.normal();
 
-    const correlation = [[1.0, ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds],
-                        [ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds, 1.0]];
-    const L = choleskyDecomposition(correlation);
+  // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]
+  const r = STOCK_BOND_CORRELATION;
+  const correlatedStock = stockShock;
+  const correlatedBond = r * stockShock + Math.sqrt(1 - r * r) * bondShock;
 
-    const correlatedShocks = [
-      L[0][0] * stockShock,
-      L[1][0] * stockShock + L[1][1] * bondShock,
-    ];
-
-    return {
-      stockReturn: Math.exp(STOCK_LOG.muLog + correlatedShocks[0] * STOCK_LOG.sigmaLog) - 1,
-      bondReturn: Math.exp(BOND_LOG.muLog + correlatedShocks[1] * BOND_LOG.sigmaLog) - 1,
-    };
-  } catch (error) {
-    console.error('Failed to generate correlated returns, using mean returns:', error);
-    return {
-      stockReturn: US_STOCK_REAL_RETURNS_1926_2024.mean,
-      bondReturn: US_BOND_REAL_RETURNS_1926_2024.mean,
-    };
-  }
-}
-
-/**
- * Get expected returns based on asset allocation
- * Uses historical data to estimate portfolio returns
- */
-export function getExpectedPortfolioReturn(stockWeight: number, bondWeight: number): {
-  expectedReturn: number;
-  expectedVolatility: number;
-} {
-  const expectedReturn = 
-    stockWeight * US_STOCK_REAL_RETURNS_1926_2024.mean +
-    bondWeight * US_BOND_REAL_RETURNS_1926_2024.mean;
-    
-  // Simplified volatility calculation (should use full covariance matrix)
-  const expectedVolatility = Math.sqrt(
-    Math.pow(stockWeight * US_STOCK_REAL_RETURNS_1926_2024.volatility, 2) +
-    Math.pow(bondWeight * US_BOND_REAL_RETURNS_1926_2024.volatility, 2) +
-    2 * stockWeight * bondWeight * 
-    US_STOCK_REAL_RETURNS_1926_2024.volatility * 
-    US_BOND_REAL_RETURNS_1926_2024.volatility * 
-    ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds
-  );
-  
-  return { expectedReturn, expectedVolatility };
-}
-
-/**
- * Perform Cholesky decomposition on correlation matrix.
- * Returns lower triangular matrix L such that L * L^T = correlation matrix.
- */
-function choleskyDecomposition(correlation: number[][]): number[][] {
-  const n = correlation.length;
-  const L: number[][] = Array(n).fill(null).map(() => Array(n).fill(0));
-
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j <= i; j++) {
-      if (i === j) {
-        // Diagonal elements
-        let sum = 0;
-        for (let k = 0; k < j; k++) {
-          sum += L[i][k] * L[i][k];
-        }
-        L[i][j] = Math.sqrt(correlation[i][i] - sum);
-      } else {
-        // Off-diagonal elements
-        let sum = 0;
-        for (let k = 0; k < j; k++) {
-          sum += L[i][k] * L[j][k];
-        }
-        L[i][j] = (correlation[i][j] - sum) / L[j][j];
-      }
-    }
-  }
-  
-  return L;
+  return {
+    stockReturn: Math.exp(STOCK_LOG.muLog + correlatedStock * STOCK_LOG.sigmaLog) - 1,
+    bondReturn: Math.exp(BOND_LOG.muLog + correlatedBond * BOND_LOG.sigmaLog) - 1,
+  };
 }

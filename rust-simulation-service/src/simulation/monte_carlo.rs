@@ -1,11 +1,10 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use std::collections::HashMap;
 use tracing::info;
 
 use crate::types::{
     RetirementPlan, SimulationResult, PathResult, PathProjection,
-    YearlyProjection, MCConfig, WealthThresholds, WealthAtAge, IncomeSourcesRow
+    YearlyProjection, MCConfig, IncomeSourcesRow
 };
 use crate::simulation::projection::{project_scenario, ProjectionConfig};
 
@@ -88,16 +87,7 @@ fn aggregate_results(mut path_results: Vec<PathResult>) -> Result<SimulationResu
     let percentile10_terminal_wealth = terminal_wealths[p10_idx];
     let median_terminal_wealth = terminal_wealths[p50_idx];
     let percentile90_terminal_wealth = terminal_wealths[p90_idx];
-    
-    // Calculate wealth thresholds
-    let below1m_count = terminal_wealths.iter().filter(|&&w| w < 1_000_000.0).count() as f64;
-    let below500k_count = terminal_wealths.iter().filter(|&&w| w < 500_000.0).count() as f64;
-    
-    let wealth_thresholds = WealthThresholds {
-        below1m: below1m_count / num_paths,
-        below500k: below500k_count / num_paths,
-    };
-    
+
     // Create yearly projections with percentiles
     let yearly_projections = create_yearly_projections(&mut path_results)?;
 
@@ -106,9 +96,6 @@ fn aggregate_results(mut path_results: Vec<PathResult>) -> Result<SimulationResu
     let p75_wealth = terminal_wealths[((num_paths * 0.75) as usize).min(terminal_wealths.len() - 1)];
     let income_sources_path = create_income_sources_path(&path_results, p25_wealth, p75_wealth);
 
-    // Create wealth at age snapshots
-    let wealth_at_age = create_wealth_at_age_snapshots(&path_results);
-
     Ok(SimulationResult {
         success_probability,
         median_terminal_wealth,
@@ -116,10 +103,7 @@ fn aggregate_results(mut path_results: Vec<PathResult>) -> Result<SimulationResu
         percentile10_terminal_wealth,
         percentile90_terminal_wealth,
         yearly_projections,
-        terminal_wealth_distribution: terminal_wealths,
         risk_of_ruin,
-        wealth_thresholds,
-        wealth_at_age,
         income_sources_path,
     })
 }
@@ -274,37 +258,3 @@ fn create_yearly_projections(path_results: &mut [PathResult]) -> Result<Vec<Year
     Ok(yearly_projections)
 }
 
-/// Create wealth snapshots at specific ages
-fn create_wealth_at_age_snapshots(path_results: &[PathResult]) -> HashMap<u32, WealthAtAge> {
-    let mut wealth_at_age = HashMap::new();
-    let snapshot_ages = [65, 75, 85, 95];
-    
-    for &target_age in &snapshot_ages {
-        let mut wealth_values: Vec<f64> = path_results
-            .iter()
-            .filter_map(|result| {
-                result.projections
-                    .iter()
-                    .find(|proj| proj.age == target_age)
-                    .map(|proj| proj.portfolio_value)
-            })
-            .collect();
-        
-        if !wealth_values.is_empty() {
-            wealth_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            
-            let num_values = wealth_values.len() as f64;
-            let p25_idx = ((num_values * 0.25) as usize).min(wealth_values.len() - 1);
-            let p50_idx = ((num_values * 0.50) as usize).min(wealth_values.len() - 1);
-            let p75_idx = ((num_values * 0.75) as usize).min(wealth_values.len() - 1);
-            
-            wealth_at_age.insert(target_age, WealthAtAge {
-                p25: wealth_values[p25_idx],
-                p50: wealth_values[p50_idx],
-                p75: wealth_values[p75_idx],
-            });
-        }
-    }
-    
-    wealth_at_age
-}

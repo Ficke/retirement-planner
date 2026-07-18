@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -172,13 +171,6 @@ pub struct YearlyProjection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WealthAtAge {
-    pub p25: f64,
-    pub p50: f64,
-    pub p75: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomeSourcesRow {
     pub age: u32,
     #[serde(rename = "isRetired")]
@@ -196,13 +188,8 @@ pub struct IncomeSourcesRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WealthThresholds {
-    pub below1m: f64,
-    pub below500k: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationResult {
+    /// Fraction of paths that fund the full retirement without ever running short.
     #[serde(rename = "successProbability")]
     pub success_probability: f64,
     #[serde(rename = "medianTerminalWealth")]
@@ -215,14 +202,9 @@ pub struct SimulationResult {
     pub percentile90_terminal_wealth: f64,
     #[serde(rename = "yearlyProjections")]
     pub yearly_projections: Vec<YearlyProjection>,
-    #[serde(rename = "terminalWealthDistribution")]
-    pub terminal_wealth_distribution: Vec<f64>,
+    /// 1 - success_probability. A path is ruined if it ever runs short mid-retirement.
     #[serde(rename = "riskOfRuin")]
     pub risk_of_ruin: f64,
-    #[serde(rename = "wealthThresholds")]
-    pub wealth_thresholds: WealthThresholds,
-    #[serde(rename = "wealthAtAge")]
-    pub wealth_at_age: HashMap<u32, WealthAtAge>,
     #[serde(rename = "incomeSourcesPath", skip_serializing_if = "Vec::is_empty", default)]
     pub income_sources_path: Vec<IncomeSourcesRow>,
 }

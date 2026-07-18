@@ -2,10 +2,12 @@
 
 import { usePlan } from "@/state/usePlan";
 import {
-  US_STOCK_REAL_RETURNS_1926_2024,
-  US_BOND_REAL_RETURNS_1926_2024,
-  US_INFLATION_1926_2024,
-  ASSET_CORRELATION_MATRIX_1926_2024,
+  US_STOCK_REAL_RETURNS,
+  US_BOND_REAL_RETURNS,
+  US_INFLATION,
+  STOCK_BOND_CORRELATION,
+  DATA_FIRST_YEAR,
+  DATA_LAST_YEAR,
 } from "@/data/market-history";
 import {
   Table,
@@ -23,20 +25,22 @@ import {
 } from "@/components/retire/ui";
 import { Donut } from "@/components/ui/charts";
 
+const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
+
 const ENGINE = {
   stocks: {
-    mean: US_STOCK_REAL_RETURNS_1926_2024.mean,
-    vol: US_STOCK_REAL_RETURNS_1926_2024.volatility,
+    mean: US_STOCK_REAL_RETURNS.mean,
+    vol: US_STOCK_REAL_RETURNS.volatility,
   },
   bonds: {
-    mean: US_BOND_REAL_RETURNS_1926_2024.mean,
-    vol: US_BOND_REAL_RETURNS_1926_2024.volatility,
+    mean: US_BOND_REAL_RETURNS.mean,
+    vol: US_BOND_REAL_RETURNS.volatility,
   },
   inflation: {
-    mean: US_INFLATION_1926_2024.mean,
-    vol: US_INFLATION_1926_2024.volatility,
+    mean: US_INFLATION.mean,
+    vol: US_INFLATION.volatility,
   },
-  correlation: ASSET_CORRELATION_MATRIX_1926_2024.stocks_bonds,
+  correlation: STOCK_BOND_CORRELATION,
 } as const;
 
 const STOCK_COLOR = "var(--color-account-traditional)";
@@ -71,7 +75,7 @@ export function PageAssumptions() {
     <PageShell>
       <PageHeader
         title="Assumptions"
-        description="The inputs behind the simulation. Returns reflect US asset-class history (1926–2024)."
+        description={`The inputs behind the simulation. Returns reflect US asset-class history (${DATA_RANGE}).`}
       />
 
       <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -189,12 +193,12 @@ export function PageAssumptions() {
             <RuleRow
               label="Long-run inflation (CPI)"
               value={`${(ENGINE.inflation.mean * 100).toFixed(1)}%`}
-              source="US 1926–2024, real returns net of inflation"
+              source={`US CPI-U ${DATA_RANGE} (Dec/Dec)`}
             />
             <RuleRow
               label="Stock/bond correlation"
               value={ENGINE.correlation.toFixed(2)}
-              source="US 1926–2024 historical"
+              source={`US ${DATA_RANGE} real annual returns`}
             />
             <RuleRow
               label="Tax brackets"
@@ -238,7 +242,7 @@ export function PageAssumptions() {
               source={
                 plan.assumptions.simulationModel === "parametric"
                   ? "Student-t (df=6) equities + Normal bonds, sampled in log space"
-                  : "Resamples real US 1926–2024 years in 3-year blocks"
+                  : `Resamples real US ${DATA_RANGE} years in 3-year blocks`
               }
             />
             <RuleRow

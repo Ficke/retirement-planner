@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+/**
+ * Regenerates rust-simulation-service/src/simulation/historical_data.rs from
+ * the canonical dataset in apps/web/src/data/market-history-annual.ts, so the
+ * two simulation engines always sample the same market history.
+ *
+ * Usage: node scripts/gen-rust-historical-data.mjs
+ */
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const tsPath = join(root, 'apps/web/src/data/market-history-annual.ts');
+const rsPath = join(root, 'rust-simulation-service/src/simulation/historical_data.rs');
+
+const ts = readFileSync(tsPath, 'utf8');
+const rowRe = /year:\s*(\d{4}),\s*stock_return:\s*(-?[\d.]+),\s*bond_return:\s*(-?[\d.]+),\s*inflation_rate:\s*(-?[\d.]+)/g;
+
+const rows = [];
+let m;
+while ((m = rowRe.exec(ts))) {
+  rows.push({ year: m[1], stock: m[2], bond: m[3], inflation: m[4] });
+}
+if (rows.length < 90) {
+  throw new Error(`Parsed only ${rows.length} rows from ${tsPath} — parser or data problem`);
+}
+
+const first = rows[0].year;
+const last = rows[rows.length - 1].year;
+
+const rustRows = rows
+  .map(r => `    AnnualMarketReturn { year: ${r.year}, stock_return: ${num(r.stock)}, bond_return: ${num(r.bond)}, inflation_rate: ${num(r.inflation)} },`)
+  .join('\n');
+
+function num(s) {
+  return s.includes('.') ? s : `${s}.0`;
+}
+
+const out = `// GENERATED FILE — do not edit by hand.
+// Source of truth: apps/web/src/data/market-history-annual.ts
+// Regenerate with: node scripts/gen-rust-historical-data.mjs
+//
+// Historical US market returns, ${first}-${last} (${rows.length} years).
+// Stocks: S&P 500 total return; Bonds: 10-year US Treasury total return
+// (Damodaran data library, NYU Stern). Inflation: CPI-U Dec/Dec (BLS).
+// Returns are NOMINAL; sampling converts to real returns per-year.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnualMarketReturn {
+    pub year: u32,
+    pub stock_return: f64,
+    pub bond_return: f64,
+    pub inflation_rate: f64,
+}
+
+pub const HISTORICAL_RETURNS: &[AnnualMarketReturn] = &[
+${rustRows}
+];
+
+/// Get a random historical year's returns using bootstrap sampling.
+/// Returns real returns: real = (1 + nominal) / (1 + inflation) - 1
+pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
+    let random_year = &HISTORICAL_RETURNS[rng.gen_range(0..HISTORICAL_RETURNS.len())];
+
+    let real_stock_return = (1.0 + random_year.stock_return) / (1.0 + random_year.inflation_rate) - 1.0;
+    let real_bond_return = (1.0 + random_year.bond_return) / (1.0 + random_year.inflation_rate) - 1.0;
+
+    (real_stock_return, real_bond_return)
+}
+
+/// Sample a block of consecutive years for block bootstrap.
+/// Returns real returns (adjusted for inflation).
+pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f64)> {
+    let max_start_index = HISTORICAL_RETURNS.len().saturating_sub(block_size);
+    let start_index = if max_start_index > 0 {
+        rng.gen_range(0..=max_start_index)
+    } else {
+        0
+    };
+
+    let block_size = block_size.min(HISTORICAL_RETURNS.len() - start_index);
+
+    HISTORICAL_RETURNS[start_index..start_index + block_size]
+        .iter()
+        .map(|year_data| {
+            let real_stock_return = (1.0 + year_data.stock_return) / (1.0 + year_data.inflation_rate) - 1.0;
+            let real_bond_return = (1.0 + year_data.bond_return) / (1.0 + year_data.inflation_rate) - 1.0;
+            (real_stock_return, real_bond_return)
+        })
+        .collect()
+}
+`;
+
+writeFileSync(rsPath, out);
+console.log(`Wrote ${rows.length} years (${first}-${last}) to ${rsPath}`);

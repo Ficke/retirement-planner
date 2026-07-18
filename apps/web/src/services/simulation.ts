@@ -1,16 +1,14 @@
 /**
- * Pure simulation service - handles computation orchestration only.
- * No state management - that's handled by usePlan store.
- * Simple, testable, and maintainable.
+ * Simulation orchestration.
+ *
+ * Scenario construction (which claim ages / spending levels / retirement ages
+ * to sweep, which seeds to use) lives HERE and only here, so the server (Rust)
+ * and client (Web Worker) engines always compute the same scenarios. The
+ * engines differ only in where the math runs.
  */
 
 import { runMonteCarloSimulation } from '@/engine/mc';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
-import {
-  runSocialSecurityAnalysis as engineRunSSAnalysis,
-  runSpendingAnalysis as engineRunSpendingAnalysis,
-  runRetirementAgeAnalysis as engineRunRetirementAgeAnalysis
-} from '@/engine/analysis';
 import type {
   RetirementPlan,
   SimulationResult,
@@ -20,28 +18,20 @@ import type {
 } from '@/domain/types';
 
 export interface SimulationService {
-  // Main simulation
   runMainSimulation(plan: RetirementPlan, useServerSide?: boolean): Promise<SimulationResult>;
-
-  // Analysis simulations
   runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SSAnalysisResult[]>;
   runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SpendingAnalysisResult[]>;
   runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<RetirementAgeAnalysisResult[]>;
 }
 
-interface BatchSimulationRequest {
+const MAIN_PATHS = 5000;
+const SWEEP_PATHS = 1000; // reduced per-scenario paths for interactive sweeps
+
+interface Scenario {
   id: string;
   plan: RetirementPlan;
-  config: {
-    paths: number;
-    seed: number;
-    useHistoricalBootstrap: boolean;
-    blockSize: number;
-  };
-}
-
-function useHistoricalBootstrapFor(plan: RetirementPlan): boolean {
-  return plan.assumptions.simulationModel !== 'parametric';
+  paths: number;
+  seed: number;
 }
 
 interface BatchSimulationResponse {
@@ -49,48 +39,96 @@ interface BatchSimulationResponse {
   result: SimulationResult;
 }
 
-interface BatchResponse {
-  results: BatchSimulationResponse[];
+/**
+ * Base seed for a run. A fixed seed (Settings → Randomness) gives reproducible
+ * results; otherwise each run draws a fresh sample.
+ */
+function baseSeed(plan: RetirementPlan): number {
+  return plan.assumptions.randomSeed ?? Math.floor(Math.random() * 2 ** 31);
 }
 
-/**
- * Server-side simulation using Next.js API proxy to Rust service
- */
-async function runServerSideSimulation(plan: RetirementPlan): Promise<SimulationResult> {
-  const response = await fetch('/api/simulation/monte-carlo', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+function useHistoricalBootstrapFor(plan: RetirementPlan): boolean {
+  return plan.assumptions.simulationModel !== 'parametric';
+}
+
+// --- Scenario builders (shared by both engines) ---
+
+function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
+  const ages = Array.from({ length: 9 }, (_, i) => 62 + i);
+  return ages.map((claimAge) => ({
+    claimAge,
+    scenario: {
+      id: `ss-${claimAge}`,
+      plan: {
+        ...plan,
+        socialSecurity: { ...plan.socialSecurity, enabled: true, claimAge },
+      },
+      paths: SWEEP_PATHS,
+      seed: seed + 1000 + claimAge,
     },
-    body: JSON.stringify({
-      plan,
+  }));
+}
+
+function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
+  // 11 levels centered on desiredSpending, step ≈ 10% rounded to nearest $5k
+  const base = plan.profile.desiredSpending;
+  const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
+  const levels = Array.from({ length: 11 }, (_, i) => base + step * (i - 5)).filter((s) => s > 0);
+  return levels.map((annualSpending) => ({
+    annualSpending,
+    scenario: {
+      id: `spending-${annualSpending}`,
+      plan: {
+        ...plan,
+        profile: { ...plan.profile, desiredSpending: annualSpending },
+      },
+      paths: SWEEP_PATHS,
+      seed: seed + 2000 + annualSpending,
+    },
+  }));
+}
+
+function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
+  // ±5 years around the planned retirement age, clamped to a sane window.
+  const center = plan.profile.retirementAge;
+  const min = Math.max(plan.profile.age + 1, Math.min(center - 5, 70), 45);
+  const max = Math.min(75, Math.max(center + 5, min));
+  const ages: number[] = [];
+  for (let a = min; a <= max; a++) ages.push(a);
+  return ages.map((retirementAge) => ({
+    retirementAge,
+    scenario: {
+      id: `retirementAge-${retirementAge}`,
+      plan: {
+        ...plan,
+        profile: { ...plan.profile, retirementAge },
+      },
+      paths: SWEEP_PATHS,
+      seed: seed + 3000 + retirementAge,
+    },
+  }));
+}
+
+// --- Engine backends ---
+
+async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise<Map<string, SimulationResult>> {
+  const body = {
+    simulations: scenarios.map((s) => ({
+      id: s.id,
+      plan: s.plan,
       config: {
-        paths: 5000,
-        seed: 42,
+        paths: s.paths,
+        seed: s.seed,
         useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
         blockSize: MONTE_CARLO_DEFAULTS.block_size,
       },
-    }),
-  });
+    })),
+  };
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Batch server-side simulation using Next.js API proxy to Rust service
- */
-async function runBatchSimulations(simulations: BatchSimulationRequest[]): Promise<BatchResponse> {
   const response = await fetch('/api/simulation/batch', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ simulations }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -98,164 +136,110 @@ async function runBatchSimulations(simulations: BatchSimulationRequest[]): Promi
     throw new Error(errorData.error || `Batch simulation failed: ${response.status}`);
   }
 
-  return response.json();
+  const data: { results: BatchSimulationResponse[] } = await response.json();
+  const map = new Map<string, SimulationResult>();
+  for (const r of data.results) {
+    map.set(r.id, { ...r.result, source: 'server' });
+  }
+  return map;
+}
+
+async function runOnClient(scenarios: Scenario[]): Promise<Map<string, SimulationResult>> {
+  const map = new Map<string, SimulationResult>();
+  for (const s of scenarios) {
+    const result = await runMonteCarloSimulation(s.plan, { paths: s.paths, seed: s.seed });
+    map.set(s.id, { ...result, source: 'client' });
+  }
+  return map;
 }
 
 /**
- * Pure implementation - orchestrates computation with server-side vs client-side routing.
+ * Run a scenario set on the requested engine, falling back to the client
+ * engine when the server is unavailable.
  */
+async function runScenarios(
+  scenarios: Scenario[],
+  plan: RetirementPlan,
+  useServerSide: boolean,
+): Promise<Map<string, SimulationResult>> {
+  if (useServerSide) {
+    try {
+      return await runOnServer(scenarios, plan);
+    } catch (error) {
+      console.warn('Server-side simulation failed, falling back to client engine:', error);
+    }
+  }
+  return runOnClient(scenarios);
+}
+
 class SimulationServiceImpl implements SimulationService {
   async runMainSimulation(plan: RetirementPlan, useServerSide = true): Promise<SimulationResult> {
+    const seed = baseSeed(plan);
+
     if (useServerSide) {
       try {
-        console.log('🦀 Using server-side Rust simulation');
-        const result = await runServerSideSimulation(plan);
+        const response = await fetch('/api/simulation/monte-carlo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            plan,
+            config: {
+              paths: MAIN_PATHS,
+              seed,
+              useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
+              blockSize: MONTE_CARLO_DEFAULTS.block_size,
+            },
+          }),
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
+        }
+        const result: SimulationResult = await response.json();
         return { ...result, source: 'server' };
       } catch (error) {
-        console.warn('Server-side simulation failed, falling back to client-side:', error);
-        // Fall through to client-side
+        console.warn('Server-side simulation failed, falling back to client engine:', error);
       }
     }
 
-    console.log('🌐 Using client-side Web Worker simulation');
-    const result = await runMonteCarloSimulation(plan, {
-      paths: 5000,
-      seed: 42,
-    });
+    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed });
     return { ...result, source: 'client' };
   }
 
   async runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SSAnalysisResult[]> {
-    if (useServerSide) {
-      try {
-        console.log('🦀 Using server-side Rust batch simulation for SS analysis');
-        // Run batch simulations for each SS claim age (62-70)
-        const ages = Array.from({ length: 9 }, (_, i) => 62 + i);
-        const simulations: BatchSimulationRequest[] = ages.map((age) => ({
-          id: `ss-${age}`,
-          plan: {
-            ...plan,
-            socialSecurity: {
-              ...plan.socialSecurity,
-              enabled: true,
-              claimAge: age,
-            },
-          },
-          config: {
-            paths: 1000, // Reduced from 5000 for faster analysis
-            seed: 1000 + age, // Unique seed per age
-            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
-            blockSize: MONTE_CARLO_DEFAULTS.block_size,
-          },
-        }));
-
-        const batchResponse = await runBatchSimulations(simulations);
-
-        // Parse results back into analysis format
-        return ages.map((age) => {
-          const responseForAge = batchResponse.results.find((r) => r.id === `ss-${age}`);
-          if (!responseForAge) {
-            throw new Error(`Missing result for SS age ${age}`);
-          }
-          return { claimAge: age, result: { ...responseForAge.result, source: 'server' as const } };
-        });
-      } catch (error) {
-        console.warn('Server-side SS analysis failed, falling back to client-side:', error);
-        // Fall through to client-side
-      }
-    }
-
-    console.log('🌐 Using client-side SS analysis');
-    return engineRunSSAnalysis(plan);
+    const seed = baseSeed(plan);
+    const entries = ssScenarios(plan, seed);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    return entries.map(({ claimAge, scenario }) => {
+      const result = results.get(scenario.id);
+      if (!result) throw new Error(`Missing result for SS age ${claimAge}`);
+      return { claimAge, result };
+    });
   }
 
   async runSpendingAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SpendingAnalysisResult[]> {
-    if (useServerSide) {
-      try {
-        console.log('🦀 Using server-side Rust batch simulation for spending analysis');
-        // 11 levels centered on desiredSpending, step ≈ 10% of that value rounded to nearest $5k
-        const base = plan.profile.desiredSpending;
-        const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
-        const spendingLevels = Array.from({ length: 11 }, (_, i) => base + step * (i - 5))
-          .filter(s => s > 0);
-
-        const simulations: BatchSimulationRequest[] = spendingLevels.map((annualSpending) => ({
-          id: `spending-${annualSpending}`,
-          plan: {
-            ...plan,
-            profile: { ...plan.profile, desiredSpending: annualSpending },
-          },
-          config: {
-            paths: 1000, // Reduced from 5000 for faster analysis
-            seed: 2000 + annualSpending, // Unique seed per spending level
-            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
-            blockSize: MONTE_CARLO_DEFAULTS.block_size,
-          },
-        }));
-
-        const batchResponse = await runBatchSimulations(simulations);
-
-        // Parse results back into analysis format
-        return spendingLevels.map((annualSpending) => {
-          const responseForSpending = batchResponse.results.find((r) => r.id === `spending-${annualSpending}`);
-          if (!responseForSpending) {
-            throw new Error(`Missing result for spending level ${annualSpending}`);
-          }
-          return { annualSpending, result: { ...responseForSpending.result, source: 'server' as const } };
-        });
-      } catch (error) {
-        console.warn('Server-side spending analysis failed, falling back to client-side:', error);
-        // Fall through to client-side
-      }
-    }
-
-    console.log('🌐 Using client-side spending analysis');
-    return engineRunSpendingAnalysis(plan);
+    const seed = baseSeed(plan);
+    const entries = spendingScenarios(plan, seed);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    return entries.map(({ annualSpending, scenario }) => {
+      const result = results.get(scenario.id);
+      if (!result) throw new Error(`Missing result for spending level ${annualSpending}`);
+      return { annualSpending, result };
+    });
   }
 
   async runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide = true): Promise<RetirementAgeAnalysisResult[]> {
-    if (useServerSide) {
-      try {
-        console.log('🦀 Using server-side Rust batch simulation for retirement age analysis');
-        // Test retirement ages from 55 to 65
-        const ages = Array.from({ length: 11 }, (_, i) => 55 + i);
-
-        const simulations: BatchSimulationRequest[] = ages.map((retirementAge) => ({
-          id: `retirementAge-${retirementAge}`,
-          plan: {
-            ...plan,
-            profile: { ...plan.profile, retirementAge },
-          },
-          config: {
-            paths: 1000, // Reduced from 5000 for faster analysis
-            seed: 3000 + retirementAge, // Unique seed per age
-            useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
-            blockSize: MONTE_CARLO_DEFAULTS.block_size,
-          },
-        }));
-
-        const batchResponse = await runBatchSimulations(simulations);
-
-        // Parse results back into analysis format
-        return ages.map((retirementAge) => {
-          const responseForAge = batchResponse.results.find((r) => r.id === `retirementAge-${retirementAge}`);
-          if (!responseForAge) {
-            throw new Error(`Missing result for retirement age ${retirementAge}`);
-          }
-          return { retirementAge, result: { ...responseForAge.result, source: 'server' as const } };
-        });
-      } catch (error) {
-        console.warn('Server-side retirement age analysis failed, falling back to client-side:', error);
-        // Fall through to client-side
-      }
-    }
-
-    console.log('🌐 Using client-side retirement age analysis');
-    return engineRunRetirementAgeAnalysis(plan);
+    const seed = baseSeed(plan);
+    const entries = retirementAgeScenarios(plan, seed);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    return entries.map(({ retirementAge, scenario }) => {
+      const result = results.get(scenario.id);
+      if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
+      return { retirementAge, result };
+    });
   }
 }
 
-// Singleton instance - simple and stateless
 let simulationService: SimulationService | null = null;
 
 export function getSimulationService(): SimulationService {
