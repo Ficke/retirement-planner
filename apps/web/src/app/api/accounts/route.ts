@@ -16,28 +16,7 @@ export async function GET() {
     }
 
     const db = getUnifiedDatabaseService();
-    await db.initialize();
-
-    const result = await db.query(`
-      SELECT * FROM accounts WHERE user_id = $1
-    `, [user.id]);
-
-    const accounts = result.rows.map(row => ({
-      id: row.id,
-      name: row.name,
-      institution: row.institution,
-      type: row.account_type,
-      user_id: row.user_id,
-      balance: Number(row.balance) || 0,
-      assetWeights: {
-        stocks: Number(row.stocks_pct) || 0,
-        bonds: Number(row.bonds_pct) || 0,
-      },
-      balanceAsOf: row.balance_as_of ?? undefined,
-      taxable: row.account_type === 'Taxable',
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const accounts = await db.getAccountsForUser(user.id);
 
     return NextResponse.json(accounts);
   } catch (error) {
