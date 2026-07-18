@@ -39,6 +39,8 @@ resource "google_cloud_run_v2_service" "main" {
 
     timeout = "${var.timeout_seconds}s"
 
+    max_instance_request_concurrency = var.container_concurrency
+
     containers {
       image = var.image
 
@@ -47,8 +49,8 @@ resource "google_cloud_run_v2_service" "main" {
           cpu    = var.cpu_limit
           memory = var.memory_limit
         }
-        cpu_idle = true
-        startup_cpu_boost = false
+        cpu_idle          = true
+        startup_cpu_boost = var.startup_cpu_boost
       }
 
       # Regular environment variables

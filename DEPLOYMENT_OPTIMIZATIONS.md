@@ -6,7 +6,27 @@ Plan for reducing cold-start latency and improving simulation performance on GCP
 
 ---
 
-## Current state (verified)
+## Status (as of 2026-05-16)
+
+### Done
+- [x] Phase 0 — Terraform adopted as source of truth (GCS backend, prod resources imported, plan clean). Merged in PR #18.
+- [x] #7 — `/healthz` endpoints on both services; probes flipped from `/` → `/healthz`. Merged in PR #18.
+- [x] #2 — `startup_cpu_boost = true` on both services. Parameterized in `modules/cloud-run/`, default `true`. Applied + verified live.
+- [x] #3 — Rust `container_concurrency = 1`. Parameterized in module, set to 1 for Rust call (was 160 live). Applied + verified.
+- [x] #4 — Rust 4 vCPU / 2Gi. Bumped defaults in root `variables.tf`. Applied + verified.
+
+### Next
+- [ ] #5 — Distroless Rust runtime image
+- [ ] #6 — Lazy secret fetching in Next.js (defer GEMINI / POLYGON / LANGFUSE_* from startup)
+- [ ] Switch `cloudbuild.yaml` from `gcloud run deploy` to `terraform apply` (after a few more clean manual applies)
+- [ ] Phase 2 — `us-central1` → `us-west1` migration
+
+### Tfvars location note
+The active tfvars used for `terraform apply` is `terraform/terraform.tfvars` (gitignored), not `terraform/environments/prod/terraform.tfvars` — that env path in the `.example` was aspirational. Path references below should be read accordingly until we restructure.
+
+---
+
+## Current state (pre–PR #18 snapshot, kept for context)
 
 - Prod is deployed by `cloudbuild.yaml` calling `gcloud run deploy` directly with inline flags. The Terraform module in `terraform/` is written but **not applied** — no remote state, `terraform.tfvars` is gitignored, no resources are managed by TF today.
 - Rust service: `--cpu 2 --memory 1Gi --min-instances 0 --max-instances 10 --timeout 120 --ingress internal`, concurrency default (80).

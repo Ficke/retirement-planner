@@ -27,7 +27,7 @@ output "secrets_created" {
 
 output "deployment_commands" {
   description = "Commands to deploy the application"
-  value = <<-EOT
+  value       = <<-EOT
     # Build and push Docker image
     docker build -t ${module.artifact_registry.repository_url}/${var.service_name}:latest .
     docker push ${module.artifact_registry.repository_url}/${var.service_name}:latest
@@ -42,7 +42,7 @@ output "deployment_commands" {
 
 output "set_secrets_commands" {
   description = "Commands to set secret values in Secret Manager"
-  value = <<-EOT
+  value       = <<-EOT
     # Set DATABASE_URL
     echo -n "your-neon-connection-string" | gcloud secrets versions add DATABASE_URL --data-file=-
 

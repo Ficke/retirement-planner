@@ -39,8 +39,8 @@ resource "google_project_service" "required_apis" {
 module "artifact_registry" {
   source = "./modules/artifact-registry"
 
-  project_id  = var.project_id
-  region      = var.region
+  project_id    = var.project_id
+  region        = var.region
   repository_id = var.artifact_registry_repository_id
 }
 
@@ -58,13 +58,13 @@ module "secrets" {
 module "rust_simulation" {
   source = "./modules/cloud-run"
 
-  project_id       = var.project_id
-  region           = var.region
-  service_name     = var.rust_service_name
-  image            = var.rust_service_image
+  project_id   = var.project_id
+  region       = var.region
+  service_name = var.rust_service_name
+  image        = var.rust_service_image
 
   # No environment variables needed for Rust service
-  env_vars = {}
+  env_vars        = {}
   secret_env_vars = {}
 
   # Resource limits optimized for compute-intensive simulations
@@ -80,10 +80,15 @@ module "rust_simulation" {
 
   # Internal-only access (only callable from other Cloud Run services)
   allow_unauthenticated = true
-  ingress_settings = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress_settings      = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   # Custom container port for Rust service
   container_port = 8081
+
+  # One request per instance: simulations are CPU-bound and use Rayon to
+  # parallelize across all available cores. Concurrent requests would contend
+  # for the same threads.
+  container_concurrency = 1
 
   # Liveness hits /healthz (added in main.rs). Startup probe stays TCP because
   # warp binds the listener before route registration completes; HTTP startup
@@ -100,16 +105,16 @@ module "rust_simulation" {
 module "cloud_run" {
   source = "./modules/cloud-run"
 
-  project_id       = var.project_id
-  region           = var.region
-  service_name     = var.service_name
-  image            = var.cloud_run_image
+  project_id   = var.project_id
+  region       = var.region
+  service_name = var.service_name
+  image        = var.cloud_run_image
 
   # Environment variables (include Rust service URL)
   env_vars = merge(
     var.public_env_vars,
     {
-      NODE_ENV = var.environment
+      NODE_ENV         = var.environment
       RUST_SERVICE_URL = module.rust_simulation.service_url
     }
   )
@@ -142,9 +147,9 @@ module "cloud_run" {
 resource "google_cloudbuild_trigger" "main_branch" {
   count = var.enable_cloud_build_trigger ? 1 : 0
 
-  name            = var.cloud_build_trigger_name
-  description     = "Build and deploy on push to main branch"
-  service_account = var.cloud_build_service_account
+  name               = var.cloud_build_trigger_name
+  description        = "Build and deploy on push to main branch"
+  service_account    = var.cloud_build_service_account
   include_build_logs = "INCLUDE_BUILD_LOGS_WITH_STATUS"
 
   github {

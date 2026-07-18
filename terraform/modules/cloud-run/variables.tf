@@ -89,6 +89,18 @@ variable "container_port" {
   default     = 3000
 }
 
+variable "startup_cpu_boost" {
+  description = "Allocate extra CPU during container startup to reduce cold-start latency. Billed only during boot."
+  type        = bool
+  default     = true
+}
+
+variable "container_concurrency" {
+  description = "Max concurrent requests per container instance. Set to 1 for CPU-bound workloads that need full parallelism per request."
+  type        = number
+  default     = 80
+}
+
 variable "liveness_probe_path" {
   description = "HTTP path for the liveness probe. Set to null to disable."
   type        = string
