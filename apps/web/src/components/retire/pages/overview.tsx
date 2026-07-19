@@ -7,6 +7,7 @@ import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   DashboardCard,
   KPIGrid,
@@ -120,6 +121,7 @@ export function PageOverview() {
   const plan = usePlan((s) => s.plan);
   const liveResult = usePlan((s) => s.simulationResult);
   const isSimulating = usePlan((s) => s.isSimulatingMain);
+  const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
   const updatePlan = usePlan((s) => s.updatePlan);
   const accounts = usePlan((s) => s.plan.accounts);
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
@@ -141,6 +143,12 @@ export function PageOverview() {
   const retirementYear = new Date().getFullYear() + yearsToRetire;
   const successProb = result?.successProbability ?? 0;
   const { label: successLabel, tone: successToneValue } = successTone(successProb);
+  const usedFallback = result?.source === "client" && useServerSideCalculations;
+  const engineLabel = result?.source === "server"
+    ? "Cloud engine"
+    : usedFallback
+      ? "Local fallback"
+      : "Local engine";
 
   const byKind: Record<string, number> = {};
   for (const a of accounts) {
@@ -164,7 +172,27 @@ export function PageOverview() {
 
   return (
     <PageShell>
-      <PageHeader title="Overview" />
+      <PageHeader
+        title="Overview"
+        actions={result ? (
+          <Badge
+            variant="secondary"
+            className={cn(
+              "gap-1.5",
+              result.source === "server" && "bg-info/15 text-info",
+              usedFallback && "bg-warn/15 text-warn",
+            )}
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                result.source === "server" ? "bg-info" : usedFallback ? "bg-warn" : "bg-muted-foreground",
+              )}
+            />
+            {engineLabel}
+          </Badge>
+        ) : undefined}
+      />
 
       <KPIGrid cols={4}>
         <Stat

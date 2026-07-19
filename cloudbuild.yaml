@@ -1,6 +1,6 @@
 # Optimized Google Cloud Build configuration
 # Key improvements:
-# - Rust simulation service deployed first (internal-only)
+# - Rust simulation service deployed first (IAM-authenticated)
 # - Tests run in GitHub Actions on PR (not duplicated here)
 # - Kaniko for ALL Docker builds with layer caching (both Rust + Next.js)
 # - Consistent build process, no 'images' section conflicts
@@ -79,8 +79,9 @@ steps:
       - '--platform'
       - 'managed'
       - '--ingress'
-      - 'internal'
-      - '--allow-unauthenticated'
+      - 'all'
+      - '--service-account'
+      - '${_RUST_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com'
       - '--port'
       - '8081'
       - '--memory'
@@ -128,6 +129,8 @@ steps:
       - '${_REGION}'
       - '--platform'
       - 'managed'
+      - '--service-account'
+      - '${_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'health-check'
