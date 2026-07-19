@@ -21,14 +21,11 @@ const firebaseConfig = {
 // Firebase must only initialize in the browser. next build pre-renders pages
 // server-side without real credentials, causing initializeApp/getAuth to throw.
 // All callers are 'use client' code so auth is never the stub at call time.
-function initFirebase() {
+function initFirebase(): Auth {
   const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  return { app, auth: getAuth(app) };
+  return getAuth(app);
 }
 
-const { app, auth } = typeof window !== 'undefined'
-  ? initFirebase()
-  : { app: null as any, auth: {} as Auth };
+const auth = typeof window !== 'undefined' ? initFirebase() : ({} as Auth);
 
 export { auth };
-export default app;

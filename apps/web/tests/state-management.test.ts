@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { usePlan } from '@/state/usePlan';
+import type {
+  RetirementAgeAnalysisResult,
+  SpendingAnalysisResult,
+  SSAnalysisResult,
+} from '@/domain/types';
 
 describe('State Management - Simple Invalidation Logic', () => {
   // Mock analysis results
@@ -8,15 +13,21 @@ describe('State Management - Simple Invalidation Logic', () => {
   const mockRetirementAgeResult = [{ retirementAge: 60, result: { successProbability: 0.9, riskOfRuin: 0.1 } }];
 
   beforeEach(() => {
-    // Reset state before each test
-    usePlan.getState().reset();
+    // Reset the result slices touched by these tests
+    usePlan.setState({
+      simulationResult: null,
+      ssAnalysisResult: null,
+      spendingAnalysisResult: null,
+      retirementAgeAnalysisResult: null,
+    });
   });
 
   function seedMockResults() {
     usePlan.setState({
-      retirementAgeAnalysisResult: mockRetirementAgeResult as any,
-      spendingAnalysisResult: mockSpendingResult as any,
-      ssAnalysisResult: mockSSResult as any,
+      retirementAgeAnalysisResult:
+        mockRetirementAgeResult as unknown as RetirementAgeAnalysisResult[],
+      spendingAnalysisResult: mockSpendingResult as unknown as SpendingAnalysisResult[],
+      ssAnalysisResult: mockSSResult as unknown as SSAnalysisResult[],
     });
   }
 

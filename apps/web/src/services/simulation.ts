@@ -47,7 +47,7 @@ function baseSeed(plan: RetirementPlan): number {
   return plan.assumptions.randomSeed ?? Math.floor(Math.random() * 2 ** 31);
 }
 
-function useHistoricalBootstrapFor(plan: RetirementPlan): boolean {
+function historicalBootstrapFor(plan: RetirementPlan): boolean {
   return plan.assumptions.simulationModel !== 'parametric';
 }
 
@@ -119,7 +119,7 @@ async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise
       config: {
         paths: s.paths,
         seed: s.seed,
-        useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
+        useHistoricalBootstrap: historicalBootstrapFor(plan),
         blockSize: MONTE_CARLO_DEFAULTS.block_size,
       },
     })),
@@ -186,7 +186,7 @@ class SimulationServiceImpl implements SimulationService {
             config: {
               paths: MAIN_PATHS,
               seed,
-              useHistoricalBootstrap: useHistoricalBootstrapFor(plan),
+              useHistoricalBootstrap: historicalBootstrapFor(plan),
               blockSize: MONTE_CARLO_DEFAULTS.block_size,
             },
           }),

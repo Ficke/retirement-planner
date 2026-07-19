@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
+import { createTestAccount } from '../test-helpers';
 import { calculateRmd } from '@/engine/rmd';
 import { projectScenario } from '@/engine/projection';
 import type { RetirementPlan } from '@/domain/types';

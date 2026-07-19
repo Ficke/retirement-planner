@@ -2,7 +2,8 @@
 
 import type { ReactNode } from "react";
 import { useId } from "react";
-import { RefreshCw } from "lucide-react";
+import { LogIn, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { usePlan } from "@/state/usePlan";
 import type { SimulationModel } from "@/domain/types";
@@ -30,37 +31,82 @@ export function PageSettings() {
     updatePlan,
     useServerSideCalculations,
     setUseServerSideCalculations,
-    privateAccountsMode,
-    setPrivateAccountsMode,
+    cloudSyncEnabled,
+    setCloudSyncEnabled,
+    authUser,
   } = usePlan();
+  const router = useRouter();
   const updateAssumptions = (
     assumptions: Parameters<typeof updatePlan>[0]["assumptions"],
   ) => updatePlan({ assumptions });
   const a = plan.assumptions;
 
   const seedMode = a.randomSeed != null ? "fixed" : "random";
+  const signedIn = authUser != null;
+  const dataMode = signedIn && cloudSyncEnabled ? "cloud" : "local";
 
   return (
     <PageShell>
         <PageHeader
           title="Settings"
-          description="Runtime, randomness, and strategy options. The market model itself lives on Assumptions."
+          description="Where your data lives, where calculations run, and how the model behaves."
         />
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Compute
+          Your data
         </h2>
         <DashboardCard>
           <Setting
-            label="Engine"
-            helper="Server is faster. Local keeps the calculation on your device."
+            label="Storage"
+            helper={
+              signedIn
+                ? "Cloud: your profile and accounts sync to your account across devices. This browser only: nothing is written to the cloud; data lives in this browser and is lost if you clear it."
+                : "You're not signed in, so your profile and accounts exist only in this browser — nothing is stored in the cloud. Sign in to keep your plan and use it across devices."
+            }
+            badge={
+              <Badge variant="secondary" className="bg-info/15 text-info gap-1.5">
+                <span className="bg-info size-1.5 rounded-full" />
+                {dataMode === "cloud" ? "Cloud" : "This browser"}
+              </Badge>
+            }
+          >
+            {signedIn ? (
+              <ToggleGroup
+                type="single"
+                value={cloudSyncEnabled ? "cloud" : "local"}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  void setCloudSyncEnabled(v === "cloud");
+                }}
+                variant="outline"
+                size="sm"
+              >
+                <ToggleGroupItem value="cloud">Cloud (synced)</ToggleGroupItem>
+                <ToggleGroupItem value="local">This browser only</ToggleGroupItem>
+              </ToggleGroup>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => router.push("/auth/signin")}>
+                <LogIn className="size-4" />
+                Sign in
+              </Button>
+            )}
+          </Setting>
+        </DashboardCard>
+
+        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+          Compute engine
+        </h2>
+        <DashboardCard>
+          <Setting
+            label="Where simulations run"
+            helper="Cloud engine: each run sends your plan — including account balances — to our server, computes in memory, and returns the result; nothing is stored. Local engine: calculations never leave this device (slower on large sweeps)."
             badge={
               <Badge
                 variant="secondary"
                 className="bg-success/15 text-success gap-1.5"
               >
                 <span className="bg-success size-1.5 rounded-full" />
-                {useServerSideCalculations ? "Server" : "Local"}
+                {useServerSideCalculations ? "Cloud" : "Local"}
               </Badge>
             }
           >
@@ -72,34 +118,10 @@ export function PageSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="server">Server (Rust microservice)</SelectItem>
-                <SelectItem value="local">Local (browser worker)</SelectItem>
+                <SelectItem value="server">Cloud (fast, nothing stored)</SelectItem>
+                <SelectItem value="local">Local (never leaves device)</SelectItem>
               </SelectContent>
             </Select>
-          </Setting>
-        </DashboardCard>
-
-        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Privacy
-        </h2>
-        <DashboardCard>
-          <Setting
-            label="Account storage"
-            helper="Private: accounts stay in this browser. Stored: synced to your account across devices."
-          >
-            <ToggleGroup
-              type="single"
-              value={privateAccountsMode ? "private" : "stored"}
-              onValueChange={(v) => {
-                if (!v) return;
-                void setPrivateAccountsMode(v === "private");
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="stored">Stored</ToggleGroupItem>
-              <ToggleGroupItem value="private">Private (browser only)</ToggleGroupItem>
-            </ToggleGroup>
           </Setting>
         </DashboardCard>
 

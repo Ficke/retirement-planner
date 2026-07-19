@@ -7,4 +7,4 @@
 
 // Server-side exports only
 export { getAuthUser, requireAuth } from './server-auth';
-export { verifyAuthToken, getUserByUid, createFirebaseUser, getAdminAuth } from './admin';
+export { verifyAuthToken, getAdminAuth } from './admin';

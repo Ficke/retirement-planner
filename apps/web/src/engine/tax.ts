@@ -134,15 +134,6 @@ function getK401ContributionLimit(age: number): number {
 }
 
 /**
- * Get IRA contribution limit based on age
- */
-function getIRAContributionLimit(age: number): number {
-  return age >= 50 ? 
-    RETIREMENT_LIMITS_2025.ira_base + RETIREMENT_LIMITS_2025.ira_catchup :
-    RETIREMENT_LIMITS_2025.ira_base;
-}
-
-/**
  * Get HSA contribution limit based on age and coverage type
  * For simplicity, assuming individual coverage. Could be enhanced to include family coverage.
  */

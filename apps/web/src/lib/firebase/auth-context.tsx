@@ -22,6 +22,26 @@ const AuthContext = createContext<AuthContextType>({
   error: null,
 });
 
+async function syncUserRecord(user: User): Promise<void> {
+  try {
+    const token = await user.getIdToken();
+    await fetch('/api/auth/sync-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        firebaseUid: user.uid,
+        email: user.email,
+        name: user.displayName || null,
+      }),
+    });
+  } catch (error) {
+    console.error('Failed to sync user record:', error);
+  }
+}
+
 /**
  * Hook to access authentication state
  * Replaces NextAuth's useSession()
@@ -47,6 +67,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(user);
         setLoading(false);
         setError(null);
+        // Ensure the DB user row exists (idempotent upsert). Cloud account
+        // rows reference it, so this must succeed at least once per user —
+        // running on every sign-in covers signup-time failures and new devices.
+        if (user) {
+          void syncUserRecord(user);
+        }
       },
       (error) => {
         console.error('Auth state change error:', error);

@@ -10,8 +10,6 @@ import type {
   SpendingAnalysisResult,
   RetirementAgeAnalysisResult,
   CreateAccountData,
-  LoadingState,
-  AccountLoadingState,
 } from '@/domain/types';
 import { getSimulationService } from '@/services/simulation';
 import { getAccountsClient } from '@/services/client/accounts-client';
@@ -21,207 +19,97 @@ import {
   saveUserPreferences,
   loadLocalAccounts,
   saveLocalAccounts,
+  loadLocalProfile,
+  saveLocalProfile,
+  clearLegacyLocalData,
 } from '@/lib/persistence';
 
-// Simplified account with real-time holdings
-interface AccountWithHoldings {
-  account: Account;
-  currentBalance: number;
-  isLoading: boolean;
-  error?: string;
-}
+/**
+ * Data modes
+ * ----------
+ * The app has exactly two data modes, derived — never stored separately:
+ *
+ * - LOCAL:  not signed in, or signed in with cloud sync turned off.
+ *           Profile and accounts live in localStorage only.
+ * - CLOUD:  signed in with cloud sync on. Profile and accounts persist to
+ *           the database; localStorage doubles as a write-through cache so
+ *           unsaved changes survive crashes.
+ *
+ * Independently, simulations run on the cloud engine (Rust service; inputs
+ * processed transiently, never stored) or the local engine (Web Worker).
+ *
+ * `plan` is the single source of truth for everything the simulation reads,
+ * including `plan.accounts`.
+ */
 
-// Debounced simulation scheduler to prevent race conditions
-let simulationTimeoutId: NodeJS.Timeout | null = null;
-const SIMULATION_DELAY = 100; // ms
+// Debounce plan changes before re-running all simulations
+const SIMULATION_DELAY = 300; // ms
+let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-// Generation counters to discard stale simulation results
+// Generation counters let stale async results be discarded
 let mainSimGeneration = 0;
 let ssSimGeneration = 0;
 let spendingSimGeneration = 0;
 let retirementAgeSimGeneration = 0;
 
-function scheduleSimulations(get: () => any) {
-  // Clear any existing timeout
-  if (simulationTimeoutId) {
-    clearTimeout(simulationTimeoutId);
-  }
-
-  // Schedule new simulations with debounce
+function scheduleSimulations(get: () => PlanState) {
+  if (simulationTimeoutId) clearTimeout(simulationTimeoutId);
   simulationTimeoutId = setTimeout(() => {
-    const { runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis, runMainSimulation } = get();
-
-    // Always run all simulations
+    const { runMainSimulation, runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis } = get();
+    runMainSimulation();
     runSSAnalysis();
     runSpendingAnalysis();
     runRetirementAgeAnalysis();
-    runMainSimulation();
-
     simulationTimeoutId = null;
   }, SIMULATION_DELAY);
 }
 
-// --- Profile persistence (localStorage + DB) ---
-const PROFILE_STORAGE_KEY = 'retireplan:profile';
+// --- Cloud profile flush (cloud mode only) ---
 let profileDirty = false;
-let dbSaveIntervalId: NodeJS.Timeout | null = null;
-
-function saveProfileToLocalStorage(plan: RetirementPlan) {
-  try {
-    const data = {
-      profile: plan.profile,
-      socialSecurity: plan.socialSecurity,
-      assumptions: plan.assumptions,
-    };
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(data));
-    profileDirty = true;
-  } catch {
-    // localStorage full or unavailable — silent
-  }
-}
-
-function loadProfileFromLocalStorage(): { profile?: Partial<UserProfile>; socialSecurity?: Partial<SocialSecuritySettings>; assumptions?: Partial<AssumptionSettings> } | null {
-  try {
-    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
+let dbSaveIntervalId: ReturnType<typeof setInterval> | null = null;
 
 async function flushProfileToDb(get: () => PlanState) {
-  if (!profileDirty) return;
+  const state = get();
+  if (!profileDirty || state.dataMode() !== 'cloud') return;
   profileDirty = false;
   try {
-    const { plan } = get();
-    const client = getProfileClient();
-    await client.saveProfile({
-      profile: plan.profile as unknown as Record<string, unknown>,
-      socialSecurity: plan.socialSecurity as unknown as Record<string, unknown>,
-      assumptions: plan.assumptions as unknown as Record<string, unknown>,
+    await getProfileClient().saveProfile({
+      profile: state.plan.profile as unknown as Record<string, unknown>,
+      socialSecurity: state.plan.socialSecurity as unknown as Record<string, unknown>,
+      assumptions: state.plan.assumptions as unknown as Record<string, unknown>,
     });
   } catch (error) {
     console.error('Failed to save profile to DB:', error);
-    profileDirty = true; // retry next time
+    profileDirty = true; // retry on next flush
   }
 }
 
 function setupProfileAutoSave(get: () => PlanState) {
-  if (dbSaveIntervalId) return; // already set up
-
-  // Periodic save every 30s
+  if (dbSaveIntervalId) return;
   dbSaveIntervalId = setInterval(() => flushProfileToDb(get), 30_000);
-
-  // Save on tab blur / page hide
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'hidden') {
-      flushProfileToDb(get);
-    }
-  };
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-
-  // Save on page unload
-  const handleBeforeUnload = () => {
-    flushProfileToDb(get);
-  };
-  window.addEventListener('beforeunload', handleBeforeUnload);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushProfileToDb(get);
+  });
+  window.addEventListener('beforeunload', () => flushProfileToDb(get));
 }
 
-function onProfileChanged(get: () => PlanState) {
-  const state = get();
-  if (!state.profileLoaded) return;
-  saveProfileToLocalStorage(state.plan);
-}
-
-function validateAccounts(accounts: Account[]): { isValid: boolean; errors: string[] } {
-  const errors: string[] = [];
-  for (const account of accounts) {
-    const weightSum = account.assetWeights.stocks + account.assetWeights.bonds;
-    if (Math.abs(weightSum - 1) > 0.01) {
-      errors.push(`Account ${account.name}: Asset weights sum to ${weightSum.toFixed(3)}, expected 1.000`);
-    }
-    if (account.balance < 0) {
-      errors.push(`Account ${account.name}: Balance cannot be negative (${account.balance})`);
-    }
-  }
-  return { isValid: errors.length === 0, errors };
-}
-
-interface PlanState {
-  plan: RetirementPlan;
-  simulationResult: SimulationResult | null;
-  isValid: boolean;
-  ssAnalysisResult: SSAnalysisResult[] | null;
-  spendingAnalysisResult: SpendingAnalysisResult[] | null;
-  retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
-
-  // User preferences
-  useServerSideCalculations: boolean;
-  privateAccountsMode: boolean;
-
-  // Simulation loading states - one per simulation type
-  isSimulatingMain: boolean;
-  isSimulatingSS: boolean;
-  isSimulatingSpending: boolean;
-  isSimulatingRetirementAge: boolean;
-
-  // Accounts state
-  accounts: Account[];
-  accountsWithHoldings: AccountWithHoldings[];
-
-  // Loading states
-  loadingState: AccountLoadingState;
-  accountsLoading: LoadingState;
-
-  // Legacy loading states (for backward compatibility)
-  isLoading: boolean;
-  isCreatingAccount: boolean;
-  isAddingSnapshot: boolean;
-
-  // Profile persistence
-  profileLoaded: boolean;
-
-  // Error handling with immediate feedback
-  error: string | null;
-  lastError: string | null;
-
-  // Plan management actions
-  loadProfile: () => Promise<void>;
-  updatePlan: (updates: {
-    profile?: Partial<UserProfile>;
-    socialSecurity?: Partial<SocialSecuritySettings>;
-    assumptions?: Partial<AssumptionSettings>;
-  }) => void;
-  setSimulationResult: (result: SimulationResult | null) => void;
-  validatePlan: () => Promise<boolean>;
-  reset: () => void;
-  runSSAnalysis: () => Promise<void>;
-  runSpendingAnalysis: () => Promise<void>;
-  runRetirementAgeAnalysis: () => Promise<void>;
-  runMainSimulation: () => Promise<void>;
-
-  // User preference actions
-  setUseServerSideCalculations: (useServerSide: boolean) => void;
-  setPrivateAccountsMode: (enabled: boolean) => Promise<void>;
-
-  // Account management actions
-  loadAccounts: () => Promise<void>;
-  createAccount: (data: CreateAccountData) => Promise<Account>;
-  updateAccount: (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt'>>) => Promise<void>;
-  deleteAccount: (id: string) => Promise<void>;
-
-  // Utility actions
-  clearError: () => void;
-  clearSimulationResults: () => void;
-}
-
-// Load initial user preferences
-function getInitialPreferences() {
-  const saved = loadUserPreferences();
+function newLocalAccount(data: CreateAccountData): Account {
+  const stocks = data.stocksPct ?? 0.6;
+  const now = new Date().toISOString();
   return {
-    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
-    privateAccountsMode: saved?.privateAccountsMode ?? true,
+    id:
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: data.name,
+    institution: data.institution,
+    type: data.type,
+    balance: data.balance ?? 0,
+    assetWeights: { stocks, bonds: data.bondsPct ?? 1 - stocks },
+    balanceAsOf: now.split('T')[0],
+    taxable: data.type === 'Taxable',
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -234,7 +122,7 @@ const defaultPlan: RetirementPlan = {
     currentSalary: 75000,
     salaryGrowthRate: 0.01,
     desiredSpending: 50000,
-    spendingGrowthRate: 0.00, // Constant real spending (no lifestyle inflation)
+    spendingGrowthRate: 0.0, // constant real spending
     lifeExpectancy: 90,
     asOfDate: new Date().toISOString().split('T')[0],
   },
@@ -250,516 +138,333 @@ const defaultPlan: RetirementPlan = {
   },
 };
 
+export type DataMode = 'local' | 'cloud';
+
+interface PlanState {
+  plan: RetirementPlan;
+
+  // Auth + mode (authUser is pushed in from the AuthProvider via bootstrap)
+  authUser: { id: string } | null;
+  cloudSyncEnabled: boolean;
+  useServerSideCalculations: boolean;
+  dataMode: () => DataMode;
+
+  // Simulation results
+  simulationResult: SimulationResult | null;
+  ssAnalysisResult: SSAnalysisResult[] | null;
+  spendingAnalysisResult: SpendingAnalysisResult[] | null;
+  retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
+  isSimulatingMain: boolean;
+  isSimulatingSS: boolean;
+  isSimulatingSpending: boolean;
+  isSimulatingRetirementAge: boolean;
+
+  // Lifecycle
+  bootstrapped: boolean;
+  error: string | null;
+
+  // Actions
+  bootstrap: (authUser: { id: string } | null) => Promise<void>;
+  updatePlan: (updates: {
+    profile?: Partial<UserProfile>;
+    socialSecurity?: Partial<SocialSecuritySettings>;
+    assumptions?: Partial<AssumptionSettings>;
+  }) => void;
+  createAccount: (data: CreateAccountData) => Promise<void>;
+  updateAccount: (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt'>>) => Promise<void>;
+  deleteAccount: (id: string) => Promise<void>;
+  setUseServerSideCalculations: (useServerSide: boolean) => void;
+  setCloudSyncEnabled: (enabled: boolean) => Promise<void>;
+  clearError: () => void;
+
+  runMainSimulation: () => Promise<void>;
+  runSSAnalysis: () => Promise<void>;
+  runSpendingAnalysis: () => Promise<void>;
+  runRetirementAgeAnalysis: () => Promise<void>;
+}
+
+function getInitialPreferences() {
+  const saved = loadUserPreferences();
+  return {
+    useServerSideCalculations: saved?.useServerSideCalculations ?? true,
+    cloudSyncEnabled: saved?.cloudSyncEnabled ?? true,
+  };
+}
+
+function persistPreferences(get: () => PlanState) {
+  const { useServerSideCalculations, cloudSyncEnabled } = get();
+  saveUserPreferences({ useServerSideCalculations, cloudSyncEnabled });
+}
+
+/** Clear results and reschedule all simulations after a plan change. */
+function invalidateResults(get: () => PlanState) {
+  scheduleSimulations(get);
+  return {
+    simulationResult: null as SimulationResult | null,
+    ssAnalysisResult: null as SSAnalysisResult[] | null,
+    spendingAnalysisResult: null as SpendingAnalysisResult[] | null,
+    retirementAgeAnalysisResult: null as RetirementAgeAnalysisResult[] | null,
+  };
+}
+
 export const usePlan = create<PlanState>((set, get) => ({
   plan: defaultPlan,
+
+  authUser: null,
+  ...getInitialPreferences(),
+  dataMode: () => (get().authUser && get().cloudSyncEnabled ? 'cloud' : 'local'),
+
   simulationResult: null,
-  isValid: true,
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
-
-  // User preferences (loaded from localStorage)
-  ...getInitialPreferences(),
-
-  // Simulation loading states
   isSimulatingMain: false,
   isSimulatingSS: false,
   isSimulatingSpending: false,
   isSimulatingRetirementAge: false,
 
-  // Accounts state
-  accounts: [],
-  accountsWithHoldings: [],
-
-  // Loading states
-  loadingState: { state: 'idle' },
-  accountsLoading: 'idle',
-
-  // Legacy loading states (for backward compatibility)
-  isLoading: false,
-  isCreatingAccount: false,
-  isAddingSnapshot: false,
-
-  // Profile persistence
-  profileLoaded: false,
-
-  // Error handling
+  bootstrapped: false,
   error: null,
-  lastError: null,
 
-  loadProfile: async () => {
-    try {
-      // Load from DB first
-      const client = getProfileClient();
-      const dbData = await client.getProfile();
+  /**
+   * Load profile and accounts for the current auth state and start the
+   * simulation pipeline. Runs on app start and whenever auth state changes
+   * (sign-in and sign-out both re-bootstrap).
+   */
+  bootstrap: async (authUser) => {
+    clearLegacyLocalData();
+    set({ authUser });
 
-      // Then overlay localStorage (catches unsaved changes from crashes)
-      const lsData = loadProfileFromLocalStorage();
+    const cloud = get().dataMode() === 'cloud';
 
-      // Merge: defaults < DB < localStorage
-      const mergedProfile = {
-        ...defaultPlan.profile,
-        ...(dbData?.profile as Partial<UserProfile> | undefined),
-        ...(lsData?.profile),
-      };
-      const mergedSS = {
-        ...defaultPlan.socialSecurity,
-        ...(dbData?.socialSecurity as Partial<SocialSecuritySettings> | undefined),
-        ...(lsData?.socialSecurity),
-      };
-      const mergedAssumptions = {
-        ...defaultPlan.assumptions,
-        ...(dbData?.assumptions as Partial<AssumptionSettings> | undefined),
-        ...(lsData?.assumptions),
-      };
-
-      set((state) => ({
-        plan: {
-          ...state.plan,
-          profile: mergedProfile as UserProfile,
-          socialSecurity: mergedSS as SocialSecuritySettings,
-          assumptions: mergedAssumptions as AssumptionSettings,
-        },
-        profileLoaded: true,
-      }));
-
-      // Start auto-save listeners now that profile is loaded
-      setupProfileAutoSave(get);
-
-      console.log('Profile loaded successfully');
-    } catch (error) {
-      console.error('Failed to load profile, using defaults:', error);
-      set({ profileLoaded: true });
-      setupProfileAutoSave(get);
+    // Profile: defaults < cloud < local. Local wins because it may hold
+    // changes made moments ago (or before signing in) not yet flushed.
+    let dbProfile: Awaited<ReturnType<ReturnType<typeof getProfileClient>['getProfile']>> = null;
+    if (cloud) {
+      try {
+        dbProfile = await getProfileClient().getProfile();
+      } catch (error) {
+        console.error('Failed to load cloud profile, continuing with local:', error);
+      }
     }
+    const localProfile = loadLocalProfile();
+
+    const profile = {
+      ...defaultPlan.profile,
+      ...(dbProfile?.profile as Partial<UserProfile> | undefined),
+      ...localProfile?.profile,
+    } as UserProfile;
+    const socialSecurity = {
+      ...defaultPlan.socialSecurity,
+      ...(dbProfile?.socialSecurity as Partial<SocialSecuritySettings> | undefined),
+      ...localProfile?.socialSecurity,
+    } as SocialSecuritySettings;
+    const assumptions = {
+      ...defaultPlan.assumptions,
+      ...(dbProfile?.assumptions as Partial<AssumptionSettings> | undefined),
+      ...localProfile?.assumptions,
+    } as AssumptionSettings;
+
+    // Accounts
+    let accounts: Account[] = [];
+    try {
+      if (cloud) {
+        accounts = await getAccountsClient().getAccounts();
+        // First sign-in with data built anonymously: import local accounts.
+        const localAccounts = loadLocalAccounts<Account>() ?? [];
+        if (accounts.length === 0 && localAccounts.length > 0) {
+          for (const local of localAccounts) {
+            await getAccountsClient().createAccount({
+              name: local.name,
+              institution: local.institution,
+              type: local.type,
+              balance: local.balance,
+              stocksPct: local.assetWeights.stocks,
+              bondsPct: local.assetWeights.bonds,
+            });
+          }
+          accounts = await getAccountsClient().getAccounts();
+        }
+      } else {
+        accounts = loadLocalAccounts<Account>() ?? [];
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load accounts';
+      console.error('Failed to load accounts:', error);
+      set({ error: message });
+    }
+
+    set({
+      plan: { profile, socialSecurity, assumptions, accounts },
+      bootstrapped: true,
+      ...invalidateResults(get),
+    });
+
+    setupProfileAutoSave(get);
   },
 
   updatePlan: (updates) =>
     set((state) => {
-      const newState = {
-        plan: {
-          ...state.plan,
-          ...(updates.profile && { profile: { ...state.plan.profile, ...updates.profile } }),
-          ...(updates.socialSecurity && { socialSecurity: { ...state.plan.socialSecurity, ...updates.socialSecurity } }),
-          ...(updates.assumptions && { assumptions: { ...state.plan.assumptions, ...updates.assumptions } }),
-        },
-        ssAnalysisResult: null,
-        spendingAnalysisResult: null,
-        retirementAgeAnalysisResult: null,
-        simulationResult: null,
+      const plan = {
+        ...state.plan,
+        ...(updates.profile && { profile: { ...state.plan.profile, ...updates.profile } }),
+        ...(updates.socialSecurity && {
+          socialSecurity: { ...state.plan.socialSecurity, ...updates.socialSecurity },
+        }),
+        ...(updates.assumptions && {
+          assumptions: { ...state.plan.assumptions, ...updates.assumptions },
+        }),
       };
 
-      scheduleSimulations(get);
-      setTimeout(() => onProfileChanged(get), 0);
+      saveLocalProfile(plan);
+      profileDirty = true;
 
-      return newState;
+      return { plan, ...invalidateResults(get) };
     }),
 
-  // Load accounts, sync plan.accounts, and schedule simulations
-  loadAccounts: async () => {
-    const loadStartTime = new Date().toISOString();
-    set({
-      accountsLoading: 'loading',
-      loadingState: { state: 'loading', lastUpdated: loadStartTime },
-      isLoading: true,
-      error: null,
-    });
-
+  createAccount: async (data) => {
+    set({ error: null });
     try {
-      const { privateAccountsMode } = get();
-      const accounts = privateAccountsMode
-        ? (loadLocalAccounts<Account>() ?? [])
-        : await getAccountsClient().getAccounts();
-
-      // Validate accounts
-      const validation = validateAccounts(accounts);
-      if (!validation.isValid) {
-        console.warn('Account validation issues:', validation.errors);
-      }
-
-      const accountsWithHoldings: AccountWithHoldings[] = accounts.map((account) => ({
-        account,
-        currentBalance: account.balance,
-        isLoading: false,
-      }));
-
-      set((prev) => ({
-        accounts,
-        accountsWithHoldings,
-        // Keep plan.accounts in sync — this is what simulation methods read
-        plan: { ...prev.plan, accounts },
-        // Clear stale simulation results
-        simulationResult: null,
-        ssAnalysisResult: null,
-        spendingAnalysisResult: null,
-        retirementAgeAnalysisResult: null,
-        accountsLoading: 'success',
-        loadingState: { state: 'success', lastUpdated: new Date().toISOString() },
-        isLoading: false,
-        error: null,
-      }));
-
-      // Schedule simulation re-runs with updated accounts
-      scheduleSimulations(get);
-
-      console.log(`Loaded ${accounts.length} accounts`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load accounts';
-      console.error('Failed to load accounts:', error);
-
-      set({
-        accountsLoading: 'error',
-        loadingState: {
-          state: 'error',
-          error: errorMessage,
-          lastUpdated: new Date().toISOString()
-        },
-        error: errorMessage,
-        lastError: errorMessage,
-        isLoading: false,
-      });
-    }
-  },
-
-  createAccount: async (data: CreateAccountData) => {
-    set({ isCreatingAccount: true, error: null });
-
-    try {
-      const { privateAccountsMode } = get();
-      let newAccount: Account;
-
-      if (privateAccountsMode) {
-        const stocks = data.stocksPct ?? 0.6;
-        const bonds = data.bondsPct ?? (1 - stocks);
-        const now = new Date().toISOString();
-        newAccount = {
-          id:
-            typeof crypto !== 'undefined' && 'randomUUID' in crypto
-              ? crypto.randomUUID()
-              : `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: data.name,
-          institution: data.institution,
-          type: data.type,
-          balance: data.balance ?? 0,
-          assetWeights: { stocks, bonds },
-          balanceAsOf: now.split('T')[0],
-          taxable: data.type === 'Taxable',
-          createdAt: now,
-          updatedAt: now,
-        };
-        const existing = loadLocalAccounts<Account>() ?? [];
-        saveLocalAccounts([...existing, newAccount]);
+      let accounts: Account[];
+      if (get().dataMode() === 'cloud') {
+        await getAccountsClient().createAccount(data);
+        accounts = await getAccountsClient().getAccounts();
       } else {
-        newAccount = await getAccountsClient().createAccount(data);
+        accounts = [...(loadLocalAccounts<Account>() ?? []), newLocalAccount(data)];
+        saveLocalAccounts(accounts);
       }
-
-      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
-      await get().loadAccounts();
-
-      set({ isCreatingAccount: false });
-      return newAccount;
+      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
-      console.error('Failed to create account:', error);
-      set({
-        error: error instanceof Error ? error.message : 'Failed to create account',
-        isCreatingAccount: false,
-      });
+      set({ error: error instanceof Error ? error.message : 'Failed to create account' });
       throw error;
     }
   },
 
-  updateAccount: async (id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>) => {
+  updateAccount: async (id, updates) => {
     set({ error: null });
-
     try {
-      const { privateAccountsMode } = get();
-      if (privateAccountsMode) {
-        const existing = loadLocalAccounts<Account>() ?? [];
-        const next = existing.map((a) =>
+      let accounts: Account[];
+      if (get().dataMode() === 'cloud') {
+        await getAccountsClient().updateAccount(id, updates);
+        accounts = await getAccountsClient().getAccounts();
+      } else {
+        accounts = (loadLocalAccounts<Account>() ?? []).map((a) =>
           a.id === id
             ? {
                 ...a,
                 ...updates,
-                taxable:
-                  (updates.type ?? a.type) === 'Taxable',
+                taxable: (updates.type ?? a.type) === 'Taxable',
                 updatedAt: new Date().toISOString(),
               }
             : a,
         );
-        saveLocalAccounts(next);
-      } else {
-        await getAccountsClient().updateAccount(id, updates);
-      }
-
-      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
-      await get().loadAccounts();
-    } catch (error) {
-      console.error('Failed to update account:', error);
-      set({
-        error: error instanceof Error ? error.message : 'Failed to update account',
-      });
-      throw error;
-    }
-  },
-
-  deleteAccount: async (id: string) => {
-    set({ error: null });
-
-    try {
-      const { privateAccountsMode } = get();
-      if (privateAccountsMode) {
-        const existing = loadLocalAccounts<Account>() ?? [];
-        saveLocalAccounts(existing.filter((a) => a.id !== id));
-      } else {
-        await getAccountsClient().deleteAccount(id);
-      }
-
-      // Refresh data — loadAccounts syncs plan.accounts and schedules simulations
-      await get().loadAccounts();
-    } catch (error) {
-      console.error('Failed to delete account:', error);
-      set({
-        error: error instanceof Error ? error.message : 'Failed to delete account',
-      });
-      throw error;
-    }
-  },
-
-  clearError: () => {
-    set({ error: null });
-  },
-
-  clearSimulationResults: () => {
-    set({
-      simulationResult: null,
-      ssAnalysisResult: null,
-      spendingAnalysisResult: null,
-      retirementAgeAnalysisResult: null,
-    });
-  },
-
-  setPrivateAccountsMode: async (enabled) => {
-    const { privateAccountsMode, accounts, useServerSideCalculations } = get();
-    if (privateAccountsMode === enabled) return;
-
-    saveUserPreferences({
-      useServerSideCalculations,
-      privateAccountsMode: enabled,
-    });
-
-    // When turning ON, seed local storage with whatever's currently loaded so
-    // the UI doesn't go blank. When turning OFF, leave local storage as-is
-    // (user may turn it back on) and just reload from DB.
-    if (enabled) {
-      const existingLocal = loadLocalAccounts<Account>();
-      if (!existingLocal || existingLocal.length === 0) {
         saveLocalAccounts(accounts);
       }
+      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to update account' });
+      throw error;
     }
-
-    set({ privateAccountsMode: enabled });
-    await get().loadAccounts();
   },
 
-  setUseServerSideCalculations: (useServerSide) =>
-    set((state) => {
-      // Persist preference to localStorage
-      saveUserPreferences({
-        useServerSideCalculations: useServerSide,
-        privateAccountsMode: state.privateAccountsMode,
-      });
-
-      // Update preference and clear all simulation results to force re-calculation
-      const newState = {
-        useServerSideCalculations: useServerSide,
-        ssAnalysisResult: null as SSAnalysisResult[] | null,
-        spendingAnalysisResult: null as SpendingAnalysisResult[] | null,
-        retirementAgeAnalysisResult: null as RetirementAgeAnalysisResult[] | null,
-        simulationResult: null as SimulationResult | null,
-      };
-
-      // Schedule all simulations with new calculation method
-      scheduleSimulations(get);
-
-      return newState;
-    }),
-
-  setSimulationResult: (result) =>
-    set(() => ({ simulationResult: result })),
-
-  validatePlan: async () => {
-    const { plan } = get();
-
+  deleteAccount: async (id) => {
+    set({ error: null });
     try {
-      const hasValidAccounts = plan.accounts.length > 0 && plan.accounts.every(account => {
-        const weightSum = account.assetWeights.stocks + account.assetWeights.bonds;
-        return Math.abs(weightSum - 1) < 0.001;
-      });
-
-      const hasValidProfile = plan.profile.age > 0 &&
-                             plan.profile.retirementAge > plan.profile.age &&
-                             plan.profile.currentSalary >= 0 &&
-                             plan.profile.desiredSpending >= 0;
-
-      const isValid = hasValidAccounts && hasValidProfile;
-      set({ isValid });
-      return isValid;
-    } catch {
-      set({ isValid: false });
-      return false;
+      let accounts: Account[];
+      if (get().dataMode() === 'cloud') {
+        await getAccountsClient().deleteAccount(id);
+        accounts = await getAccountsClient().getAccounts();
+      } else {
+        accounts = (loadLocalAccounts<Account>() ?? []).filter((a) => a.id !== id);
+        saveLocalAccounts(accounts);
+      }
+      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to delete account' });
+      throw error;
     }
   },
 
-  reset: () =>
-    set({
-      plan: defaultPlan,
-      simulationResult: null,
-      ssAnalysisResult: null,
-      spendingAnalysisResult: null,
-      retirementAgeAnalysisResult: null,
-      isValid: true,
-      profileLoaded: false,
-      // Reset simulation loading states
-      isSimulatingMain: false,
-      isSimulatingSS: false,
-      isSimulatingSpending: false,
-      isSimulatingRetirementAge: false,
-      // Reset accounts state
-      accounts: [],
-      accountsWithHoldings: [],
-      loadingState: { state: 'idle' },
-      accountsLoading: 'idle',
-      isLoading: false,
-      isCreatingAccount: false,
-      isAddingSnapshot: false,
-      error: null,
-      lastError: null,
-    }),
+  setUseServerSideCalculations: (useServerSide) => {
+    set({ useServerSideCalculations: useServerSide, ...invalidateResults(get) });
+    persistPreferences(get);
+  },
+
+  /**
+   * Toggle cloud sync for a signed-in user. Turning it off seeds local
+   * storage with the currently loaded accounts so nothing goes blank;
+   * cloud data stays put for when it's turned back on.
+   */
+  setCloudSyncEnabled: async (enabled) => {
+    if (get().cloudSyncEnabled === enabled) return;
+    if (!enabled) {
+      const existing = loadLocalAccounts<Account>() ?? [];
+      if (existing.length === 0) saveLocalAccounts(get().plan.accounts);
+    }
+    set({ cloudSyncEnabled: enabled });
+    persistPreferences(get);
+    await get().bootstrap(get().authUser);
+  },
+
+  clearError: () => set({ error: null }),
+
+  runMainSimulation: async () => {
+    const { plan, useServerSideCalculations } = get();
+    const generation = ++mainSimGeneration;
+    set({ isSimulatingMain: true });
+    try {
+      const result = await getSimulationService().runMainSimulation(plan, useServerSideCalculations);
+      if (generation !== mainSimGeneration) return;
+      set({ simulationResult: result, isSimulatingMain: false });
+    } catch (error) {
+      if (generation !== mainSimGeneration) return;
+      console.error('Main simulation failed:', error);
+      set({ isSimulatingMain: false, simulationResult: null });
+    }
+  },
 
   runSSAnalysis: async () => {
     const { plan, useServerSideCalculations } = get();
-
     const generation = ++ssSimGeneration;
     set({ isSimulatingSS: true });
-
-    const service = getSimulationService();
-
     try {
-      const results = await service.runSocialSecurityAnalysis(plan, useServerSideCalculations);
+      const results = await getSimulationService().runSocialSecurityAnalysis(plan, useServerSideCalculations);
       if (generation !== ssSimGeneration) return;
       set({ ssAnalysisResult: results, isSimulatingSS: false });
     } catch (error) {
       if (generation !== ssSimGeneration) return;
-      console.error('❌ SS analysis failed:', error);
+      console.error('SS analysis failed:', error);
       set({ isSimulatingSS: false, ssAnalysisResult: null });
     }
   },
 
   runSpendingAnalysis: async () => {
     const { plan, useServerSideCalculations } = get();
-
     const generation = ++spendingSimGeneration;
     set({ isSimulatingSpending: true });
-
-    const service = getSimulationService();
-
     try {
-      const results = await service.runSpendingAnalysis(plan, useServerSideCalculations);
+      const results = await getSimulationService().runSpendingAnalysis(plan, useServerSideCalculations);
       if (generation !== spendingSimGeneration) return;
       set({ spendingAnalysisResult: results, isSimulatingSpending: false });
     } catch (error) {
       if (generation !== spendingSimGeneration) return;
-      console.error('❌ Spending analysis failed:', error);
+      console.error('Spending analysis failed:', error);
       set({ isSimulatingSpending: false, spendingAnalysisResult: null });
     }
   },
 
   runRetirementAgeAnalysis: async () => {
     const { plan, useServerSideCalculations } = get();
-
     const generation = ++retirementAgeSimGeneration;
     set({ isSimulatingRetirementAge: true });
-
-    const service = getSimulationService();
-
     try {
-      const results = await service.runRetirementAgeAnalysis(plan, useServerSideCalculations);
+      const results = await getSimulationService().runRetirementAgeAnalysis(plan, useServerSideCalculations);
       if (generation !== retirementAgeSimGeneration) return;
       set({ retirementAgeAnalysisResult: results, isSimulatingRetirementAge: false });
     } catch (error) {
       if (generation !== retirementAgeSimGeneration) return;
-      console.error('❌ Retirement age analysis failed:', error);
+      console.error('Retirement age analysis failed:', error);
       set({ isSimulatingRetirementAge: false, retirementAgeAnalysisResult: null });
     }
   },
-
-  runMainSimulation: async () => {
-    const { plan, useServerSideCalculations } = get();
-
-    const generation = ++mainSimGeneration;
-    set({ isSimulatingMain: true });
-
-    const service = getSimulationService();
-
-    try {
-      const result = await service.runMainSimulation(plan, useServerSideCalculations);
-
-      // Discard stale results if a newer simulation was triggered
-      if (generation !== mainSimGeneration) return;
-
-      console.log('✅ Main simulation completed', {
-        successProbability: result.successProbability,
-        medianTerminalWealth: result.medianTerminalWealth
-      });
-
-      set({
-        simulationResult: result,
-        isSimulatingMain: false
-      });
-    } catch (error) {
-      if (generation !== mainSimGeneration) return;
-      console.error('❌ Main simulation failed:', error);
-      set({
-        isSimulatingMain: false,
-        simulationResult: null
-      });
-    }
-  },
 }));
-
-// Selectors for individual accounts functionality
-export const usePlanSelectors = {
-  useAccounts: () => usePlan(state => state.accounts),
-  useAccountsWithHoldings: () => usePlan(state => state.accountsWithHoldings),
-
-  // Loading states
-  useLoadingState: () => usePlan(state => state.loadingState),
-  useAccountsLoading: () => usePlan(state => state.accountsLoading),
-
-  // Legacy loading states (for backward compatibility)
-  useIsLoading: () => usePlan(state => state.isLoading),
-  useIsCreating: () => usePlan(state => state.isCreatingAccount),
-  useIsAddingSnapshot: () => usePlan(state => state.isAddingSnapshot),
-
-  // Error states
-  useError: () => usePlan(state => state.error),
-  useLastError: () => usePlan(state => state.lastError),
-
-  // Get account by ID
-  useAccount: (id: string) => usePlan(state =>
-    state.accounts.find((account: Account) => account.id === id)
-  ),
-
-  // Get accounts by type
-  useAccountsByType: (accountType: string) => usePlan(state =>
-    state.accounts.filter((account: Account) => account.type === accountType)
-  ),
-
-  // Ready state for UI components
-  useIsReady: () => usePlan(state =>
-    state.accountsLoading === 'success' && state.loadingState.state === 'success'
-  ),
-};
-
-// Legacy export for backward compatibility
-export const useIndividualAccountsSelectors = usePlanSelectors;

@@ -13,6 +13,10 @@ import {
 } from 'firebase/auth';
 import { auth } from './config';
 
+function errorCode(error: unknown): string {
+  return error instanceof Error && 'code' in error ? String((error as { code: unknown }).code) : 'unknown';
+}
+
 export interface AuthError {
   code: string;
   message: string;
@@ -35,14 +39,9 @@ export async function signUp(
     }
 
     return { user: userCredential.user, error: null };
-  } catch (error: any) {
-    return {
-      user: null,
-      error: {
-        code: error.code,
-        message: getErrorMessage(error.code),
-      },
-    };
+  } catch (error) {
+    const code = errorCode(error);
+    return { user: null, error: { code, message: getErrorMessage(code) } };
   }
 }
 
@@ -56,14 +55,9 @@ export async function signIn(
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     return { user: userCredential.user, error: null };
-  } catch (error: any) {
-    return {
-      user: null,
-      error: {
-        code: error.code,
-        message: getErrorMessage(error.code),
-      },
-    };
+  } catch (error) {
+    const code = errorCode(error);
+    return { user: null, error: { code, message: getErrorMessage(code) } };
   }
 }
 
@@ -74,13 +68,9 @@ export async function signOut(): Promise<{ error: AuthError | null }> {
   try {
     await firebaseSignOut(auth);
     return { error: null };
-  } catch (error: any) {
-    return {
-      error: {
-        code: error.code,
-        message: getErrorMessage(error.code),
-      },
-    };
+  } catch (error) {
+    const code = errorCode(error);
+    return { error: { code, message: getErrorMessage(code) } };
   }
 }
 
@@ -91,13 +81,9 @@ export async function resetPassword(email: string): Promise<{ error: AuthError |
   try {
     await sendPasswordResetEmail(auth, email);
     return { error: null };
-  } catch (error: any) {
-    return {
-      error: {
-        code: error.code,
-        message: getErrorMessage(error.code),
-      },
-    };
+  } catch (error) {
+    const code = errorCode(error);
+    return { error: { code, message: getErrorMessage(code) } };
   }
 }
 

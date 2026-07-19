@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
-import { usePlan, usePlanSelectors } from "@/state/usePlan";
+import { usePlan } from "@/state/usePlan";
 import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -65,7 +65,7 @@ export function PageOverview() {
   const liveResult = usePlan((s) => s.simulationResult);
   const isSimulating = usePlan((s) => s.isSimulatingMain);
   const updatePlan = usePlan((s) => s.updatePlan);
-  const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
+  const accounts = usePlan((s) => s.plan.accounts);
 
   // Keep the last completed result visible while a new simulation runs,
   // so slider drags don't flash "0% / Off track" between recomputes.
@@ -77,10 +77,7 @@ export function PageOverview() {
   const isUpdating = isSimulating || !liveResult;
   const hasEverComputed = result !== null;
 
-  const netWorth = accountsWithHoldings.reduce(
-    (s, a) => s + (a.currentBalance || 0),
-    0,
-  );
+  const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
   const yearsToRetire = Math.max(0, plan.profile.retirementAge - plan.profile.age);
   const retirementYear = new Date().getFullYear() + yearsToRetire;
   const successProb = result?.successProbability ?? 0;
@@ -88,9 +85,8 @@ export function PageOverview() {
   const sparkData = (result?.yearlyProjections ?? []).slice(0, 24).map((p) => p.p50);
 
   const byKind: Record<string, number> = {};
-  for (const a of accountsWithHoldings) {
-    const k = a.account.type;
-    byKind[k] = (byKind[k] || 0) + (a.currentBalance || 0);
+  for (const a of accounts) {
+    byKind[a.type] = (byKind[a.type] || 0) + (a.balance || 0);
   }
   const allocData = Object.entries(byKind).map(([k, v]) => ({
     label: KIND_COLOR[k]?.label ?? k,

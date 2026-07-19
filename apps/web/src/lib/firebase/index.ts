@@ -9,10 +9,4 @@
 export { auth } from './config';
 export { signUp, signIn, signOut, resetPassword, getIdToken } from './auth';
 export { useAuth, AuthProvider } from './auth-context';
-export {
-  authenticatedFetch,
-  authenticatedGet,
-  authenticatedPost,
-  authenticatedPut,
-  authenticatedDelete,
-} from './api-client';
+export { authenticatedFetch } from './api-client';
