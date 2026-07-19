@@ -54,7 +54,7 @@ module "secrets" {
   depends_on = [google_project_service.required_apis]
 }
 
-# Rust simulation service (internal-only)
+# Rust simulation service
 module "rust_simulation" {
   source = "./modules/cloud-run"
 
@@ -78,9 +78,10 @@ module "rust_simulation" {
   # Timeout for long-running simulations
   timeout_seconds = var.rust_timeout_seconds
 
-  # Internal-only access (only callable from other Cloud Run services)
-  allow_unauthenticated = true
-  ingress_settings      = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  # Network-reachable at its run.app URL, but invokable only by the web
+  # service account through Cloud Run IAM.
+  allow_unauthenticated = false
+  ingress_settings      = "INGRESS_TRAFFIC_ALL"
 
   # Custom container port for Rust service
   container_port = 8081
@@ -141,6 +142,13 @@ module "cloud_run" {
     module.secrets,
     module.rust_simulation
   ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "web_invokes_rust" {
+  name     = module.rust_simulation.service_name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${module.cloud_run.service_account_email}"
 }
 
 # Cloud Build trigger for automated deployments (optional)

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { fetchRustService } from '@/lib/rust-service-client';
 import { batchRequestSchema, SIMULATION_RATE_LIMIT } from '@/lib/simulation-request';
-
-const RUST_SERVICE_URL = process.env.RUST_SERVICE_URL || 'http://localhost:8081';
 
 /**
  * Proxies batch Monte Carlo requests (sensitivity sweeps) to the Rust service.
@@ -31,7 +30,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rustResponse = await fetch(`${RUST_SERVICE_URL}/api/batch`, {
+    const rustResponse = await fetchRustService('/api/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

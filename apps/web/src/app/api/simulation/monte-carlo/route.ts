@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SimulationResult } from '@/domain/types';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { fetchRustService } from '@/lib/rust-service-client';
 import { monteCarloRequestSchema, SIMULATION_RATE_LIMIT } from '@/lib/simulation-request';
-
-const RUST_SERVICE_URL = process.env.RUST_SERVICE_URL || 'http://localhost:8081';
 
 /**
  * Proxies Monte Carlo simulation requests to the Rust service.
@@ -35,7 +34,7 @@ export async function POST(request: NextRequest) {
     // Forward the original body (the Rust service needs fields the schema
     // doesn't model, e.g. account institution); validation above has already
     // bounded everything cost-relevant.
-    const rustResponse = await fetch(`${RUST_SERVICE_URL}/api/simulate`, {
+    const rustResponse = await fetchRustService('/api/simulate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
