@@ -82,9 +82,11 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
             TaxBracket { min: 104910.0, max: Some(132590.0), rate: 0.08 },
             TaxBracket { min: 132590.0, max: Some(677278.0), rate: 0.093 },
             TaxBracket { min: 677278.0, max: Some(812728.0), rate: 0.103 },
-            TaxBracket { min: 812728.0, max: Some(1354556.0), rate: 0.113 },
-            TaxBracket { min: 1354556.0, max: Some(1000000.0), rate: 0.123 },
-            TaxBracket { min: 1000000.0, max: None, rate: 0.133 },
+            // 11.3% statutory bracket runs to 1,354,556, but the 1% Mental
+            // Health Services Tax applies above 1,000,000 — split accordingly.
+            TaxBracket { min: 812728.0, max: Some(1000000.0), rate: 0.113 },
+            TaxBracket { min: 1000000.0, max: Some(1354556.0), rate: 0.123 },
+            TaxBracket { min: 1354556.0, max: None, rate: 0.133 },
         ],
         FilingStatus::MarriedFilingSeparately => vec![
             TaxBracket { min: 0.0, max: Some(10099.0), rate: 0.01 },

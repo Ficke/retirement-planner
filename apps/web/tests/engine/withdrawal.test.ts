@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
+import { createTestAccount } from '../test-helpers';
 import type { Account, FilingStatus } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
 

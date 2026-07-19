@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
-import { usePlan, usePlanSelectors } from "@/state/usePlan";
+import { usePlan } from "@/state/usePlan";
 import type { Account, AccountType, CreateAccountData } from "@/domain/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,28 +61,22 @@ type EditorMode =
   | { kind: "edit"; id: string };
 
 export function PageAccounts() {
-  const { loadAccounts, createAccount, deleteAccount, updateAccount } = usePlan();
-  const accountsWithHoldings = usePlanSelectors.useAccountsWithHoldings();
-  const isReady = usePlanSelectors.useIsReady();
+  const { createAccount, deleteAccount, updateAccount } = usePlan();
+  const accounts = usePlan((s) => s.plan.accounts);
+  const bootstrapped = usePlan((s) => s.bootstrapped);
 
   const [filter, setFilter] = useState<"all" | AccountType>("all");
   const [editor, setEditor] = useState<EditorMode | null>(null);
   const [draft, setDraft] = useState<AccountDraft>(EMPTY_DRAFT);
 
-  useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
-
   const totals: Record<string, number> = {};
   let grand = 0;
-  for (const a of accountsWithHoldings) {
-    totals[a.account.type] = (totals[a.account.type] || 0) + (a.currentBalance || 0);
-    grand += a.currentBalance || 0;
+  for (const a of accounts) {
+    totals[a.type] = (totals[a.type] || 0) + (a.balance || 0);
+    grand += a.balance || 0;
   }
   const filtered =
-    filter === "all"
-      ? accountsWithHoldings
-      : accountsWithHoldings.filter((a) => a.account.type === filter);
+    filter === "all" ? accounts : accounts.filter((a) => a.type === filter);
 
   const openCreate = () => {
     setDraft(EMPTY_DRAFT);
@@ -217,7 +211,7 @@ export function PageAccounts() {
         title={filter === "all" ? "All accounts" : `${KIND_META[filter].label} accounts`}
         flush
       >
-        {!isReady && filtered.length === 0 ? (
+        {!bootstrapped && filtered.length === 0 ? (
           <div className="text-muted-foreground py-6 text-center text-sm">
             Loading accounts…
           </div>
@@ -237,7 +231,7 @@ export function PageAccounts() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map(({ account, currentBalance }) => {
+              {filtered.map((account) => {
                 const meta = KIND_META[account.type];
                 const stocks = Math.round((account.assetWeights?.stocks ?? 0) * 100);
                 const bonds = Math.max(0, 100 - stocks);
@@ -276,7 +270,7 @@ export function PageAccounts() {
                       <AllocationBar stocks={stocks} bonds={bonds} />
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold">
-                      {fmtCurrency(currentBalance || 0)}
+                      {fmtCurrency(account.balance || 0)}
                     </TableCell>
                   </TableRow>
                 );

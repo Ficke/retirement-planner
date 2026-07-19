@@ -2,17 +2,19 @@
 
 import {
   ChevronLeft,
-  FlaskConical,
-  Globe,
   Home,
   LineChart,
+  LogIn,
+  LogOut,
   Settings,
   SlidersHorizontal,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { signOut } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -24,20 +26,16 @@ import {
 
 export type PageId =
   | "overview"
-  | "sensitivity"
   | "projections"
   | "plan"
   | "accounts"
-  | "assumptions"
   | "settings";
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Overview", icon: Home },
-  { id: "sensitivity", label: "Sensitivity", icon: FlaskConical },
   { id: "projections", label: "Projections", icon: LineChart },
   { id: "plan", label: "Profile", icon: SlidersHorizontal },
   { id: "accounts", label: "Accounts", icon: Wallet },
-  { id: "assumptions", label: "Assumptions", icon: Globe },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -46,23 +44,24 @@ export function Sidebar({
   onNav,
   collapsed,
   onToggleCollapsed,
-  userName,
-  userEmail,
+  user,
 }: {
   active: PageId;
   onNav: (id: PageId) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  userName: string;
-  userEmail: string;
+  /** null → anonymous (local-only data mode) */
+  user: { name: string; email: string } | null;
 }) {
-  const initials =
-    userName
-      .split(" ")
-      .map((n) => n[0])
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "?";
+  const router = useRouter();
+  const initials = user
+    ? user.name
+        .split(" ")
+        .map((n) => n[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase() || "?"
+    : "?";
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -125,28 +124,65 @@ export function Sidebar({
           })}
         </nav>
 
-        {/* Footer / user */}
+        {/* Footer: signed-in identity or anonymous state */}
         <Separator className="bg-sidebar-border" />
-        <div
-          className={cn(
-            "flex items-center gap-2 p-3",
-            collapsed && "justify-center p-2",
-          )}
-        >
-          <div className="bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
-            {initials}
-          </div>
-          {!collapsed && (
-            <div className="flex min-w-0 flex-col leading-tight">
-              <span className="text-sidebar-foreground truncate text-xs font-semibold">
-                {userName}
-              </span>
-              <span className="text-muted-foreground truncate text-[11px]">
-                {userEmail}
-              </span>
+        {user ? (
+          <div
+            className={cn(
+              "flex items-center gap-2 p-3",
+              collapsed && "justify-center p-2",
+            )}
+          >
+            <div className="bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
+              {initials}
             </div>
-          )}
-        </div>
+            {!collapsed && (
+              <>
+                <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                  <span className="text-sidebar-foreground truncate text-xs font-semibold">
+                    {user.name}
+                  </span>
+                  <span className="text-muted-foreground truncate text-[11px]">
+                    {user.email}
+                  </span>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-foreground size-7 shrink-0"
+                      aria-label="Sign out"
+                      onClick={() => void signOut()}
+                    >
+                      <LogOut className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" sideOffset={8}>
+                    Sign out
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className={cn("flex flex-col gap-1.5 p-3", collapsed && "items-center p-2")}>
+            {!collapsed && (
+              <span className="text-muted-foreground text-[11px] leading-snug">
+                Guest — data stays in this browser
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size={collapsed ? "icon" : "sm"}
+              className={cn(!collapsed && "w-full justify-start gap-2")}
+              onClick={() => router.push("/auth/signin")}
+            >
+              <LogIn className="size-4 shrink-0" />
+              {!collapsed && "Sign in"}
+            </Button>
+          </div>
+        )}
 
         {/* Collapse handle */}
         <button

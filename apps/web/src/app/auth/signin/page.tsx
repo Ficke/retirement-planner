@@ -52,12 +52,12 @@ export default function SignInPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="bg-background flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Sign In</CardTitle>
+          <CardTitle>Sign in</CardTitle>
           <CardDescription>
-            Enter your credentials to access your retirement plan
+            Sign in to sync your plan to your account and use it across devices
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -101,11 +101,17 @@ export default function SignInPage() {
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
 
-            <p className="text-sm text-center text-gray-600">
+            <p className="text-muted-foreground text-center text-sm">
               Don&apos;t have an account?{' '}
-              <Link href="/auth/signup" className="text-blue-600 hover:underline">
+              <Link href="/auth/signup" className="text-primary hover:underline">
                 Sign up
               </Link>
+            </p>
+            <p className="text-muted-foreground text-center text-sm">
+              <Link href="/" className="hover:underline">
+                Continue without an account
+              </Link>{' '}
+              — your data stays in this browser
             </p>
           </form>
         </CardContent>

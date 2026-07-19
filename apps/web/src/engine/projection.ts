@@ -153,7 +153,6 @@ export function projectScenario(
 
         // Apply market returns to this account's balance (prorated for first year)
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
-        const oldBalance = account.balance;
         account.balance *= (1 + effectiveReturn);
         // Clamp to 0 to prevent negative balances from extreme market downturns
         account.balance = Math.max(0, account.balance);
@@ -170,7 +169,6 @@ export function projectScenario(
         const hsaAccount = accountBalances.find(acc => acc.type === 'HSA');
         if (hsaAccount) {
           const deposit = taxResult.hsaContribution * contributionProration;
-          const oldBalance = hsaAccount.balance;
           hsaAccount.balance += deposit;
           depositHSAYear = deposit;
 
@@ -182,7 +180,6 @@ export function projectScenario(
         const traditionalAccount = accountBalances.find(acc => acc.type === 'Traditional');
         if (traditionalAccount) {
           const deposit = taxResult.k401Contribution * contributionProration;
-          const oldBalance = traditionalAccount.balance;
           traditionalAccount.balance += deposit;
           depositTraditionalYear = deposit;
 
@@ -194,7 +191,6 @@ export function projectScenario(
         const rothAccount = accountBalances.find(acc => acc.type === 'Roth');
         if (rothAccount) {
           const deposit = backdoorRothContribution * contributionProration;
-          const oldBalance = rothAccount.balance;
           rothAccount.balance += deposit;
           depositRothYear = deposit;
 
@@ -206,7 +202,6 @@ export function projectScenario(
         const taxableAccount = accountBalances.find(acc => acc.taxable);
         if (taxableAccount) {
           const deposit = additionalSavings * contributionProration;
-          const oldBalance = taxableAccount.balance;
           taxableAccount.balance += deposit;
           depositTaxableYear = deposit;
 

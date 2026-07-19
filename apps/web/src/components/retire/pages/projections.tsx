@@ -35,7 +35,7 @@ import {
   IncomeSourcesChart,
   WealthFanChart,
 } from "@/components/ui/charts";
-import { fmtCurrency } from "../format";
+import { fmtCurrency, successTone } from "../format";
 import { cn } from "@/lib/utils";
 
 type ChartView = "wealth" | "income";
@@ -266,16 +266,8 @@ export function PageProjections() {
         <Stat
           label="Success Probability"
           value={`${(successProb * 100).toFixed(0)}%`}
-          trend={
-            successProb >= 0.85
-              ? "Excellent"
-              : successProb >= 0.7
-              ? "On track"
-              : successProb >= 0.5
-              ? "At risk"
-              : "Off track"
-          }
-          tone={successProb >= 0.85 ? "positive" : successProb >= 0.7 ? "neutral" : "warn"}
+          trend={successTone(successProb).label}
+          tone={successTone(successProb).tone}
         />
         <Stat
           label="Median wealth"

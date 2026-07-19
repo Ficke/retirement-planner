@@ -1,24 +1,17 @@
+//! Parametric return generation.
+//!
+//! All statistics are DERIVED from the canonical historical dataset in
+//! `historical_data.rs` (itself generated from the TS source of truth), so the
+//! parametric model in both engines is fit to the same real-return history.
+//! Sampling matches the TS implementation: log-space, Student-t (df=6) equity
+//! shocks, Normal bond shocks, Cholesky-correlated.
+
+use anyhow::Result;
 use rand::Rng;
 use rand_distr::{Distribution, Normal, StudentT};
-use anyhow::Result;
+use std::sync::LazyLock;
 
-/// Market statistics matching TypeScript implementation
-/// Historical US Stock Market Real Returns (1926-2024)
-/// Source: S&P 500 total return index, inflation-adjusted
-pub const US_STOCK_REAL_RETURNS: MarketStats = MarketStats {
-    mean: 0.071,      // 7.1% real return
-    volatility: 0.201, // 20.1% standard deviation
-};
-
-/// Historical US Bond Real Returns (1926-2024)  
-/// Source: Long-term government bonds, inflation-adjusted
-pub const US_BOND_REAL_RETURNS: MarketStats = MarketStats {
-    mean: 0.025,     // 2.5% real return
-    volatility: 0.079, // 7.9% standard deviation
-};
-
-/// Stock-Bond Correlation (1926-2024)
-pub const STOCKS_BONDS_CORRELATION: f64 = 0.12; // Low positive correlation historically
+use super::historical_data::HISTORICAL_RETURNS;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MarketStats {
@@ -32,23 +25,68 @@ pub struct MarketReturns {
     pub bond_return: f64,
 }
 
-/// Convert documented arithmetic mean/vol to log-space parameters so that
+struct DerivedStats {
+    // stock/bond arithmetic stats are only read by tests; the generator
+    // consumes the log-space parameters derived from them.
+    #[cfg_attr(not(test), allow(dead_code))]
+    stock: MarketStats,
+    #[cfg_attr(not(test), allow(dead_code))]
+    bond: MarketStats,
+    correlation: f64,
+    stock_log: (f64, f64), // (mu_log, sigma_log)
+    bond_log: (f64, f64),
+}
+
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+fn std_dev(xs: &[f64]) -> f64 {
+    let m = mean(xs);
+    (xs.iter().map(|v| (v - m).powi(2)).sum::<f64>() / xs.len() as f64).sqrt()
+}
+
+/// Convert arithmetic mean/vol to log-space parameters so that
 ///   exp(mu_log + sigma_log * Z) - 1
-/// has the documented arithmetic mean and volatility for Z ~ N(0, 1).
+/// has the given arithmetic mean and volatility for Z ~ N(0, 1).
 fn to_log_params(stats: MarketStats) -> (f64, f64) {
     let sigma_log = (1.0 + (stats.volatility / (1.0 + stats.mean)).powi(2)).ln().sqrt();
     let mu_log = (1.0 + stats.mean).ln() - 0.5 * sigma_log * sigma_log;
     (mu_log, sigma_log)
 }
 
+static STATS: LazyLock<DerivedStats> = LazyLock::new(|| {
+    let real_stock: Vec<f64> = HISTORICAL_RETURNS
+        .iter()
+        .map(|r| (1.0 + r.stock_return) / (1.0 + r.inflation_rate) - 1.0)
+        .collect();
+    let real_bond: Vec<f64> = HISTORICAL_RETURNS
+        .iter()
+        .map(|r| (1.0 + r.bond_return) / (1.0 + r.inflation_rate) - 1.0)
+        .collect();
+
+    let stock = MarketStats { mean: mean(&real_stock), volatility: std_dev(&real_stock) };
+    let bond = MarketStats { mean: mean(&real_bond), volatility: std_dev(&real_bond) };
+
+    let cov = real_stock
+        .iter()
+        .zip(&real_bond)
+        .map(|(s, b)| (s - stock.mean) * (b - bond.mean))
+        .sum::<f64>()
+        / real_stock.len() as f64;
+    let correlation = cov / (stock.volatility * bond.volatility);
+
+    DerivedStats {
+        stock,
+        bond,
+        correlation,
+        stock_log: to_log_params(stock),
+        bond_log: to_log_params(bond),
+    }
+});
+
 /// Generate correlated annual real returns for stocks and bonds.
-///
-/// Sampling is done in log-return space: equities use Student-t (df=6) shocks
-/// for fat tails, bonds use Normal shocks, and Cholesky preserves the documented
-/// stock/bond correlation. The final simple return is
-///   R = exp(mu_log + sigma_log * Z) - 1
-/// which is bounded below by -1 (total loss) by construction. No artificial
-/// upper/lower clamps are applied — the chosen distributions own tail shape.
+/// See module docs; matches the TS implementation in aggregate distribution.
 pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns> {
     let student_t = StudentT::new(6.0)?;
     let normal = Normal::new(0.0, 1.0)?;
@@ -56,89 +94,57 @@ pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns>
     let stock_shock = student_t.sample(rng);
     let bond_shock = normal.sample(rng);
 
-    // Cholesky for [[1, r], [r, 1]] correlation structure.
-    let cholesky = cholesky_decomposition_2x2(STOCKS_BONDS_CORRELATION);
-    let correlated_shocks = [
-        cholesky[0][0] * stock_shock,
-        cholesky[1][0] * stock_shock + cholesky[1][1] * bond_shock,
-    ];
+    // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]
+    let r = STATS.correlation;
+    let correlated_stock = stock_shock;
+    let correlated_bond = r * stock_shock + (1.0 - r * r).sqrt() * bond_shock;
 
-    let (stock_mu_log, stock_sigma_log) = to_log_params(US_STOCK_REAL_RETURNS);
-    let (bond_mu_log, bond_sigma_log) = to_log_params(US_BOND_REAL_RETURNS);
+    let (stock_mu, stock_sigma) = STATS.stock_log;
+    let (bond_mu, bond_sigma) = STATS.bond_log;
 
     Ok(MarketReturns {
-        stock_return: (stock_mu_log + correlated_shocks[0] * stock_sigma_log).exp() - 1.0,
-        bond_return: (bond_mu_log + correlated_shocks[1] * bond_sigma_log).exp() - 1.0,
+        stock_return: (stock_mu + correlated_stock * stock_sigma).exp() - 1.0,
+        bond_return: (bond_mu + correlated_bond * bond_sigma).exp() - 1.0,
     })
-}
-
-/// Optimized Cholesky decomposition for 2x2 correlation matrix.
-/// For correlation matrix [[1, r], [r, 1]], returns lower triangular matrix L
-/// such that L * L^T = correlation matrix.
-fn cholesky_decomposition_2x2(correlation: f64) -> [[f64; 2]; 2] {
-    // For 2x2 correlation matrix [[1, r], [r, 1]]:
-    // L = [[1, 0], [r, sqrt(1-r²)]]
-    let r = correlation;
-    let sqrt_term = (1.0 - r * r).sqrt();
-    
-    [
-        [1.0, 0.0],
-        [r, sqrt_term],
-    ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
-    fn test_cholesky_decomposition_2x2() {
-        let r = 0.12;
-        let l = cholesky_decomposition_2x2(r);
-        
-        // Verify L * L^T = original correlation matrix
-        let reconstructed = [
-            [l[0][0] * l[0][0] + l[0][1] * l[0][1], l[0][0] * l[1][0] + l[0][1] * l[1][1]],
-            [l[1][0] * l[0][0] + l[1][1] * l[0][1], l[1][0] * l[1][0] + l[1][1] * l[1][1]],
-        ];
-        
-        assert!((reconstructed[0][0] - 1.0).abs() < 1e-10);
-        assert!((reconstructed[1][1] - 1.0).abs() < 1e-10);
-        assert!((reconstructed[0][1] - r).abs() < 1e-10);
-        assert!((reconstructed[1][0] - r).abs() < 1e-10);
+    fn derived_stats_are_sane() {
+        let s = STATS.stock;
+        let b = STATS.bond;
+        // Real US stock/bond history: broad sanity bands, not exact pins,
+        // so dataset updates don't break the test.
+        assert!(s.mean > 0.05 && s.mean < 0.12, "stock mean {}", s.mean);
+        assert!(s.volatility > 0.15 && s.volatility < 0.25, "stock vol {}", s.volatility);
+        assert!(b.mean > -0.01 && b.mean < 0.05, "bond mean {}", b.mean);
+        assert!(b.volatility > 0.05 && b.volatility < 0.12, "bond vol {}", b.volatility);
     }
 
     #[test]
-    fn test_parametric_returns_generation() {
+    fn parametric_returns_match_derived_moments() {
         let mut rng = StdRng::seed_from_u64(42);
-        
-        // Generate many samples to test distribution properties
+
         let mut stock_returns = Vec::new();
         let mut bond_returns = Vec::new();
-        
-        for _ in 0..1000 {
+        for _ in 0..20000 {
             let returns = generate_parametric_returns(&mut rng).unwrap();
             stock_returns.push(returns.stock_return);
             bond_returns.push(returns.bond_return);
         }
-        
-        // Log-space sampling: returns are bounded below by -1 by construction
-        // (total loss). No artificial upper bound — the distribution decides.
-        for &ret in &stock_returns {
-            assert!(ret > -1.0);
-        }
-        for &ret in &bond_returns {
-            assert!(ret > -1.0);
-        }
 
-        // Check approximate means (should be close to target with large sample)
-        let stock_mean = stock_returns.iter().sum::<f64>() / stock_returns.len() as f64;
-        let bond_mean = bond_returns.iter().sum::<f64>() / bond_returns.len() as f64;
-        
-        // Allow 5% tolerance for mean estimates
-        assert!((stock_mean - US_STOCK_REAL_RETURNS.mean).abs() < 0.05);
-        assert!((bond_mean - US_BOND_REAL_RETURNS.mean).abs() < 0.05);
+        // Bounded below by -1 by construction
+        assert!(stock_returns.iter().all(|&r| r > -1.0));
+        assert!(bond_returns.iter().all(|&r| r > -1.0));
+
+        let stock_mean = mean(&stock_returns);
+        let bond_mean = mean(&bond_returns);
+        assert!((stock_mean - STATS.stock.mean).abs() < 0.02);
+        assert!((bond_mean - STATS.bond.mean).abs() < 0.01);
     }
 }

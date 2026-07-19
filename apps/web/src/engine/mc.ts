@@ -14,7 +14,6 @@ export interface MCConfig {
 }
 
 let workerInstance: Comlink.Remote<WorkerAPI> | null = null;
-let rawWorker: Worker | null = null;
 
 /**
  * Initialize Web Worker for Monte Carlo simulation.
@@ -25,7 +24,7 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
     return workerInstance;
   }
 
-  rawWorker = new Worker(
+  const rawWorker = new Worker(
     new URL('@/workers/mc.worker.ts', import.meta.url),
     { type: 'module' }
   );
@@ -54,31 +53,6 @@ export async function runMonteCarloSimulation(
     console.error('Monte Carlo simulation failed:', error);
     throw new Error('Simulation failed. Please check your inputs and try again.');
   }
-}
-
-/**
- * Get worker performance status.
- * Useful for monitoring and debugging.
- */
-export async function getWorkerStatus(): Promise<{ ready: boolean; lastRuntime?: number }> {
-  try {
-    const worker = await initializeWorker();
-    return await worker.getWorkerStatus();
-  } catch {
-    return { ready: false };
-  }
-}
-
-/**
- * Terminate the worker instance.
- * Call when cleaning up or when worker is no longer needed.
- */
-export function terminateWorker(): void {
-  if (rawWorker) {
-    rawWorker.terminate();
-    rawWorker = null;
-  }
-  workerInstance = null;
 }
 
 /**

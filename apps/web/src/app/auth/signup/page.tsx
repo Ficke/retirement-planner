@@ -63,29 +63,7 @@ export default function SignUpPage() {
         return;
       }
 
-      // Get Firebase ID token
-      const token = await user.getIdToken();
-
-      // Sync user with PostgreSQL database
-      const syncResponse = await fetch('/api/auth/sync-user', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          firebaseUid: user.uid,
-          email: user.email,
-          name: user.displayName || name,
-        }),
-      });
-
-      if (!syncResponse.ok) {
-        console.error('Failed to sync user with database');
-        // Still proceed - user is created in Firebase
-      }
-
-      // Redirect to home page
+      // DB user row sync happens in AuthProvider on every auth change.
       window.location.href = '/';
     } catch (err) {
       console.error('Signup error:', err);
@@ -96,12 +74,12 @@ export default function SignUpPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="bg-background flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Create Account</CardTitle>
+          <CardTitle>Create account</CardTitle>
           <CardDescription>
-            Sign up to start planning your retirement
+            Your plan syncs to your account and works across devices
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -147,7 +125,7 @@ export default function SignUpPage() {
                 required
                 disabled={isLoading}
               />
-              <p className="text-xs text-gray-500">Must be at least 8 characters</p>
+              <p className="text-muted-foreground text-xs">Must be at least 8 characters</p>
             </div>
 
             <div className="space-y-2">
@@ -170,11 +148,17 @@ export default function SignUpPage() {
               {isLoading ? 'Creating account...' : 'Create Account'}
             </Button>
 
-            <p className="text-sm text-center text-gray-600">
+            <p className="text-muted-foreground text-center text-sm">
               Already have an account?{' '}
-              <Link href="/auth/signin" className="text-blue-600 hover:underline">
+              <Link href="/auth/signin" className="text-primary hover:underline">
                 Sign in
               </Link>
+            </p>
+            <p className="text-muted-foreground text-center text-sm">
+              <Link href="/" className="hover:underline">
+                Continue without an account
+              </Link>{' '}
+              — your data stays in this browser
             </p>
           </form>
         </CardContent>

@@ -89,13 +89,13 @@ export interface RetirementPlan {
 }
 
 export interface SimulationResult {
+  /** Fraction of paths that fund the full retirement without ever running short. */
   successProbability: number;
   medianTerminalWealth: number;
   percentile5TerminalWealth: number;
   percentile10TerminalWealth: number;
   percentile90TerminalWealth: number;
   yearlyProjections: YearlyProjection[];
-  medianPath?: PathProjection[];
   /**
    * Smoothed income-sources path: per-year mean of withdrawal/SS amounts
    * across paths whose terminal wealth lands in the [p25, p75] band.
@@ -103,17 +103,8 @@ export interface SimulationResult {
    * outcomes, so summed components match the average net spending target.
    */
   incomeSourcesPath?: IncomeSourcesRow[];
-  terminalWealthDistribution: number[];
+  /** 1 - successProbability. A path is ruined if it ever runs short mid-retirement. */
   riskOfRuin: number;
-  wealthThresholds: {
-    below1m: number;
-    below500k: number;
-  };
-  wealthAtAge: Record<number, {
-    p25: number;
-    p50: number;
-    p75: number;
-  }>;
   /** Which engine produced this result. Set by the simulation service, not the engine. */
   source?: 'server' | 'client';
 }
