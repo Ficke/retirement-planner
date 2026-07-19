@@ -7,6 +7,22 @@ import { useRouter } from "next/navigation";
 
 import { usePlan } from "@/state/usePlan";
 import type { SimulationModel } from "@/domain/types";
+import {
+  US_STOCK_REAL_RETURNS,
+  US_BOND_REAL_RETURNS,
+  US_INFLATION,
+  STOCK_BOND_CORRELATION,
+  DATA_FIRST_YEAR,
+  DATA_LAST_YEAR,
+} from "@/data/market-history";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +60,7 @@ export function PageSettings() {
   const seedMode = a.randomSeed != null ? "fixed" : "random";
   const signedIn = authUser != null;
   const dataMode = signedIn && cloudSyncEnabled ? "cloud" : "local";
+  const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
 
   return (
     <PageShell>
@@ -131,7 +148,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Returns model"
-            helper="Historical: replays past US market years (1928–2024). Parametric: samples from a statistical model fit to that history."
+            helper={`Historical: replays past US market years (${DATA_RANGE}) in 3-year blocks, preserving sequences like 2008 → 2009. Parametric: samples a statistical model fit to that history (Student-t equities, Normal bonds, log-space).`}
           >
             <ToggleGroup
               type="single"
@@ -147,6 +164,59 @@ export function PageSettings() {
               <ToggleGroupItem value="parametric">Parametric</ToggleGroupItem>
             </ToggleGroup>
           </Setting>
+        </DashboardCard>
+
+        <DashboardCard
+          title="What the model assumes"
+          description={`Derived from US asset-class history, ${DATA_RANGE}. Real (after-inflation) annual returns; 5,000 Monte Carlo paths per run over your Profile horizon.`}
+          flush
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Assumption</TableHead>
+                <TableHead className="text-right">Value</TableHead>
+                <TableHead>Source</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <ReferenceRow
+                label="Stocks — real return / volatility"
+                value={`${(US_STOCK_REAL_RETURNS.mean * 100).toFixed(1)}% / ${(US_STOCK_REAL_RETURNS.volatility * 100).toFixed(1)}%`}
+                source="S&P 500 total return (Damodaran)"
+              />
+              <ReferenceRow
+                label="Bonds — real return / volatility"
+                value={`${(US_BOND_REAL_RETURNS.mean * 100).toFixed(1)}% / ${(US_BOND_REAL_RETURNS.volatility * 100).toFixed(1)}%`}
+                source="10-year US Treasury (Damodaran)"
+              />
+              <ReferenceRow
+                label="Stock/bond correlation"
+                value={STOCK_BOND_CORRELATION.toFixed(2)}
+                source={`Real annual returns, ${DATA_RANGE}`}
+              />
+              <ReferenceRow
+                label="Long-run inflation (CPI)"
+                value={`${(US_INFLATION.mean * 100).toFixed(1)}%`}
+                source="CPI-U Dec/Dec (BLS) — engine works in real dollars"
+              />
+              <ReferenceRow
+                label="Tax brackets"
+                value={
+                  plan.profile.state === "CA"
+                    ? "Federal 2025 + CA 2025"
+                    : "Federal 2025"
+                }
+                source={`IRS${plan.profile.state === "CA" ? " / FTB" : ""}`}
+              />
+              <ReferenceRow
+                label="RMD table"
+                value="SECURE 2.0 (2024+)"
+                source="IRS Pub. 590-B"
+              />
+              <ReferenceRow label="Contribution limits" value="2025" source="IRS" />
+            </TableBody>
+          </Table>
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -205,6 +275,24 @@ export function PageSettings() {
           </Setting>
         </DashboardCard>
       </PageShell>
+  );
+}
+
+function ReferenceRow({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: string;
+  source: string;
+}) {
+  return (
+    <TableRow>
+      <TableCell>{label}</TableCell>
+      <TableCell className="text-right font-mono">{value}</TableCell>
+      <TableCell className="text-muted-foreground">{source}</TableCell>
+    </TableRow>
   );
 }
 

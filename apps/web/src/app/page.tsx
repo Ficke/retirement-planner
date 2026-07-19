@@ -11,17 +11,13 @@ import { PageOverview } from "@/components/retire/pages/overview";
 import { PagePlan } from "@/components/retire/pages/plan";
 import { PageAccounts } from "@/components/retire/pages/accounts";
 import { PageProjections } from "@/components/retire/pages/projections";
-import { PageSensitivity } from "@/components/retire/pages/sensitivity";
-import { PageAssumptions } from "@/components/retire/pages/assumptions";
 import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
   overview:    { label: "Overview",    Comp: PageOverview },
-  sensitivity: { label: "Sensitivity", Comp: PageSensitivity },
   projections: { label: "Projections", Comp: PageProjections },
   plan:        { label: "Profile",     Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
-  assumptions: { label: "Assumptions", Comp: PageAssumptions },
   settings:    { label: "Settings",    Comp: PageSettings },
 };
 

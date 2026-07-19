@@ -17,3 +17,14 @@ export function fmtPercent(n: number | null | undefined, decimals = 0): string {
 export function fmtSigned(n: number, compact = false): string {
   return (n >= 0 ? '+' : '') + fmtCurrency(n, compact);
 }
+
+/** Shared thresholds for describing a success probability. */
+export function successTone(p: number): {
+  label: string;
+  tone: 'positive' | 'neutral' | 'warn';
+} {
+  if (p >= 0.85) return { label: 'Excellent', tone: 'positive' };
+  if (p >= 0.7) return { label: 'On track', tone: 'neutral' };
+  if (p >= 0.5) return { label: 'At risk', tone: 'warn' };
+  return { label: 'Off track', tone: 'warn' };
+}

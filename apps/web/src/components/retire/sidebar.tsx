@@ -2,8 +2,6 @@
 
 import {
   ChevronLeft,
-  FlaskConical,
-  Globe,
   Home,
   LineChart,
   LogIn,
@@ -28,20 +26,16 @@ import {
 
 export type PageId =
   | "overview"
-  | "sensitivity"
   | "projections"
   | "plan"
   | "accounts"
-  | "assumptions"
   | "settings";
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Overview", icon: Home },
-  { id: "sensitivity", label: "Sensitivity", icon: FlaskConical },
   { id: "projections", label: "Projections", icon: LineChart },
   { id: "plan", label: "Profile", icon: SlidersHorizontal },
   { id: "accounts", label: "Accounts", icon: Wallet },
-  { id: "assumptions", label: "Assumptions", icon: Globe },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
