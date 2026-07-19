@@ -9,6 +9,7 @@
 
 import { runMonteCarloSimulation } from '@/engine/mc';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
+import { MIN_RETIREMENT_AGE } from '@/domain/constants';
 import type {
   RetirementPlan,
   SimulationResult,
@@ -91,7 +92,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
 function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
   // ±5 years around the planned retirement age, clamped to a sane window.
   const center = plan.profile.retirementAge;
-  const min = Math.max(plan.profile.age + 1, Math.min(center - 5, 70), 45);
+  const min = Math.max(plan.profile.age + 1, Math.min(center - 5, 70), MIN_RETIREMENT_AGE);
   const max = Math.min(75, Math.max(center + 5, min));
   const ages: number[] = [];
   for (let a = min; a <= max; a++) ages.push(a);

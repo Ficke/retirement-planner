@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
+import { MIN_RETIREMENT_AGE } from "@/domain/constants";
 import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -242,7 +243,7 @@ export function PageOverview() {
             label="Retirement age"
             value={plan.profile.retirementAge}
             display={`Age ${plan.profile.retirementAge}`}
-            min={50}
+            min={MIN_RETIREMENT_AGE}
             max={75}
             onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
             points={agePts}
