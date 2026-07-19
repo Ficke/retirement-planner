@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIN_RETIREMENT_AGE } from '@/domain/constants';
 
 export const assetWeightsSchema = z.object({
   stocks: z.number().min(0).max(1),
@@ -24,7 +25,7 @@ export const userProfileSchema = z.object({
   age: z.number().int().min(18, "Age must be at least 18").max(100, "Age must be reasonable"),
   state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other'] as const),
   filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold'] as const),
-  retirementAge: z.number().int().min(50, "Retirement age must be at least 50").max(80, "Retirement age must be reasonable"),
+  retirementAge: z.number().int().min(MIN_RETIREMENT_AGE, `Retirement age must be at least ${MIN_RETIREMENT_AGE}`).max(80, "Retirement age must be reasonable"),
   currentSalary: z.number().min(0, "Salary must be non-negative"),
   salaryGrowthRate: z.number().min(-0.1, "Salary growth rate must be reasonable").max(0.2, "Salary growth rate must be reasonable"),
   desiredSpending: z.number().min(0, "Desired spending must be non-negative"),
