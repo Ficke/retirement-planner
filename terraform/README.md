@@ -10,14 +10,16 @@ terraform/
 ├── variables.tf                     # Variable definitions
 ├── outputs.tf                       # Output definitions
 ├── terraform.tfvars.example         # Example variables file
-├── modules/
-│   ├── artifact-registry/           # Docker image repository
-│   ├── cloud-run/                   # Cloud Run service
-│   └── secrets/                     # Secret Manager configuration
-└── environments/
-    ├── dev/                         # Development environment config
-    └── prod/                        # Production environment config
+└── modules/
+    ├── artifact-registry/           # Docker image repository
+    ├── cloud-run/                   # Cloud Run service (used twice: web + Rust)
+    └── secrets/                     # Secret Manager configuration
 ```
+
+There is a single root module. Prod is configured by `terraform.tfvars`
+(gitignored) alongside `main.tf` — not by a per-environment directory. To add a
+second environment, run the same root with a different `-var-file` and a
+different `backend` state prefix.
 
 ## 🚀 Quick Start
 
@@ -243,51 +245,42 @@ echo -n "new-secret-value" | gcloud secrets versions add SECRET_NAME --data-file
 - Scaling: 0-10 instances (configurable)
 - Timeout: 300s
 
-## 🌍 Multi-Environment Setup
+## 🌍 Environments
 
-### Development Environment
+Prod runs from this directory with `terraform.tfvars`:
 
 ```bash
-cd environments/dev
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with dev-specific values
+# Fill in project_id, image URIs, public_env_vars, build_substitutions
 
 terraform init
+terraform plan     # always read the plan before applying
 terraform apply
 ```
 
-### Production Environment
+For an additional environment, keep the same root module and vary the inputs:
 
 ```bash
-cd environments/prod
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with prod-specific values
-
-terraform init
-terraform apply
+terraform init -backend-config="prefix=terraform/state/dev" -reconfigure
+terraform apply -var-file=dev.tfvars
 ```
 
 ## 🔐 State Management
 
-### Local State (Default)
+State lives in GCS, already configured in `main.tf`:
 
-By default, Terraform stores state locally in `terraform.tfstate`.
-
-**⚠️ WARNING:** Do NOT commit `terraform.tfstate` to Git!
-
-### Remote State (Recommended for Teams)
-
-Use Google Cloud Storage for remote state:
-
-```bash
-# Create GCS bucket for state
-gsutil mb gs://retire-plan-terraform-state
-
-# Enable versioning
-gsutil versioning set on gs://retire-plan-terraform-state
-
-# Update main.tf to use remote backend
+```hcl
+backend "gcs" {
+  bucket = "retire-plan-tfstate-gen-lang-client-0372385774"
+  prefix = "terraform/state/prod"
+}
 ```
+
+The bucket has versioning and uniform bucket-level access enabled. `terraform
+init` wires this up automatically — there is no local state file to protect.
+
+**⚠️** Never commit `terraform.tfvars` or plan files. Both are gitignored; a
+plan file embeds state and can carry resource attribute values.
 
 Uncomment the backend block in `main.tf`:
 

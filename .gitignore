@@ -45,7 +45,12 @@ terraform.tfstate
 terraform.tfstate.*
 **/terraform.tfstate
 **/terraform.tfstate.*
+# Plan files: `terraform plan -out=tfplan` produces an extensionless file, which
+# *.tfplan does not match. Both forms are ignored — a plan embeds state, so it
+# can carry resource attribute values.
 **/*.tfplan
+tfplan
+**/tfplan
 **/crash.log
 terraform.tfvars
 **/terraform.tfvars

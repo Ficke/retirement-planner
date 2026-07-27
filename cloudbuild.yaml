@@ -78,22 +78,16 @@ steps:
       - '${_REGION}'
       - '--platform'
       - 'managed'
-      - '--ingress'
-      - 'all'
       - '--service-account'
       - '${_RUST_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com'
       - '--port'
       - '8081'
-      - '--memory'
-      - '1Gi'
-      - '--cpu'
-      - '2'
-      - '--min-instances'
-      - '0'
-      - '--max-instances'
-      - '10'
-      - '--timeout'
-      - '120'
+      # Service shape — CPU, memory, scaling, timeout, ingress, concurrency,
+      # startup CPU boost — is owned by Terraform (terraform/variables.tf).
+      # `gcloud run deploy` preserves any setting it is not told about, so this
+      # step ships the new image and leaves the shape alone.
+      # Do NOT re-add --cpu/--memory here: passing them overwrote the
+      # Terraform-applied 4 vCPU / 2Gi on every push to main.
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'update-nextjs-env'
@@ -143,7 +137,8 @@ steps:
         SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
           --region ${_REGION} \
           --format 'value(status.url)')
-        curl -f -s -o /dev/null -w "%{http_code}" $$SERVICE_URL || exit 1
+        # /healthz is the dedicated probe route — no React render, no DB touch.
+        curl -f -s -o /dev/null -w "%{http_code}" $$SERVICE_URL/healthz || exit 1
         echo "Deployment successful! Service is healthy."
 
 # Note: No 'images' section needed - Kaniko pushes images directly via --destination flags

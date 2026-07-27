@@ -6,7 +6,7 @@ Plan for reducing cold-start latency and improving simulation performance on GCP
 
 ---
 
-## Status (as of 2026-05-16)
+## Status
 
 ### Done
 - [x] Phase 0 — Terraform adopted as source of truth (GCS backend, prod resources imported, plan clean). Merged in PR #18.
@@ -14,15 +14,44 @@ Plan for reducing cold-start latency and improving simulation performance on GCP
 - [x] #2 — `startup_cpu_boost = true` on both services. Parameterized in `modules/cloud-run/`, default `true`. Applied + verified live.
 - [x] #3 — Rust `container_concurrency = 1`. Parameterized in module, set to 1 for Rust call (was 160 live). Applied + verified.
 - [x] #4 — Rust 4 vCPU / 2Gi. Bumped defaults in root `variables.tf`. Applied + verified.
+- [x] #6 — Dead secrets dropped from the cold path. Superseded by the OCR
+      removal: with those endpoints gone, nothing reads GEMINI / POLYGON /
+      LANGFUSE_*, so there was nothing to lazy-fetch. The four mounts were
+      deleted from `secret_env_vars` and the four secret resources from
+      `secrets`, along with the matching entries in `pull-secrets.sh`,
+      `scripts/bootstrap`, and the `.env.example` files. Web service now
+      fetches 2 secrets at startup instead of 6. **No `@google-cloud/secret-manager`
+      dependency and no `lib/secrets.ts` were needed** — ignore the
+      implementation sketch in Phase 1 #6 below.
+- [x] **Cloud Build stopped reverting Terraform.** The `deploy-rust` step passed
+      `--memory 1Gi --cpu 2` explicitly, which overwrote the 4 vCPU / 2Gi from
+      #4 on *every push to main* — silently undoing the applied optimization.
+      Those flags (plus `--min-instances`, `--max-instances`, `--timeout`,
+      `--ingress`) are gone; `gcloud run deploy` now ships the image and
+      preserves everything else. The health check also moved from `/` to
+      `/healthz`.
 
 ### Next
 - [ ] #5 — Distroless Rust runtime image
-- [ ] #6 — Lazy secret fetching in Next.js (defer GEMINI / POLYGON / LANGFUSE_* from startup)
-- [ ] Switch `cloudbuild.yaml` from `gcloud run deploy` to `terraform apply` (after a few more clean manual applies)
+- [ ] Switch `cloudbuild.yaml` from `gcloud run deploy` to `terraform apply` (after a few more clean manual applies).
+      Blocked on the Cloud Build SA grants in §0.5.
 - [ ] Phase 2 — `us-central1` → `us-west1` migration
 
+### Applying the secret removal
+
+`terraform plan` will show **4 `google_secret_manager_secret` destroys**
+(GEMINI_API_KEY, POLYGON_API_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY).
+That is intended — but it deletes the stored key values in GCP, not just the
+mounts. If any of those keys is worth keeping, copy the value out first, or
+`terraform state rm` the resource to orphan it instead of destroying it.
+
+The mount removal alone (the cold-start win) carries no such risk.
+
 ### Tfvars location note
-The active tfvars used for `terraform apply` is `terraform/terraform.tfvars` (gitignored), not `terraform/environments/prod/terraform.tfvars` — that env path in the `.example` was aspirational. Path references below should be read accordingly until we restructure.
+The active tfvars used for `terraform apply` is `terraform/terraform.tfvars` (gitignored).
+The aspirational `terraform/environments/{dev,prod}/` tree has been removed — it
+never held root module files, so `cd environments/prod && terraform init` could
+not have worked. Path references below should be read accordingly.
 
 ---
 
@@ -44,7 +73,7 @@ The active tfvars used for `terraform apply` is `terraform/terraform.tfvars` (gi
 | 1 | Move to `us-west1` | TF vars + Artifact Registry | -40–60ms RTT per request, faster image pulls |
 | 2 | `startup_cpu_boost = true` (both services) | `terraform/modules/cloud-run/main.tf` | ~40–60% faster cold start; billed only during boot |
 | 3 | Rust: `container_concurrency = 1` | Cloud Run module (parameterized) | No CPU contention; full Rayon parallelism per request |
-| 4 | Rust: bump to 4 vCPU / 2Gi | `environments/prod/terraform.tfvars` | ~2× faster sims at same vCPU-second cost |
+| 4 | Rust: bump to 4 vCPU / 2Gi | `terraform/variables.tf` | ~2× faster sims at same vCPU-second cost |
 | 5 | Slim Rust runtime image | `rust-simulation-service/Dockerfile` | Smaller image → faster pull → faster cold start |
 | 6 | Lazy secret fetching in Next.js | Application code + module `secret_env_vars` | Drop 4 of 6 secrets from cold path |
 | 7 | Real `/healthz` endpoints | Both services + probe paths in module | Reliable startup/liveness probes |
@@ -85,7 +114,7 @@ Run `terraform init -migrate-state` (no state to migrate yet; this just wires up
 
 ### 0.2 Real `terraform.tfvars`
 
-Copy `terraform/environments/prod/terraform.tfvars.example` → `terraform/environments/prod/terraform.tfvars` (stays gitignored). Fill in:
+Copy `terraform/terraform.tfvars.example` → `terraform/terraform.tfvars` (stays gitignored). Fill in:
 - `project_id`, image URIs
 - `secret_env_vars` — **only `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`** after Phase 6; for the initial import keep all 6 to match current prod
 - `public_env_vars` — copy from `gcloud run services describe retire-plan --format=...`
@@ -154,7 +183,7 @@ Replace the two `gcloud run deploy` steps with:
 
 1. Build + push images (Kaniko steps stay as-is)
 2. `terraform -chdir=terraform init`
-3. `terraform -chdir=terraform apply -auto-approve -var-file=environments/prod/terraform.tfvars -var="cloud_run_image=...:${COMMIT_SHA}" -var="rust_service_image=...:${COMMIT_SHA}"`
+3. `terraform -chdir=terraform apply -auto-approve -var-file=terraform.tfvars -var="cloud_run_image=...:${COMMIT_SHA}" -var="rust_service_image=...:${COMMIT_SHA}"`
 4. Health check step stays
 
 Keep the first few applies **manual** (run locally, not from Cloud Build) until you trust the plan. Switch CI to auto-apply only after a few clean rounds.
@@ -194,7 +223,8 @@ Set `container_concurrency = 1` for the `module "rust_simulation"` call in `main
 
 ### #4 — Rust 4 vCPU / 2Gi
 
-In `terraform/environments/prod/terraform.tfvars`:
+In `terraform/terraform.tfvars` (or leave unset — these are now the defaults in
+`terraform/variables.tf`):
 
 ```hcl
 rust_cpu_limit    = "4"
@@ -219,6 +249,11 @@ CMD ["/app/simulation-server"]
 Drop the `apt-get`/`ca-certificates` step. Verify locally with `docker run` that the binary starts and responds.
 
 ### #6 — Lazy secret fetching in Next.js
+
+> **Superseded — do not implement.** This was written while the OCR and
+> market-data endpoints still existed. They were removed, so the four secrets
+> below have no readers at all and were simply deleted rather than deferred.
+> No new dependency, no `lib/secrets.ts`. Kept for context only.
 
 Today's mounts (web service):
 

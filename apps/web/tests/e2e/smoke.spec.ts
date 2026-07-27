@@ -1,37 +1,96 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
-test('should load homepage with all tabs', async ({ page }) => {
+/**
+ * Smoke coverage for the 5-page sidebar IA.
+ *
+ * These run signed out, which is the app's LOCAL data mode: profile and
+ * accounts live in localStorage, and no database or Firebase session is
+ * involved. That keeps the suite runnable in CI without secrets.
+ */
+
+const PAGES = ['Overview', 'Projections', 'Profile', 'Accounts', 'Settings'] as const;
+
+/** Navigate and wait past the bootstrap spinner. */
+async function gotoApp(page: Page) {
   await page.goto('/');
-  
-  await expect(page.getByRole('heading', { name: 'RetirePlan' })).toBeVisible();
-  
-  await expect(page.getByRole('tab', { name: 'Inputs' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Accounts' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Assumptions' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Results' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
+}
+
+/** Sidebar nav buttons; scoped so page content with the same text can't match. */
+function navItem(page: Page, name: string) {
+  return page.getByRole('complementary').getByRole('button', { name, exact: true });
+}
+
+/**
+ * A KPI tile by its label. Values also appear in charts and legends, so
+ * assertions have to be scoped to the card rather than matched page-wide.
+ */
+function statCard(page: Page, label: string) {
+  return page.locator('[data-slot="card"]').filter({ hasText: label });
+}
+
+test('boots into Overview with the KPI row', async ({ page }) => {
+  await gotoApp(page);
+
+  for (const label of ['Plan Health', 'Net Worth', 'Retirement Date', 'Monthly Spending']) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+  }
 });
 
-test('should be able to switch between tabs', async ({ page }) => {
-  await page.goto('/');
-  
-  await page.getByRole('tab', { name: 'Accounts' }).click();
-  await expect(page.getByText('Retirement Accounts')).toBeVisible();
-  
-  await page.getByRole('tab', { name: 'Assumptions' }).click();
-  await expect(page.getByText('Market Assumptions')).toBeVisible();
-  
-  await page.getByRole('tab', { name: 'Results' }).click();
-  await expect(page.getByText('Simulation Results')).toBeVisible();
+test('every sidebar page is reachable', async ({ page }) => {
+  await gotoApp(page);
+
+  for (const name of PAGES) {
+    await navItem(page, name).click();
+    await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+  }
 });
 
-test('should toggle dark mode', async ({ page }) => {
-  await page.goto('/');
-  
-  const themeToggle = page.getByRole('button', { name: 'Toggle theme' });
-  await expect(themeToggle).toBeVisible();
-  
-  await themeToggle.click();
-  
-  const html = page.locator('html');
-  await expect(html).toHaveAttribute('class', /dark/);
+test('signed out, the app runs in local mode and offers sign-in', async ({ page }) => {
+  await gotoApp(page);
+
+  await expect(page.getByText('Guest — data stays in this browser')).toBeVisible();
+  await expect(navItem(page, 'Sign in')).toBeVisible();
+
+  await navItem(page, 'Settings').click();
+  // The storage badge reflects LOCAL mode when there is no auth user.
+  await expect(page.getByText('This browser', { exact: true })).toBeVisible();
+});
+
+test('an account added locally reaches Overview net worth', async ({ page }) => {
+  await gotoApp(page);
+  await navItem(page, 'Accounts').click();
+
+  await page.getByRole('button', { name: 'Add account' }).click();
+  await page.getByLabel('Name').fill('Test Brokerage');
+  await page.getByLabel('Institution').fill('Vanguard');
+  await page.getByLabel('Balance').fill('250000');
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  await expect(page.getByText('Test Brokerage')).toBeVisible();
+
+  await navItem(page, 'Overview').click();
+  await expect(statCard(page, 'Net Worth').getByText('$250k')).toBeVisible();
+});
+
+test('accounts survive a reload in local mode', async ({ page }) => {
+  await gotoApp(page);
+  await navItem(page, 'Accounts').click();
+
+  await page.getByRole('button', { name: 'Add account' }).click();
+  await page.getByLabel('Name').fill('Persisted Account');
+  await page.getByLabel('Balance').fill('12345');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText('Persisted Account')).toBeVisible();
+
+  await page.reload();
+  await navItem(page, 'Accounts').click();
+  await expect(page.getByText('Persisted Account')).toBeVisible();
+});
+
+test('theme toggle switches to dark', async ({ page }) => {
+  await gotoApp(page);
+
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
 });

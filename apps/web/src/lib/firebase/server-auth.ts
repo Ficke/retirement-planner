@@ -1,7 +1,6 @@
 /**
  * Server-Side Authentication Helpers
  * For use in API routes and Server Components
- * Replaces NextAuth's auth() function
  */
 
 import { cookies, headers } from 'next/headers';

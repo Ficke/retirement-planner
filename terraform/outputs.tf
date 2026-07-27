@@ -48,15 +48,5 @@ output "set_secrets_commands" {
 
     # Set FIREBASE_PRIVATE_KEY
     cat firebase-private-key.txt | gcloud secrets versions add FIREBASE_PRIVATE_KEY --data-file=-
-
-    # Set GEMINI_API_KEY (optional)
-    echo -n "your-gemini-api-key" | gcloud secrets versions add GEMINI_API_KEY --data-file=-
-
-    # Set POLYGON_API_KEY (optional)
-    echo -n "your-polygon-api-key" | gcloud secrets versions add POLYGON_API_KEY --data-file=-
-
-    # Set Langfuse keys (optional)
-    echo -n "pk-lf-..." | gcloud secrets versions add LANGFUSE_PUBLIC_KEY --data-file=-
-    echo -n "sk-lf-..." | gcloud secrets versions add LANGFUSE_SECRET_KEY --data-file=-
   EOT
 }
