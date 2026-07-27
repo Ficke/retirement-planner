@@ -25,16 +25,11 @@ public_env_vars = {
   NEXT_PUBLIC_FIREBASE_PROJECT_ID    = "your-project-id"
   FIREBASE_PROJECT_ID                = "your-project-id"
   FIREBASE_CLIENT_EMAIL              = "firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com"
-
-  # Optional: Langfuse configuration
-  LANGFUSE_HOST                      = "https://cloud.langfuse.com"
-
-  # Optional: Polygon API rate limit
-  POLYGON_RATE_LIMIT_PER_MINUTE      = "5"
 }
 
 # Secret Environment Variables (references to Secret Manager)
-# The actual secret values are set separately using gcloud CLI
+# The actual secret values are set separately using gcloud CLI.
+# These are fetched at container start — only list secrets the app reads.
 secret_env_vars = {
   DATABASE_URL = {
     secret_name = "DATABASE_URL"
@@ -42,22 +37,6 @@ secret_env_vars = {
   }
   FIREBASE_PRIVATE_KEY = {
     secret_name = "FIREBASE_PRIVATE_KEY"
-    version     = "latest"
-  }
-  GEMINI_API_KEY = {
-    secret_name = "GEMINI_API_KEY"
-    version     = "latest"
-  }
-  POLYGON_API_KEY = {
-    secret_name = "POLYGON_API_KEY"
-    version     = "latest"
-  }
-  LANGFUSE_PUBLIC_KEY = {
-    secret_name = "LANGFUSE_PUBLIC_KEY"
-    version     = "latest"
-  }
-  LANGFUSE_SECRET_KEY = {
-    secret_name = "LANGFUSE_SECRET_KEY"
     version     = "latest"
   }
 }
@@ -96,8 +75,11 @@ build_substitutions = {
 # Rust Simulation Service Configuration
 rust_service_name     = "rust-simulation-service"
 rust_service_image    = "us-central1-docker.pkg.dev/your-gcp-project-id/retire-plan/rust-simulation:latest"
-rust_memory_limit     = "1Gi"
-rust_cpu_limit        = "2"
+# 4 vCPU / 2Gi: Rayon parallelizes paths across cores, so more cores cut
+# wall-clock at roughly the same vCPU-second cost. Cloud Run requires >=2Gi at
+# 4 vCPU. Concurrency is pinned to 1 in main.tf so a request gets all cores.
+rust_memory_limit     = "2Gi"
+rust_cpu_limit        = "4"
 rust_min_instances    = 0
 rust_max_instances    = 10
 rust_timeout_seconds  = 120

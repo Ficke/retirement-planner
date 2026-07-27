@@ -2,47 +2,68 @@
 
 ## Quick Start
 
-1. **Clone and authenticate**:
-   ```bash
-   git clone <repo>
-   gcloud auth login
-   ```
+```bash
+git clone https://github.com/Ficke/retirement-planner.git
+cd retirement-planner
+pnpm install
+pnpm bootstrap        # writes apps/web/.env.local
+pnpm dev              # http://localhost:3000
+```
 
-2. **Pull secrets and start**:
-   ```bash
-   ./scripts/pull-secrets.sh
-   pnpm install
-   pnpm dev
-   ```
+`pnpm bootstrap` pulls what it can from the `gcloud` and `firebase` CLIs (and
+from `terraform/terraform.tfvars` if present), then prompts for anything
+missing. `./scripts/pull-secrets.sh` does the same thing non-interactively for
+the known prod project — use whichever you prefer.
 
-## How It Works
+> **Note:** Don't export `DATABASE_URL` in your shell. It overrides `.env.local`.
 
-- **Public config**: Committed in the script (safe to share)
-- **Secrets**: Pulled fresh from GCP Secret Manager
-- **Local override**: Edit `.env.local` to override any values during development
+## Running the simulation engine
 
-## Test Status
+The Rust service is optional. Without it the app falls back to the client-side
+Web Worker automatically:
 
-✅ **Core tests** (103 pass): Logic, calculations, projections  
-⚠️ **Integration tests** (3 fail): Firebase auth, external APIs
+```bash
+cd rust-simulation-service && cargo run    # :8081
+```
 
-The integration test failures don't block development or deployment since they require additional Firebase setup for the test environment.
+Set `RUST_SERVICE_URL=http://localhost:8081` in `.env.local` to use it.
 
-## Deployment Pipeline
+Note that the two engines share scenario definitions and the historical dataset
+(`services/simulation.ts`, `data/market-history-annual.ts`) — after editing the
+dataset, regenerate the Rust table:
 
-✅ **GitHub Actions**: Tests PRs before merge  
-✅ **Cloud Build**: Deploys to Cloud Run on merge to main  
-✅ **Cloud Run**: Live at https://retire-plan-789638662967.us-central1.run.app
+```bash
+node scripts/gen-rust-historical-data.mjs
+```
 
 ## Commands
 
 ```bash
-# Development
-pnpm dev              # Start dev server
-pnpm test             # Run tests  
-pnpm typecheck        # Type checking
-pnpm build            # Production build
-
-# Secrets
-./scripts/pull-secrets.sh    # Refresh local secrets from GCP
+pnpm dev              # dev server
+pnpm build            # production build
+pnpm test             # unit tests (vitest)
+pnpm e2e              # end-to-end tests (playwright, chromium)
+pnpm typecheck        # tsc --noEmit
+pnpm lint             # eslint
 ```
+
+```bash
+# from rust-simulation-service/
+cargo run             # start engine
+cargo test            # unit tests
+cargo clippy          # lints
+```
+
+First e2e run needs a browser: `pnpm -C apps/web exec playwright install chromium`.
+The e2e suite runs signed out (LOCAL data mode) and needs no database.
+
+## CI
+
+Every PR to `main` runs, in three parallel jobs:
+
+- **TypeScript** — typecheck, unit tests, production build, lint
+- **E2E** — Playwright smoke tests against the 5-page IA
+- **Rust** — `cargo check`, `cargo clippy`, `cargo test`
+
+Merges to `main` trigger Cloud Build, which deploys both Cloud Run services.
+See `DEPLOYMENT.md`.

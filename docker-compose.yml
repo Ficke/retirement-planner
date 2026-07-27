@@ -18,19 +18,27 @@ services:
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
       - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
       - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
-      # Optional: Gemini API for OCR
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      # Optional: Polygon API for market data
-      - POLYGON_API_KEY=${POLYGON_API_KEY:-}
-      - POLYGON_RATE_LIMIT_PER_MINUTE=${POLYGON_RATE_LIMIT_PER_MINUTE:-5}
-      # Optional: Langfuse for observability
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      # Simulation engine. Without this the app still works — it falls back to
+      # the client-side Web Worker — but the server-first path goes untested.
+      - RUST_SERVICE_URL=http://rust-simulation:8081
+    depends_on:
+      - rust-simulation
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  rust-simulation:
+    build:
+      context: ./rust-simulation-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+    restart: unless-stopped
+    # No healthcheck: the runtime image (debian-slim) ships neither wget nor
+    # curl. Probe it from the host instead: curl localhost:8081/healthz

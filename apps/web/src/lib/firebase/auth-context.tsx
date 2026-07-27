@@ -1,7 +1,6 @@
 /**
  * Firebase Auth Context Provider
  * Provides authentication state and user information throughout the app
- * Replaces NextAuth's SessionProvider
  */
 
 'use client';
@@ -44,7 +43,6 @@ async function syncUserRecord(user: User): Promise<void> {
 
 /**
  * Hook to access authentication state
- * Replaces NextAuth's useSession()
  */
 export function useAuth() {
   return useContext(AuthContext);

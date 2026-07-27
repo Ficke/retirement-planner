@@ -48,18 +48,6 @@ variable "secrets" {
     FIREBASE_PRIVATE_KEY = {
       description = "Firebase Admin SDK private key"
     }
-    GEMINI_API_KEY = {
-      description = "Google Gemini API key for OCR functionality"
-    }
-    POLYGON_API_KEY = {
-      description = "Polygon.io API key for market data"
-    }
-    LANGFUSE_PUBLIC_KEY = {
-      description = "Langfuse public key for observability"
-    }
-    LANGFUSE_SECRET_KEY = {
-      description = "Langfuse secret key for observability"
-    }
   }
 }
 
@@ -74,11 +62,15 @@ variable "public_env_vars" {
   # NEXT_PUBLIC_FIREBASE_PROJECT_ID
   # FIREBASE_PROJECT_ID
   # FIREBASE_CLIENT_EMAIL
-  # LANGFUSE_HOST
-  # POLYGON_RATE_LIMIT_PER_MINUTE
 }
 
 # Secret environment variables (references to Secret Manager)
+#
+# Every entry here is fetched by Cloud Run at container start, so it sits on the
+# cold-start path. Keep this list to secrets the app actually reads:
+# DATABASE_URL (services/server/database.ts) and FIREBASE_PRIVATE_KEY
+# (lib/firebase/admin.ts). The OCR-era GEMINI/POLYGON/LANGFUSE_* mounts were
+# removed with the feature — nothing in the app reads them.
 variable "secret_env_vars" {
   description = "Environment variables that reference secrets"
   type = map(object({
@@ -92,22 +84,6 @@ variable "secret_env_vars" {
     }
     FIREBASE_PRIVATE_KEY = {
       secret_name = "FIREBASE_PRIVATE_KEY"
-      version     = "latest"
-    }
-    GEMINI_API_KEY = {
-      secret_name = "GEMINI_API_KEY"
-      version     = "latest"
-    }
-    POLYGON_API_KEY = {
-      secret_name = "POLYGON_API_KEY"
-      version     = "latest"
-    }
-    LANGFUSE_PUBLIC_KEY = {
-      secret_name = "LANGFUSE_PUBLIC_KEY"
-      version     = "latest"
-    }
-    LANGFUSE_SECRET_KEY = {
-      secret_name = "LANGFUSE_SECRET_KEY"
       version     = "latest"
     }
   }

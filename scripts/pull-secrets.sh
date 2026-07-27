@@ -28,16 +28,9 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=retire-5250e.firebasestorage.app
 FIREBASE_PROJECT_ID=retire-5250e
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-fbsvc@retire-5250e.iam.gserviceaccount.com
 
-# Langfuse
-LANGFUSE_HOST=https://us.cloud.langfuse.com
-
 # Secrets (auto-generated from GCP)
 DATABASE_URL=$(gcloud secrets versions access latest --secret="DATABASE_URL")
 FIREBASE_PRIVATE_KEY="$(gcloud secrets versions access latest --secret="FIREBASE_PRIVATE_KEY" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')"
-GEMINI_API_KEY=$(gcloud secrets versions access latest --secret="GEMINI_API_KEY")
-POLYGON_API_KEY=$(gcloud secrets versions access latest --secret="POLYGON_API_KEY")
-LANGFUSE_PUBLIC_KEY=$(gcloud secrets versions access latest --secret="LANGFUSE_PUBLIC_KEY")
-LANGFUSE_SECRET_KEY=$(gcloud secrets versions access latest --secret="LANGFUSE_SECRET_KEY")
 EOF
 
 echo "✅ Secrets pulled to apps/web/.env.local"

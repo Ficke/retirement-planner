@@ -40,6 +40,9 @@ jobs:
       - name: Run typecheck
         run: pnpm typecheck
 
+      - name: Run lint
+        run: pnpm lint
+
       - name: Run tests
         run: pnpm test
 
@@ -61,10 +64,53 @@ jobs:
           echo "### TypeScript Test Results 🧪" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ ${{ job.status }} == 'success' ]; then
-            echo "✅ All tests, typecheck, and build passed!" >> $GITHUB_STEP_SUMMARY
+            echo "✅ All tests, typecheck, lint, and build passed!" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ Tests, typecheck, or build failed. Please fix the errors." >> $GITHUB_STEP_SUMMARY
+            echo "❌ Tests, typecheck, lint, or build failed. Please fix the errors." >> $GITHUB_STEP_SUMMARY
           fi
+
+  # End-to-end smoke tests. These run signed out (LOCAL data mode), so they
+  # need no database, no Firebase project, and no secrets — the placeholder
+  # Firebase config below only has to satisfy the client SDK's initializer.
+  e2e:
+    name: E2E Smoke Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm -C apps/web exec playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        run: pnpm -C apps/web exec playwright test --project=chromium
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: placeholder-for-build
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: placeholder-project
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
+          NEXT_PUBLIC_FIREBASE_APP_ID: 1:000000000000:web:placeholder
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
 
   test-rust:
     name: Test Rust Service

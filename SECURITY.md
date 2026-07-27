@@ -1,292 +1,135 @@
-# Security Audit Report - RetirePlan Application
-**Date:** 2025-10-24
-**Status:** Pre-Production Security Review
-**Auditor:** Claude Code
+# Security
 
-## Executive Summary
-
-A comprehensive security audit was performed on the RetirePlan application before migrating to Google Cloud Platform. Several **CRITICAL** vulnerabilities were identified and remediated. The application is now ready for production deployment with the recommended security measures implemented.
+Current security posture, plus the audit history that produced it.
 
 ---
 
-## 🚨 Critical Issues Found & Remediated
+## Current posture
 
-### 1. Unauthenticated Admin Endpoints (CRITICAL) - **FIXED**
-**Risk Level:** CRITICAL
-**Impact:** Complete data breach - unauthorized access to all user data
+### Authentication and authorization
 
-**Vulnerabilities Identified:**
-- `/api/auth/debug` - Exposed ALL user emails, Firebase UIDs, and database records
-- `/api/auth/migrate-users` (GET) - Listed all users without Firebase accounts
-- `/api/database` - Exposed database connection strings and statistics
-- `/api/auth/transfer-accounts` - Allowed ANYONE to transfer accounts between users!
-- `/api/auth/sync-firebase-users` - Allowed bulk Firebase user synchronization
+Firebase Auth, verified server-side via the Admin SDK (`lib/firebase/server-auth.ts`).
 
-**Remediation:**
-✅ **DELETED** all dangerous development endpoints:
-  - `apps/web/src/app/api/auth/debug/route.ts`
-  - `apps/web/src/app/api/auth/migrate-users/route.ts`
-  - `apps/web/src/app/api/database/route.ts`
-  - `apps/web/src/app/api/auth/transfer-accounts/route.ts`
-  - `apps/web/src/app/api/auth/sync-firebase-users/route.ts`
+| Endpoint | Auth | Notes |
+|---|---|---|
+| `/api/accounts`, `/api/accounts/[id]` | Required | Every handler re-checks `account.user_id === user.id` before reading or writing — a valid token for user A cannot touch user B's account by ID |
+| `/api/profile` | Required | Scoped to `user.id` |
+| `/api/auth/sync-user` | Token required | Verifies the bearer token before creating the user row |
+| `/api/simulation/monte-carlo`, `/api/simulation/batch` | **None, by design** | See below |
+| `/healthz` | None | Returns the string `ok`, no I/O |
 
----
+The app is fully usable signed out. In LOCAL data mode nothing is written
+server-side at all, so there is no data to protect for anonymous users.
 
-### 2. Missing Authentication on OCR Endpoint (HIGH) - **FIXED**
-**Risk Level:** HIGH
-**Impact:** Unauthorized use of expensive Gemini API, potential data leakage
+### The unauthenticated simulation endpoints
 
-**Vulnerability:**
-- `/api/ocr` endpoint accepted file uploads without authentication
-- Rate-limited by IP only (easily bypassed)
-- Expensive Gemini API calls could drain credits
+`/api/simulation/*` is deliberately public: anonymous users can opt into cloud
+compute. That makes it the main abuse surface, since every request fans out to
+CPU-bound work on the Rust service. Mitigations in `lib/simulation-request.ts`:
 
-**Remediation:**
-✅ **ADDED** Firebase authentication check to OCR endpoint
-✅ **CHANGED** rate limiting from IP-based to user-based (`ocr:user:{userId}`)
-✅ **VERIFIED** proper file size validation (max 10MB)
+- Per-IP rate limit: 60 requests / 60s
+- `paths` ≤ 5,000 per simulation
+- ≤ 40 scenarios per batch, ≤ 40,000 total paths per batch
+- ≤ 20 accounts per plan
+- Plan bounds (ages, rates, horizon) enforced by the shared domain schema
 
----
+Nothing from these request bodies is persisted. Plans sent for cloud compute are
+processed in memory and discarded.
 
-## ✅ Security Strengths Confirmed
+**Known limitation:** the rate limiter is in-process (`lib/rate-limit.ts`), so
+each Cloud Run instance keeps its own counters. At `max_instances = 10` the
+effective ceiling is up to 10× the nominal limit, and counters reset when
+instances recycle. Adequate for the current threat model — the clamps above
+bound the cost of any single request — but a shared store (Redis/Upstash) is the
+upgrade if abuse ever materializes.
 
-### 1. SQL Injection Protection
-**Status:** ✅ SECURE
+### Data handling
 
-All database queries use **parameterized queries** with `$1`, `$2` placeholders:
-```typescript
-// Example from accounts route
-await db.query(
-  'SELECT * FROM accounts WHERE user_id = $1',
-  [user.id]  // Safe parameterization
-);
+- All SQL uses parameterized queries; no string interpolation anywhere in `services/server/database.ts`
+- Zod validates every request body before it reaches the database or the Rust service
+- The Rust service holds no credentials, opens no database connection, and is not publicly invokable — only the web service account has `roles/run.invoker` on it
+
+### Secrets
+
+Managed in GCP Secret Manager, never in git and never in Terraform state
+(Terraform creates the secret containers; values are added out of band).
+
+Only two are mounted into Cloud Run: `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`.
+The `GEMINI_API_KEY` / `POLYGON_API_KEY` / `LANGFUSE_*` mounts were removed
+along with the features that used them.
+
+Firebase *client* config (`NEXT_PUBLIC_FIREBASE_*`) is intentionally public and
+baked into the JS bundle. It is not a secret; security comes from Firebase Auth
+rules and the authorized-domains list.
+
+### Transport and headers
+
+Cloud Run terminates TLS and never serves plain HTTP. Response headers are set
+in `apps/web/next.config.ts`:
+
 ```
-
-**Verified:** No string interpolation or concatenation in SQL queries
-
----
-
-### 2. Authentication & Authorization
-**Status:** ✅ SECURE
-
-- Firebase Authentication properly implemented
-- All protected API routes verify user authentication
-- User-based data filtering prevents unauthorized access
-- JWT token verification on server-side
-
-**Protected Endpoints:**
-- `/api/accounts/*` - User-specific account data
-- `/api/ocr` - Authenticated OCR processing
-- `/api/auth/sync-user` - Token verification required
-
----
-
-### 3. Environment Variables & Secrets
-**Status:** ✅ SECURE
-
-- `.env.local` properly excluded from Git (`.gitignore`)
-- `.env.example` provides template without secrets
-- Firebase private keys properly escaped
-- No hardcoded secrets in codebase
-
-**Secrets Properly Managed:**
-- `DATABASE_URL`
-- `FIREBASE_PRIVATE_KEY`
-- `FIREBASE_CLIENT_EMAIL`
-- `GEMINI_API_KEY`
-- `POLYGON_API_KEY`
-- `LANGFUSE_SECRET_KEY`
-
----
-
-### 4. Rate Limiting
-**Status:** ✅ IMPLEMENTED
-
-OCR endpoint has rate limiting configured:
-- 10 requests per hour per user
-- Expensive Gemini API calls protected
-- Proper HTTP 429 responses with `Retry-After` headers
-
----
-
-### 5. Input Validation
-**Status:** ✅ SECURE
-
-- Zod schemas validate API inputs
-- Base64 image validation in OCR endpoint
-- File size limits enforced (10MB max)
-- Email/password validation on auth endpoints
-
----
-
-## 📋 Production Deployment Checklist
-
-### Before Deploying to GCP:
-
-#### 1. Environment Variables
-- [ ] Rotate ALL Firebase Admin SDK credentials
-- [ ] Generate new Langfuse API keys (current keys exposed in .env.local)
-- [ ] Use GCP Secret Manager for:
-  - `DATABASE_URL`
-  - `FIREBASE_PRIVATE_KEY`
-  - `FIREBASE_CLIENT_EMAIL`
-  - `GEMINI_API_KEY`
-  - `LANGFUSE_SECRET_KEY`
-
-#### 2. Database Security
-- [ ] Enable Cloud SQL automatic backups
-- [ ] Configure Cloud SQL connection with Cloud SQL Proxy
-- [ ] Enable SSL/TLS for database connections
-- [ ] Set up database user with least-privilege access
-- [ ] Remove or revoke development database credentials
-
-#### 3. Firebase Security
-- [ ] Enable Firebase Security Rules for Storage (if used)
-- [ ] Configure authorized domains in Firebase Console
-- [ ] Enable Multi-Factor Authentication (MFA) support
-- [ ] Set up Firebase App Check for additional security
-
-#### 4. Network Security
-- [ ] Configure Cloud Armor WAF rules
-- [ ] Enable HTTPS only (redirect HTTP → HTTPS)
-- [ ] Set up CORS policies for production domain
-- [ ] Configure CSP (Content Security Policy) headers
-
-#### 5. Monitoring & Logging
-- [ ] Enable Cloud Logging for all API routes
-- [ ] Set up alerts for:
-  - Failed authentication attempts
-  - Rate limit violations
-  - Database connection errors
-  - Unauthorized access attempts
-- [ ] Configure Langfuse for production environment
-
-#### 6. Additional Security Measures
-- [ ] Add rate limiting to auth endpoints (`/api/auth/sync-user`)
-- [ ] Implement CSRF protection for state-changing operations
-- [ ] Add security headers:
-  ```typescript
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
-  'X-Frame-Options': 'DENY'
-  'X-Content-Type-Options': 'nosniff'
-  'Referrer-Policy': 'strict-origin-when-cross-origin'
-  ```
-- [ ] Configure session timeouts for Firebase Auth
-- [ ] Enable audit logging for sensitive operations
-
----
-
-## 🔒 Additional Recommendations
-
-### 1. Secrets Rotation **CRITICAL**
-**Issue:** Current `.env.local` contains Langfuse keys that may have been exposed during development.
-
-**Action Required:**
-1. Regenerate Langfuse API keys at https://cloud.langfuse.com
-2. Rotate Firebase Admin SDK service account
-3. Update all secrets in GCP Secret Manager
-4. Delete old credentials from Firebase Console
-
----
-
-### 2. Enable Firebase Security Features
-- **App Check**: Prevent unauthorized API access from modified apps
-- **Email Verification**: Require users to verify email addresses
-- **MFA**: Offer multi-factor authentication for sensitive accounts
-- **Session Management**: Configure appropriate session timeouts
-
----
-
-### 3. Add Security Headers Middleware
-Create `src/middleware.ts` to add security headers:
-```typescript
-export function middleware(request: NextRequest) {
-  const response = NextResponse.next();
-
-  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  response.headers.set('X-Frame-Options', 'DENY');
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  return response;
-}
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
 ```
 
 ---
 
-### 4. Implement Audit Logging
-Log sensitive operations for compliance:
-- Account creation/deletion
-- Transaction uploads
-- User authentication events
-- Failed authorization attempts
+## Open items
+
+- **No Content-Security-Policy.** Next.js injects inline bootstrap scripts, so a
+  useful policy needs nonce plumbing rather than a static header. Not started.
+- **Rate limiting is per-instance** (see above).
+- **No Firebase App Check**, no enforced email verification, no MFA.
+- **No audit logging** of account create/delete or auth events.
+- **No Cloud Armor / WAF** in front of Cloud Run.
+- **Neon backups** are on the provider's default retention; no tested restore
+  procedure.
+
+None of these block the current deployment; they are the next tier of hardening
+if the app takes on more users or more sensitive data.
 
 ---
 
-### 5. Database Backup Strategy
-- **Automated Backups**: Enable Cloud SQL automatic backups (daily)
-- **Point-in-Time Recovery**: Configure PITR for disaster recovery
-- **Backup Testing**: Regularly test backup restoration
-- **Retention Policy**: Keep backups for at least 30 days
+## Audit history
+
+### 2025-10-24 — pre-production review
+
+Found and fixed a set of critical issues before the GCP migration.
+
+**Deleted — unauthenticated endpoints exposing user data:**
+
+- `/api/auth/debug` — dumped all user emails, Firebase UIDs, and DB records
+- `/api/auth/migrate-users` — listed users without Firebase accounts
+- `/api/database` — exposed connection strings and DB statistics
+- `/api/auth/transfer-accounts` — let *anyone* move accounts between users
+- `/api/auth/sync-firebase-users` — bulk user sync with no auth
+
+**Hardened:**
+
+- Added Firebase auth to the OCR endpoint and moved its rate limiting from
+  IP-based to user-based
+- Added client-side auth guards to the app and auth pages
+
+**Confirmed sound:** parameterized SQL, per-user data filtering, server-side JWT
+verification, `.env.local` correctly gitignored, Zod input validation.
+
+### Since that audit
+
+- The OCR feature was removed entirely, taking `/api/ocr`, the Gemini
+  dependency, and the `ocr_feedback` table with it. The audit findings about
+  that endpoint are historical only.
+- Public simulation endpoints were added, with the gating described above.
+- Security headers — an open item in the original audit — are now implemented.
+- Legacy tables from retired architectures (holdings, transactions, sessions,
+  verification tokens) are dropped by migration 11.
 
 ---
 
-### 6. Incident Response Plan
-Establish procedures for:
-- Security breach detection and response
-- User notification in case of data breach
-- Credential rotation procedures
-- Service recovery procedures
+## Reporting
 
----
-
-## 📊 Security Score
-
-| Category | Score | Status |
-|----------|-------|--------|
-| Authentication | 9/10 | ✅ Excellent |
-| Authorization | 9/10 | ✅ Excellent |
-| SQL Injection | 10/10 | ✅ Perfect |
-| Secrets Management | 7/10 | ⚠️ Needs rotation |
-| Rate Limiting | 8/10 | ✅ Good |
-| Input Validation | 9/10 | ✅ Excellent |
-| Error Handling | 8/10 | ✅ Good |
-| **Overall** | **8.6/10** | ✅ **Production Ready** |
-
----
-
-## Summary of Changes Made
-
-### Deleted Files (Security Risks):
-1. ✅ `/api/auth/debug/route.ts` - Exposed all user data
-2. ✅ `/api/auth/migrate-users/route.ts` - Unauthenticated migration endpoint
-3. ✅ `/api/database/route.ts` - Exposed database info
-4. ✅ `/api/auth/transfer-accounts/route.ts` - Dangerous account transfer
-5. ✅ `/api/auth/sync-firebase-users/route.ts` - Bulk user sync without auth
-
-### Modified Files (Security Enhancements):
-1. ✅ `/api/ocr/route.ts` - Added Firebase authentication, user-based rate limiting
-2. ✅ `/app/page.tsx` - Added client-side auth protection
-3. ✅ `/app/auth/signin/page.tsx` - Added redirect for authenticated users
-4. ✅ `/app/auth/signup/page.tsx` - Added redirect for authenticated users
-
----
-
-## Conclusion
-
-The RetirePlan application has undergone a comprehensive security audit and remediation. **All critical vulnerabilities have been addressed** and the application is now ready for production deployment to Google Cloud Platform.
-
-### Next Steps:
-1. ✅ Complete the GCP deployment checklist above
-2. ✅ Rotate ALL secrets and credentials
-3. ✅ Enable Firebase security features
-4. ✅ Set up monitoring and alerting
-5. ✅ Implement security headers middleware
-6. ✅ Configure production database backups
-
-### Sign-off:
-The application follows security best practices for a financial/retirement planning application and is ready for cloud deployment with the above recommendations implemented.
-
----
-
-**For questions or security concerns, please contact your security team.**
+This is a personal project. Open an issue at
+https://github.com/Ficke/retirement-planner/issues, or for anything sensitive,
+contact the repository owner directly rather than filing publicly.
