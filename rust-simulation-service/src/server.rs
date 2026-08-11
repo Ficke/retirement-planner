@@ -167,11 +167,17 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     if profile.age < 18 || profile.age > 100 {
         return Err("age must be between 18 and 100".into());
     }
-    if profile.retirement_age <= profile.age || profile.retirement_age > 80 {
-        return Err("retirementAge must be after age and no greater than 80".into());
+    if profile.retirement_age < 45 || profile.retirement_age > 100 {
+        return Err("retirementAge must be between 45 and 100".into());
     }
-    if profile.life_expectancy <= profile.retirement_age || profile.life_expectancy > 120 {
-        return Err("lifeExpectancy must be after retirementAge and no greater than 120".into());
+    if profile.life_expectancy <= profile.retirement_age
+        || profile.life_expectancy <= profile.age
+        || profile.life_expectancy > 120
+    {
+        return Err(
+            "lifeExpectancy must be after current and retirement ages and no greater than 120"
+                .into(),
+        );
     }
     let Ok(as_of_date) = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d") else {
         return Err("asOfDate must use YYYY-MM-DD".into());
@@ -212,8 +218,8 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
             return Err("estimatedBenefit must be finite and between 0 and 10000000".into());
         }
     }
-    if plan.accounts.is_empty() || plan.accounts.len() > 20 {
-        return Err("plan must contain 1 to 20 accounts".into());
+    if plan.accounts.len() > 20 {
+        return Err("plan may contain at most 20 accounts".into());
     }
     let contributions = &plan.assumptions.contributions;
     if !plan.assumptions.taxable_gain_ratio.is_finite()
@@ -235,7 +241,10 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     }
     for account in &plan.accounts {
         let weights = &account.asset_weights;
-        if !account.balance.is_finite()
+        let taxable_matches_type =
+            account.taxable == matches!(account.account_type, crate::types::AccountType::Taxable);
+        if !taxable_matches_type
+            || !account.balance.is_finite()
             || account.balance < 0.0
             || account.balance > 1_000_000_000_000_000.0
             || !weights.stocks.is_finite()
@@ -251,4 +260,50 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_plan_without_accounts() {
+        let plan: RetirementPlan = serde_json::from_value(serde_json::json!({
+            "profile": {
+                "age": 40,
+                "birthYear": 1985,
+                "state": "CA",
+                "filingStatus": "Single",
+                "retirementAge": 65,
+                "currentSalary": 100000.0,
+                "salaryGrowthRate": 0.02,
+                "currentSpending": 60000.0,
+                "desiredSpending": 50000.0,
+                "spendingGrowthRate": 0.02,
+                "lifeExpectancy": 90,
+                "asOfDate": "2025-01-01"
+            },
+            "accounts": [],
+            "socialSecurity": {
+                "enabled": true,
+                "estimatedBenefit": 24000.0,
+                "claimAge": 67,
+                "manualOverride": true
+            },
+            "assumptions": {
+                "simulationModel": "historical",
+                "randomSeed": 42,
+                "taxableGainRatio": 0.5,
+                "contributions": {
+                    "hsa": 0.0,
+                    "traditional": 0.0,
+                    "roth": 0.0,
+                    "taxable": 0.0
+                }
+            }
+        }))
+        .expect("test plan should deserialize");
+
+        assert_eq!(validate_plan(&plan), Ok(()));
+    }
 }

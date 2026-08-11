@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { calculateSSABenefit, calculateAIME, calculatePIA, getClaimAgeAdjustment } from '@/engine/ssa';
+import {
+  calculateSSABenefit,
+  calculateAIME,
+  calculatePIA,
+  getClaimAgeAdjustment,
+  getFullRetirementAgeMonths,
+} from '@/engine/ssa';
 import { estimateSalaryHistory } from '@/engine/projection';
 
 describe('Social Security Administration', () => {
@@ -8,7 +14,7 @@ describe('Social Security Administration', () => {
   describe('Claim Age Adjustments', () => {
     it('should apply early claiming penalty at age 62 (FRA 67 → 30% reduction)', () => {
       const adjustment = getClaimAgeAdjustment(62);
-      expect(adjustment).toBe(0.70);
+      expect(adjustment).toBeCloseTo(0.70, 12);
     });
 
     it('should give full benefit at full retirement age 67', () => {
@@ -19,6 +25,12 @@ describe('Social Security Administration', () => {
     it('should apply delayed retirement credit at age 70', () => {
       const adjustment = getClaimAgeAdjustment(70);
       expect(adjustment).toBe(1.24);
+    });
+
+    it('uses the birth-year-specific full retirement age', () => {
+      expect(getFullRetirementAgeMonths(1956)).toBe(66 * 12 + 4);
+      expect(getClaimAgeAdjustment(67, 1956)).toBeCloseTo(1.0533333333, 8);
+      expect(getClaimAgeAdjustment(62, 1959)).toBeCloseTo(0.7083333333, 8);
     });
   });
   
@@ -33,7 +45,7 @@ describe('Social Security Administration', () => {
       expect(benefit67.annualBenefit).toBeLessThan(benefit70.annualBenefit);
       
       // Verify claim adjustments are applied correctly
-      expect(benefit62.claimAdjustment).toBe(0.70);
+      expect(benefit62.claimAdjustment).toBeCloseTo(0.70, 12);
       expect(benefit67.claimAdjustment).toBe(1.0);
       expect(benefit70.claimAdjustment).toBe(1.24);
       

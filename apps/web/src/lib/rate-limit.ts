@@ -14,6 +14,8 @@ interface RateLimitStore {
 }
 
 class RateLimiter {
+  private static readonly MAX_STORE_ENTRIES = 10_000;
+  private static readonly OVERFLOW_KEY = '__overflow__';
   private store = new Map<string, RateLimitStore>();
   private cleanupInterval: NodeJS.Timeout;
 
@@ -27,6 +29,7 @@ class RateLimiter {
         }
       }
     }, 5 * 60 * 1000);
+    this.cleanupInterval.unref?.();
   }
 
   /**
@@ -49,14 +52,30 @@ class RateLimiter {
     const now = Date.now();
     const windowStart = now - windowMs;
 
-    let record = this.store.get(identifier);
+    let storeKey = identifier;
+    let record = this.store.get(storeKey);
+
+    // Bound memory under source-address churn. Once the store is full, new
+    // identifiers share a deliberately restrictive overflow bucket instead of
+    // growing the process heap without limit or evicting entries to bypass the
+    // limiter.
+    if (!record && this.store.size >= RateLimiter.MAX_STORE_ENTRIES) {
+      const namespaceEnd = identifier.indexOf(':');
+      const namespace = namespaceEnd > 0 ? identifier.slice(0, namespaceEnd) : 'default';
+      storeKey = `${RateLimiter.OVERFLOW_KEY}:${namespace}`;
+      record = this.store.get(storeKey);
+      if (!record) {
+        const oldestKey = this.store.keys().next().value;
+        if (oldestKey) this.store.delete(oldestKey);
+      }
+    }
 
     if (!record) {
       record = {
         requests: [{ time: now, cost }],
         resetTime: now + windowMs,
       };
-      this.store.set(identifier, record);
+      this.store.set(storeKey, record);
       return {
         success: true,
         remaining: Math.max(0, limit - cost),
@@ -69,7 +88,7 @@ class RateLimiter {
     const used = record.requests.reduce((sum, request) => sum + request.cost, 0);
 
     if (used + cost > limit) {
-      const oldestRequest = Math.min(...record.requests.map((request) => request.time));
+      const oldestRequest = record.requests[0]?.time ?? now;
       return {
         success: false,
         remaining: 0,
@@ -112,20 +131,16 @@ export async function rateLimit(
  * Get client IP from Next.js request headers
  */
 export function getClientIp(headers: Headers): string {
-  // Try different headers in order of preference
   const forwardedFor = headers.get('x-forwarded-for');
   if (forwardedFor) {
     const addresses = forwardedFor.split(',').map((address) => address.trim()).filter(Boolean);
     // Google load balancers append the client and load-balancer addresses;
-    // any values before those may be user supplied.
-    return addresses[addresses.length - 2] ?? addresses[addresses.length - 1] ?? 'unknown';
+    // any values before those may be user supplied. A shorter chain cannot be
+    // authenticated in this deployment and therefore uses the shared bucket.
+    return addresses.length >= 2 ? addresses[addresses.length - 2] : 'unknown';
   }
 
-  const realIp = headers.get('x-real-ip');
-  if (realIp) {
-    return realIp;
-  }
-
-  // Fallback to a default (should rarely happen)
+  // Do not trust x-real-ip: clients can supply it when an upstream does not
+  // overwrite it consistently.
   return 'unknown';
 }

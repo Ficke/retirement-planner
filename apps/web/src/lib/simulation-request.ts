@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 import { retirementPlanSchema } from '@/domain/schemas';
+import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
 
 /** Hard ceiling on paths per simulation — matches what the UI ever requests. */
 export const MAX_PATHS = 5000;
@@ -31,8 +32,8 @@ const simulationConfigSchema = z.object({
  * per-path work.
  */
 const simulationPlanSchema = retirementPlanSchema.refine(
-  (plan) => plan.accounts.length <= 20,
-  { message: 'Too many accounts (max 20)' },
+  (plan) => plan.accounts.length <= MAX_PLAN_ACCOUNTS,
+  { message: `Too many accounts (max ${MAX_PLAN_ACCOUNTS})` },
 );
 
 export const monteCarloRequestSchema = z.object({
@@ -72,15 +73,3 @@ export const SIMULATION_PATH_RATE_LIMIT = {
   limit: 120_000,
   windowMs: 60 * 1000,
 } as const;
-
-export async function readLimitedJson(request: Request, maxBytes = 256 * 1024): Promise<unknown> {
-  const declaredLength = Number(request.headers.get('content-length') ?? 0);
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new RangeError('Request body is too large');
-  }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes) {
-    throw new RangeError('Request body is too large');
-  }
-  return JSON.parse(text);
-}

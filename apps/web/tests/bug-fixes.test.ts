@@ -8,7 +8,7 @@ describe('Bug Fixes', () => {
     
     it('should apply early claiming penalty at age 62 (FRA 67 → 30% reduction)', () => {
       const result = calculateSSABenefit(testSalaryHistory, 62);
-      expect(result.claimAdjustment).toBe(0.70);
+      expect(result.claimAdjustment).toBeCloseTo(0.70, 12);
       expect(result.annualBenefit).toBeGreaterThan(0);
     });
     

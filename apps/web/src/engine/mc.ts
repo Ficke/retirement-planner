@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink';
 import type { RetirementPlan, SimulationResult } from '@/domain/types';
 import type { WorkerAPI } from '@/workers/mc.worker';
+import { retirementPlanSchema } from '@/domain/schemas';
 
 /**
  * Monte Carlo simulation client wrapper.
@@ -79,26 +80,8 @@ export async function runMonteCarloSimulation(
  * @returns Array of validation errors (empty if valid)
  */
 export function validateSimulationInputs(plan: RetirementPlan): string[] {
-  const errors: string[] = [];
-  
-  if (plan.accounts.length === 0) {
-    errors.push('At least one account is required');
-  }
-  
-  for (const account of plan.accounts) {
-    const weightSum = Object.values(account.assetWeights).reduce((sum, w) => sum + w, 0);
-    if (Math.abs(weightSum - 1) > 0.001) {
-      errors.push(`Account "${account.name}" asset weights must sum to 1.0`);
-    }
-  }
-  
-  if (plan.profile.retirementAge <= plan.profile.age) {
-    errors.push('Retirement age must be greater than current age');
-  }
-  
-  if (plan.profile.desiredSpending <= 0) {
-    errors.push('Desired spending must be positive');
-  }
-  
-  return errors;
+  const validation = retirementPlanSchema.safeParse(plan);
+  return validation.success
+    ? []
+    : validation.error.issues.map((issue) => issue.message);
 }

@@ -20,16 +20,16 @@ export interface SSABenefitResult {
 }
 
 const BEND_POINTS: SSABendPoint[] = bendPointsData.bendPoints;
-const CLAIM_AGE_ADJUSTMENTS = bendPointsData.claimAgeAdjustments as Record<string, number | string>;
 const MAX_TAXABLE_WAGE = bendPointsData.maxTaxableWage;
 
 export function calculateSSABenefit(
   salaryHistory: number[],
-  claimAge: number
+  claimAge: number,
+  birthYear = 1960,
 ): SSABenefitResult {
   const aime = calculateAIME(salaryHistory);
   const pia = calculatePIA(aime, BEND_POINTS);
-  const claimAdjustment = getClaimAgeAdjustment(claimAge);
+  const claimAdjustment = getClaimAgeAdjustment(claimAge, birthYear);
 
   const monthlyBenefit = pia * claimAdjustment;
   const annualBenefit = monthlyBenefit * 12;
@@ -82,9 +82,38 @@ export function calculatePIA(aime: number, bendPoints: SSABendPoint[]): number {
 }
 
 /**
- * Reduction/credit factor for claim age (FRA = 67, birth year 1960+).
+ * Full retirement age in months, including SSA's phased transition from 65
+ * to 67. The plan only stores a birth year and integer claim age, so this is a
+ * birthday-month estimate rather than a benefit-start-month calculation.
  */
-export function getClaimAgeAdjustment(claimAge: number): number {
-  const raw = CLAIM_AGE_ADJUSTMENTS[String(claimAge)];
-  return typeof raw === 'number' ? raw : 1.0;
+export function getFullRetirementAgeMonths(birthYear: number): number {
+  if (birthYear <= 1937) return 65 * 12;
+  if (birthYear <= 1942) return 65 * 12 + (birthYear - 1937) * 2;
+  if (birthYear <= 1954) return 66 * 12;
+  if (birthYear <= 1959) return 66 * 12 + (birthYear - 1954) * 2;
+  return 67 * 12;
+}
+
+function delayedRetirementCreditPerMonth(birthYear: number): number {
+  if (birthYear <= 1934) return 11 / 2400;
+  if (birthYear <= 1936) return 1 / 200;
+  if (birthYear <= 1938) return 13 / 2400;
+  if (birthYear <= 1940) return 7 / 1200;
+  if (birthYear <= 1942) return 1 / 160;
+  return 1 / 150;
+}
+
+/** Apply SSA's monthly early-claim reductions and delayed credits. */
+export function getClaimAgeAdjustment(claimAge: number, birthYear = 1960): number {
+  const claimMonths = Math.max(62, Math.min(70, claimAge)) * 12;
+  const fullRetirementAgeMonths = getFullRetirementAgeMonths(birthYear);
+  if (claimMonths < fullRetirementAgeMonths) {
+    const monthsEarly = fullRetirementAgeMonths - claimMonths;
+    const first36Months = Math.min(36, monthsEarly);
+    const additionalMonths = Math.max(0, monthsEarly - 36);
+    return 1 - first36Months / 180 - additionalMonths / 240;
+  }
+
+  const monthsDelayed = Math.min(70 * 12, claimMonths) - fullRetirementAgeMonths;
+  return 1 + monthsDelayed * delayedRetirementCreditPerMonth(birthYear);
 }

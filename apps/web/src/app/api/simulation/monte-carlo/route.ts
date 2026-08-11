@@ -4,10 +4,10 @@ import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { fetchRustService } from '@/lib/rust-service-client';
 import {
   monteCarloRequestSchema,
-  readLimitedJson,
   SIMULATION_PATH_RATE_LIMIT,
   SIMULATION_RATE_LIMIT,
 } from '@/lib/simulation-request';
+import { readLimitedJson } from '@/lib/validation';
 
 /**
  * Proxies Monte Carlo simulation requests to the Rust service.
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await readLimitedJson(request);
+    const body = await readLimitedJson(request, 256 * 1024);
     const validation = monteCarloRequestSchema.safeParse(body);
     if (!validation.success) {
       return NextResponse.json(
@@ -71,6 +71,9 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error) {
       if (error instanceof RangeError) {
         return NextResponse.json({ error: error.message }, { status: 413 });
+      }
+      if (error instanceof SyntaxError) {
+        return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
       }
       if (error.name === 'AbortError' || error.message.includes('timeout')) {
         return NextResponse.json(

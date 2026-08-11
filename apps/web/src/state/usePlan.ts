@@ -15,6 +15,7 @@ import { getSimulationService } from '@/services/simulation';
 import { getAccountsClient } from '@/services/client/accounts-client';
 import { getProfileClient, ProfileConflictError } from '@/services/client/profile-client';
 import { retirementPlanSchema } from '@/domain/schemas';
+import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
 import {
   loadUserPreferences,
   saveUserPreferences,
@@ -80,6 +81,9 @@ async function flushProfileToDb(get: () => PlanState, set: PlanSetter) {
     || profileConflictDetected
     || state.dataMode() !== 'cloud'
   ) return;
+  const ownerId = state.authUser?.id;
+  const generation = bootstrapGeneration;
+  if (!ownerId) return;
   profileSaveInFlight = true;
   profileDirty = false;
   try {
@@ -87,9 +91,11 @@ async function flushProfileToDb(get: () => PlanState, set: PlanSetter) {
       profile: state.plan.profile as unknown as Record<string, unknown>,
       socialSecurity: state.plan.socialSecurity as unknown as Record<string, unknown>,
       assumptions: state.plan.assumptions as unknown as Record<string, unknown>,
-    }, state.profileRevision);
+    }, state.profileRevision, ownerId);
+    if (generation !== bootstrapGeneration || get().authUser?.id !== ownerId) return;
     set({ profileRevision: revision });
   } catch (error) {
+    if (generation !== bootstrapGeneration || get().authUser?.id !== ownerId) return;
     console.error('Failed to save profile to DB:', error);
     if (error instanceof ProfileConflictError) {
       profileConflictDetected = true;
@@ -172,6 +178,8 @@ interface PlanState {
 
   // Auth + mode (authUser is pushed in from the AuthProvider via bootstrap)
   authUser: { id: string } | null;
+  cloudAccountReady: boolean;
+  cloudAvailable: boolean;
   cloudSyncEnabled: boolean;
   useServerSideCalculations: boolean;
   profileRevision: number | null;
@@ -190,7 +198,7 @@ interface PlanState {
   error: string | null;
 
   // Actions
-  bootstrap: (authUser: { id: string } | null) => Promise<void>;
+  bootstrap: (authUser: { id: string } | null, cloudAccountReady?: boolean) => Promise<void>;
   updatePlan: (updates: {
     profile?: Partial<UserProfile>;
     socialSecurity?: Partial<SocialSecuritySettings>;
@@ -245,9 +253,18 @@ export const usePlan = create<PlanState>((set, get) => ({
   plan: defaultPlan,
 
   authUser: null,
+  cloudAccountReady: false,
+  cloudAvailable: false,
   ...getInitialPreferences(),
   profileRevision: null,
-  dataMode: () => (get().authUser && get().cloudSyncEnabled ? 'cloud' : 'local'),
+  dataMode: () => (
+    get().authUser
+    && get().cloudAccountReady
+    && get().cloudAvailable
+    && get().cloudSyncEnabled
+      ? 'cloud'
+      : 'local'
+  ),
 
   simulationResult: null,
   ssAnalysisResult: null,
@@ -264,32 +281,46 @@ export const usePlan = create<PlanState>((set, get) => ({
    * simulation pipeline. Runs on app start and whenever auth state changes
    * (sign-in and sign-out both re-bootstrap).
    */
-  bootstrap: async (authUser) => {
+  bootstrap: async (authUser, cloudAccountReady = authUser != null) => {
     const generation = ++bootstrapGeneration;
     clearLegacyLocalData();
     profileDirty = false;
     profileConflictDetected = false;
-    set({ authUser });
+    set({
+      authUser,
+      cloudAccountReady,
+      cloudAvailable: false,
+      bootstrapped: false,
+      error: null,
+    });
 
-    const cloud = get().dataMode() === 'cloud';
+    const cloudRequested = Boolean(authUser && cloudAccountReady && get().cloudSyncEnabled);
     const ownerId = authUser?.id ?? null;
 
-    // Cloud is authoritative when present. The UID-scoped cache is a fallback
-    // for local mode and temporary cloud unavailability.
+    // A cloud bootstrap is all-or-nothing: never combine a cloud profile with
+    // stale local accounts (or vice versa). If either read fails, remain in
+    // UID-scoped local mode so subsequent edits cannot overwrite unknown cloud
+    // state after a partial load.
     let dbProfile: Awaited<ReturnType<ReturnType<typeof getProfileClient>['getProfile']>> = null;
-    if (cloud) {
+    let cloudAccounts: Account[] | null = null;
+    let cloudAvailable = cloudRequested;
+    if (cloudRequested) {
       try {
-        dbProfile = await getProfileClient().getProfile();
+        [dbProfile, cloudAccounts] = await Promise.all([
+          getProfileClient().getProfile(ownerId!),
+          getAccountsClient().getAccounts(ownerId!),
+        ]);
       } catch (error) {
-        console.error('Failed to load cloud profile, continuing with local:', error);
+        cloudAvailable = false;
+        console.error('Failed to load cloud plan, continuing with UID-scoped local data:', error);
       }
     }
     const localProfile = loadLocalProfile(ownerId);
-    const profileSource = cloud && dbProfile?.profile ? dbProfile.profile : localProfile?.profile;
-    const socialSecuritySource = cloud && dbProfile?.socialSecurity
+    const profileSource = cloudAvailable && dbProfile?.profile ? dbProfile.profile : localProfile?.profile;
+    const socialSecuritySource = cloudAvailable && dbProfile?.socialSecurity
       ? dbProfile.socialSecurity
       : localProfile?.socialSecurity;
-    const assumptionsSource = cloud && dbProfile?.assumptions
+    const assumptionsSource = cloudAvailable && dbProfile?.assumptions
       ? dbProfile.assumptions
       : localProfile?.assumptions;
 
@@ -323,19 +354,9 @@ export const usePlan = create<PlanState>((set, get) => ({
     } as AssumptionSettings;
 
     // Accounts
-    let accounts: Account[] = [];
-    try {
-      if (cloud) {
-        accounts = await getAccountsClient().getAccounts();
-        saveLocalAccounts(accounts, ownerId);
-      } else {
-        accounts = loadLocalAccounts<Account>(ownerId) ?? [];
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load accounts';
-      console.error('Failed to load accounts:', error);
-      if (generation === bootstrapGeneration) set({ error: message });
-    }
+    const accounts = cloudAvailable && cloudAccounts
+      ? cloudAccounts
+      : loadLocalAccounts<Account>(ownerId) ?? [];
 
     // Auth can change while cloud requests are in flight. Never let an older
     // bootstrap overwrite the newer user's owner-scoped state.
@@ -343,10 +364,15 @@ export const usePlan = create<PlanState>((set, get) => ({
 
     set({
       plan: { profile, socialSecurity, assumptions, accounts },
-      profileRevision: cloud ? dbProfile?.revision ?? null : null,
+      cloudAvailable,
+      profileRevision: cloudAvailable ? dbProfile?.revision ?? null : null,
       bootstrapped: true,
+      error: cloudRequested && !cloudAvailable
+        ? 'Cloud data is temporarily unavailable. Browser edits remain local; retrying reloads the cloud copy.'
+        : null,
       ...invalidateResults(get),
     });
+    if (cloudAvailable) saveLocalAccounts(accounts, ownerId);
     saveLocalProfile({ profile, socialSecurity, assumptions, accounts }, ownerId);
 
     setupProfileAutoSave(get, set);
@@ -354,7 +380,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   updatePlan: (updates) =>
     set((state) => {
-      const plan = {
+      const candidate = {
         ...state.plan,
         ...(updates.profile && { profile: { ...state.plan.profile, ...updates.profile } }),
         ...(updates.socialSecurity && {
@@ -374,19 +400,35 @@ export const usePlan = create<PlanState>((set, get) => ({
         }),
       };
 
+      const validation = retirementPlanSchema.safeParse(candidate);
+      if (!validation.success) {
+        const issue = validation.error.issues[0];
+        return {
+          error: `Plan change was not applied: ${issue?.message ?? 'invalid plan value'}`,
+        };
+      }
+      const plan = validation.data;
+
       saveLocalProfile(plan, cacheOwner(state));
       profileDirty = true;
 
-      return { plan, ...invalidateResults(get) };
+      return { plan, error: null, ...invalidateResults(get) };
     }),
 
   createAccount: async (data) => {
     set({ error: null });
+    const initiatingOwnerId = cacheOwner(get());
     try {
+      if (get().plan.accounts.length >= MAX_PLAN_ACCOUNTS) {
+        throw new Error(`A plan may contain at most ${MAX_PLAN_ACCOUNTS} accounts`);
+      }
       let accounts: Account[];
       if (get().dataMode() === 'cloud') {
-        await getAccountsClient().createAccount(data);
-        accounts = await getAccountsClient().getAccounts();
+        const ownerId = initiatingOwnerId!;
+        await getAccountsClient().createAccount(data, ownerId);
+        if (get().authUser?.id !== ownerId) return;
+        accounts = await getAccountsClient().getAccounts(ownerId);
+        if (get().authUser?.id !== ownerId) return;
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
@@ -395,6 +437,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
+      if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to create account' });
       throw error;
     }
@@ -402,11 +445,15 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   updateAccount: async (id, updates) => {
     set({ error: null });
+    const initiatingOwnerId = cacheOwner(get());
     try {
       let accounts: Account[];
       if (get().dataMode() === 'cloud') {
-        await getAccountsClient().updateAccount(id, updates);
-        accounts = await getAccountsClient().getAccounts();
+        const ownerId = initiatingOwnerId!;
+        await getAccountsClient().updateAccount(id, updates, ownerId);
+        if (get().authUser?.id !== ownerId) return;
+        accounts = await getAccountsClient().getAccounts(ownerId);
+        if (get().authUser?.id !== ownerId) return;
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
@@ -424,6 +471,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
+      if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to update account' });
       throw error;
     }
@@ -431,11 +479,15 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   deleteAccount: async (id) => {
     set({ error: null });
+    const initiatingOwnerId = cacheOwner(get());
     try {
       let accounts: Account[];
       if (get().dataMode() === 'cloud') {
-        await getAccountsClient().deleteAccount(id);
-        accounts = await getAccountsClient().getAccounts();
+        const ownerId = initiatingOwnerId!;
+        await getAccountsClient().deleteAccount(id, ownerId);
+        if (get().authUser?.id !== ownerId) return;
+        accounts = await getAccountsClient().getAccounts(ownerId);
+        if (get().authUser?.id !== ownerId) return;
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
@@ -444,6 +496,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
+      if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to delete account' });
       throw error;
     }
@@ -467,7 +520,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     }
     set({ cloudSyncEnabled: enabled });
     persistPreferences(get);
-    await get().bootstrap(get().authUser);
+    await get().bootstrap(get().authUser, get().cloudAccountReady);
   },
 
   clearError: () => set({ error: null }),

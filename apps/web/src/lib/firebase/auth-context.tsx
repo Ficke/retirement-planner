@@ -11,12 +11,15 @@ import { auth } from './config';
 
 interface AuthContextType {
   user: User | null;
+  /** True only after the authenticated user row is ready for cloud data APIs. */
+  cloudReady: boolean;
   loading: boolean;
   error: Error | null;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  cloudReady: false,
   loading: true,
   error: null,
 });
@@ -45,33 +48,46 @@ export function useAuth() {
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [cloudReady, setCloudReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     let active = true;
+    let authGeneration = 0;
     // Subscribe to auth state changes
     const unsubscribe = onAuthStateChanged(
       auth,
-      async (user) => {
+      async (nextUser) => {
+        const generation = ++authGeneration;
+        setLoading(true);
+        setCloudReady(false);
+        setError(null);
+
         let syncError: Error | null = null;
-        if (user) {
+        let nextCloudReady = false;
+        if (nextUser) {
           try {
             // Account/profile routes reference this row. Await the idempotent
             // upsert before exposing the user to plan bootstrap.
-            await syncUserRecord(user);
+            await syncUserRecord(nextUser);
+            nextCloudReady = true;
           } catch (error) {
             syncError = error instanceof Error ? error : new Error('Failed to sync user record');
             console.error('Failed to sync user record:', error);
           }
         }
-        if (!active) return;
-        setUser(user);
+        if (!active || generation !== authGeneration) return;
+        setUser(nextUser);
+        setCloudReady(nextCloudReady);
         setLoading(false);
         setError(syncError);
       },
       (error) => {
+        authGeneration++;
         console.error('Auth state change error:', error);
+        setUser(null);
+        setCloudReady(false);
         setError(error);
         setLoading(false);
       }
@@ -85,7 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, error }}>
+    <AuthContext.Provider value={{ user, cloudReady, loading, error }}>
       {children}
     </AuthContext.Provider>
   );

@@ -7,6 +7,8 @@ import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
 import seedrandom from 'seedrandom';
 
+const SIMULATION_SURPLUS_CASH_ID = '__simulation_surplus_cash__';
+
 export interface ProjectionConfig {
   paths: number;
   seed: number;
@@ -36,21 +38,22 @@ export function projectScenario(
 
   // DEBUG logging disabled - too verbose
 
-  // Calculate fraction of current year remaining based on as-of date
-  // Simple day-based calculation to avoid timezone issues
-  const asOfDate = new Date(profile.asOfDate + 'T00:00:00');
-  const currentYear = asOfDate.getFullYear();
+  // Calculate the inclusive fraction of the current year remaining. Use UTC
+  // calendar arithmetic so daylight-saving transitions cannot add or remove a
+  // day from the first simulation period.
+  const [currentYear, asOfMonth, asOfDay] = profile.asOfDate.split('-').map(Number);
   const birthYear = profile.birthYear ?? currentYear - profile.age;
   const rmdStartAge = getRmdStartAge(birthYear);
-  const startOfYear = new Date(currentYear, 0, 1);
   const daysInYear = (currentYear % 4 === 0 && currentYear % 100 !== 0) || (currentYear % 400 === 0) ? 366 : 365;
-  const dayOfYear = Math.floor((asOfDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  const dayOfYear = Math.floor(
+    (Date.UTC(currentYear, asOfMonth - 1, asOfDay) - Date.UTC(currentYear, 0, 1))
+      / (1000 * 60 * 60 * 24),
+  ) + 1;
   const remainingYearFraction = Math.max(0, Math.min(1, (daysInYear - dayOfYear + 1) / daysInYear));
   
-  const yearsToRetirement = profile.retirementAge - profile.age;
-  const retirementYears = profile.lifeExpectancy - profile.retirementAge;
-  // Life expectancy is inclusive: simulate through that age
-  const totalYears = yearsToRetirement + retirementYears + 1;
+  // Life expectancy is inclusive: simulate from current age through that age.
+  // Deriving this directly also supports people who are already retired.
+  const totalYears = profile.lifeExpectancy - profile.age + 1;
 
   const yearlyProjections: PathProjection[] = [];
 
@@ -121,31 +124,13 @@ export function projectScenario(
       const hasTraditional = accountBalances.some((account) => account.type === 'Traditional');
       const hasRoth = accountBalances.some((account) => account.type === 'Roth');
       const hasTaxable = accountBalances.some((account) => account.type === 'Taxable');
-
-      const workingCashFlow = calculateWorkingCashFlow(
-        annualSalary,
-        annualWorkingSpending,
-        currentAge,
-        profile.filingStatus,
-        profile.state,
-        {
-          hsa: hasHSA ? targets.hsa : 0,
-          traditional: hasTraditional ? targets.traditional : 0,
-          roth: hasRoth ? targets.roth : 0,
-          taxable: hasTaxable ? targets.taxable : 0,
-        },
-      );
-      const taxResult = workingCashFlow.tax;
-      const rothContribution = workingCashFlow.contributions.roth;
-      const taxableContribution = workingCashFlow.contributions.taxable;
-      insufficientFundsYear = workingCashFlow.fundingGap > 1;
-
+      const eligibleTargets = {
+        hsa: hasHSA ? targets.hsa : 0,
+        traditional: hasTraditional ? targets.traditional : 0,
+        roth: hasRoth ? targets.roth : 0,
+        taxable: hasTaxable ? targets.taxable : 0,
+      };
       const periodFraction = year === 0 ? remainingYearFraction : 1;
-      income = annualSalary * periodFraction;
-      spending = annualWorkingSpending * periodFraction;
-      taxes = taxResult.totalTax * periodFraction;
-      savings = workingCashFlow.totalContributions * periodFraction;
-
 
       // Generate market returns for this year using the configured generator
       const yearlyReturns = returnsGenerator.next();
@@ -164,6 +149,47 @@ export function projectScenario(
         account.balance = Math.max(0, account.balance);
 
       }
+
+      // RMDs still apply when the primary person works past the applicable
+      // age. Current-year annual flows are prorated uniformly because the plan
+      // does not collect year-to-date distributions.
+      let rmdRemaining = rmdAmount * periodFraction;
+      for (const account of accountBalances) {
+        if (account.type === 'Traditional' && account.balance > 0 && rmdRemaining > 0) {
+          const withdrawal = Math.min(rmdRemaining, account.balance);
+          account.balance -= withdrawal;
+          withdrawalTraditionalYear += withdrawal;
+          rmdRemaining -= withdrawal;
+        }
+      }
+      rmdAmount = withdrawalTraditionalYear;
+      const annualizedRmdIncome = withdrawalTraditionalYear / periodFraction;
+      const baselineWorkingCashFlow = calculateWorkingCashFlow(
+        annualSalary,
+        annualWorkingSpending,
+        currentAge,
+        profile.filingStatus,
+        profile.state,
+        eligibleTargets,
+      );
+      const workingCashFlow = annualizedRmdIncome > 0
+        ? calculateWorkingCashFlow(
+            annualSalary,
+            annualWorkingSpending,
+            currentAge,
+            profile.filingStatus,
+            profile.state,
+            eligibleTargets,
+            annualizedRmdIncome,
+          )
+        : baselineWorkingCashFlow;
+      const taxResult = workingCashFlow.tax;
+      const rothContribution = workingCashFlow.contributions.roth;
+      const taxableContribution = workingCashFlow.contributions.taxable;
+      insufficientFundsYear = workingCashFlow.fundingGap > 1;
+      income = annualSalary * periodFraction;
+      spending = annualWorkingSpending * periodFraction;
+      taxes = taxResult.totalTax * periodFraction;
 
       // Add new savings to appropriate accounts based on contribution rules
       // For first year, prorate contributions based on remaining year fraction
@@ -205,7 +231,7 @@ export function projectScenario(
 
       // Explicit after-tax savings go to taxable accounts
       if (taxableContribution > 0) {
-        const taxableAccount = accountBalances.find(acc => acc.taxable);
+        const taxableAccount = accountBalances.find(acc => acc.type === 'Taxable');
         if (taxableAccount) {
           const deposit = taxableContribution * contributionProration;
           taxableAccount.balance += deposit;
@@ -213,16 +239,37 @@ export function projectScenario(
 
         }
       }
+
+      // Preserve only cash forced into the working-year budget by the RMD.
+      // Ordinary wage surplus remains governed by the user's explicit savings
+      // targets rather than being silently optimized by the simulator.
+      const forcedSurplusDeposit = Math.max(
+        0,
+        workingCashFlow.unallocatedCash - baselineWorkingCashFlow.unallocatedCash,
+      ) * periodFraction;
+      if (forcedSurplusDeposit > 0) {
+        depositTaxableCash(accountBalances, forcedSurplusDeposit);
+        depositTaxableYear += forcedSurplusDeposit;
+      }
+
+      savings = depositTaxableYear
+        + depositTraditionalYear
+        + depositRothYear
+        + depositHSAYear
+        - withdrawalTraditionalYear;
       
       // Update total portfolio value
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
 
     } else {
       // Retirement phase: withdrawals, SS benefits, taxes on withdrawals
-      const targetSpending = profile.desiredSpending * Math.pow(1 + profile.spendingGrowthRate, year);
+      const retirementPeriodFraction = year === 0 ? remainingYearFraction : 1;
+      const targetSpending = profile.desiredSpending
+        * Math.pow(1 + profile.spendingGrowthRate, year)
+        * retirementPeriodFraction;
 
       if (socialSecurity.enabled && currentAge >= socialSecurity.claimAge) {
-        socialSecurityBenefit = socialSecurity.manualOverride
+        const annualSocialSecurityBenefit = socialSecurity.manualOverride
           ? Math.max(0, socialSecurity.estimatedBenefit ?? 0)
           : calculateSSABenefit(
               estimateSalaryHistory(
@@ -232,7 +279,9 @@ export function projectScenario(
                 profile.retirementAge,
               ),
               socialSecurity.claimAge,
+              birthYear,
             ).annualBenefit;
+        socialSecurityBenefit = annualSocialSecurityBenefit * retirementPeriodFraction;
       }
 
       // Generate market returns for this year using the configured generator
@@ -251,13 +300,11 @@ export function projectScenario(
         account.balance = Math.max(0, account.balance);
       }
 
-      // Calculate total withdrawals needed (spending - SS)
-      const netWithdrawalNeeded = Math.max(0, targetSpending - socialSecurityBenefit);
-
       // Execute the explicit Taxable → Traditional → Roth → HSA policy.
+      rmdAmount *= retirementPeriodFraction;
       const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } =
         executeOrderedWithdrawals(
-          netWithdrawalNeeded,
+          targetSpending,
           accountBalances,
           { age: currentAge, filingStatus: profile.filingStatus, state: profile.state },
           socialSecurityBenefit,
@@ -267,11 +314,8 @@ export function projectScenario(
 
       // RMD excess gets reinvested in taxable account
       if (depositTaxable > 0) {
-        const taxableAccount = accountBalances.find(acc => acc.taxable);
-        if (taxableAccount) {
-          taxableAccount.balance += depositTaxable;
-          depositTaxableYear = depositTaxable;
-        }
+        depositTaxableCash(accountBalances, depositTaxable);
+        depositTaxableYear = depositTaxable;
       }
 
       // Store withdrawals for this year's projection
@@ -284,11 +328,11 @@ export function projectScenario(
 
       // Calculate actual spending based on available funds
       spending = insufficientFunds
-        ? Math.max(0, totalWithdrawn - totalTaxes + socialSecurityBenefit)
+        ? Math.max(0, totalWithdrawn - totalTaxes - depositTaxable + socialSecurityBenefit)
         : targetSpending;
 
       income = socialSecurityBenefit;
-      savings = -totalWithdrawn; // Negative savings in retirement
+      savings = depositTaxable - totalWithdrawn;
 
       // Update portfolio value to match account balances
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
@@ -609,55 +653,45 @@ export function estimateSalaryHistory(
   return salaryHistory;
 }
 
-/**
- * Helper function to calculate marginal tax on excess RMD amount
- * This calculates the additional tax burden from the excess RMD portion
- */
-function calculateMarginalTaxOnExcess(
-  excessAmount: number,
-  baseTraditionalIncome: number,
-  socialSecurityBenefit: number,
-  qualifiedIncome: number,
-  profile: { age: number; filingStatus: FilingStatus; state: string }
-): number {
-  if (excessAmount <= 0) return 0;
-  
-  // All values now consistently in actual dollars
-  const baseTax = calculateRetirementTax(
-    baseTraditionalIncome,
-    socialSecurityBenefit,
-    qualifiedIncome,
-    profile.age,
-    profile.filingStatus,
-    profile.state
-  );
-  
-  const totalTax = calculateRetirementTax(
-    baseTraditionalIncome + excessAmount,
-    socialSecurityBenefit,
-    qualifiedIncome,
-    profile.age,
-    profile.filingStatus,
-    profile.state
-  );
-  
-  // Return marginal tax in actual dollars
-  return totalTax.totalTax - baseTax.totalTax;
+/** Preserve forced cash surpluses even when no brokerage account exists. */
+function depositTaxableCash(accounts: Account[], amount: number): void {
+  if (amount <= 0) return;
+  const taxableAccount = accounts.find((account) => account.type === 'Taxable');
+  if (taxableAccount) {
+    taxableAccount.balance += amount;
+    return;
+  }
+
+  // Internal zero-real-return cash account. It is never persisted or returned
+  // to the user; it prevents after-tax RMD or income surpluses from disappearing.
+  accounts.push({
+    id: SIMULATION_SURPLUS_CASH_ID,
+    name: 'Surplus cash',
+    institution: '',
+    type: 'Taxable',
+    user_id: null,
+    balance: amount,
+    assetWeights: { stocks: 0, bonds: 0 },
+    taxable: true,
+    createdAt: '1970-01-01T00:00:00.000Z',
+    updatedAt: '1970-01-01T00:00:00.000Z',
+  });
 }
 
 /**
  * Execute the configured deterministic withdrawal order with iterative taxes.
- * Solves for the gross withdrawal amount that, after taxes, provides the target after-tax amount.
- * Uses Taxable → Traditional → Roth ordering per CLAUDE.md.
+ * Finds the smallest withdrawal that funds spending and taxes after Social
+ * Security, subject to the full RMD. Any cash that remains when only mandatory
+ * withdrawals are left is reinvested instead of disappearing.
  * 
- * @param targetAfterTaxAmount - Net amount needed for spending (after taxes)
+ * @param targetSpending - Total spending for the modeled period
  * @param accountBalances - Account balances to withdraw from  
  * @param profile - User profile for tax calculations
  * @param socialSecurityBenefit - SS income that affects tax brackets
  * @returns Withdrawal amounts and tax implications
  */
 function executeOrderedWithdrawals(
-  targetAfterTaxAmount: number,
+  targetSpending: number,
   accountBalances: Account[],
   profile: { age: number; filingStatus: FilingStatus; state: string },
   socialSecurityBenefit: number,
@@ -673,19 +707,6 @@ function executeOrderedWithdrawals(
   insufficientFunds: boolean;
   depositTaxable: number;
 } {
-  if (targetAfterTaxAmount <= 0 && rmdAmount <= 0) {
-    return {
-      withdrawalTaxable: 0,
-      withdrawalTraditional: 0,
-      withdrawalRoth: 0,
-      withdrawalHSA: 0,
-      totalWithdrawn: 0,
-      totalTaxes: 0,
-      insufficientFunds: false,
-      depositTaxable: 0
-    };
-  }
-
   // Validate accounts have required fields
   for (const account of accountBalances) {
     if (!account.type) {
@@ -703,246 +724,161 @@ function executeOrderedWithdrawals(
     }
   }
 
-  // Social Security or other income can cover all spending, but an RMD is
-  // still mandatory. Take it, pay the resulting tax, and reinvest the net.
-  if (targetAfterTaxAmount <= 0) {
-    let rmdRemaining = rmdAmount;
+  const tolerance = 1;
+
+  type Evaluation = {
+    balances: Account[];
+    withdrawalTaxable: number;
+    withdrawalTraditional: number;
+    withdrawalRoth: number;
+    withdrawalHSA: number;
+    totalWithdrawn: number;
+    totalTaxes: number;
+    cashAvailableAfterTax: number;
+  };
+
+  const evaluate = (voluntaryBudget: number): Evaluation => {
+    const balances = accountBalances.map((account) => ({ ...account }));
+    let withdrawalTaxable = 0;
     let withdrawalTraditional = 0;
-    for (const account of accountBalances) {
+    let withdrawalRoth = 0;
+    let withdrawalHSA = 0;
+    let qualifiedIncome = 0;
+
+    // Mandatory distributions happen before the voluntary ordering and never
+    // get replaced by another account type if Traditional assets are depleted.
+    let rmdRemaining = rmdAmount;
+    for (const account of balances) {
       if (account.type === 'Traditional' && account.balance > 0 && rmdRemaining > 0) {
-        const withdrawal = Math.min(account.balance, rmdRemaining);
+        const withdrawal = Math.min(rmdRemaining, account.balance);
         account.balance -= withdrawal;
         withdrawalTraditional += withdrawal;
         rmdRemaining -= withdrawal;
       }
     }
-    const taxResult = calculateRetirementTax(
+
+    let remaining = Math.max(0, voluntaryBudget);
+    for (const account of balances) {
+      if (account.type === 'Taxable' && account.balance > 0 && remaining > 0) {
+        const withdrawal = Math.min(remaining, account.balance);
+        account.balance -= withdrawal;
+        withdrawalTaxable += withdrawal;
+        if (account.id !== SIMULATION_SURPLUS_CASH_ID) {
+          qualifiedIncome += withdrawal * taxableGainRatio;
+        }
+        remaining -= withdrawal;
+      }
+    }
+    for (const account of balances) {
+      if (account.type === 'Traditional' && account.balance > 0 && remaining > 0) {
+        const withdrawal = Math.min(remaining, account.balance);
+        account.balance -= withdrawal;
+        withdrawalTraditional += withdrawal;
+        remaining -= withdrawal;
+      }
+    }
+    for (const account of balances) {
+      if (account.type === 'Roth' && account.balance > 0 && remaining > 0) {
+        const withdrawal = Math.min(remaining, account.balance);
+        account.balance -= withdrawal;
+        withdrawalRoth += withdrawal;
+        remaining -= withdrawal;
+      }
+    }
+    for (const account of balances) {
+      if (account.type === 'HSA' && account.balance > 0 && remaining > 0) {
+        const withdrawal = Math.min(remaining, account.balance);
+        account.balance -= withdrawal;
+        withdrawalHSA += withdrawal;
+        remaining -= withdrawal;
+      }
+    }
+
+    const totalTaxes = calculateRetirementTax(
       withdrawalTraditional,
       socialSecurityBenefit,
-      0,
+      qualifiedIncome,
       profile.age,
       profile.filingStatus,
       profile.state,
-    );
+    ).totalTax;
+    const totalWithdrawn = withdrawalTaxable
+      + withdrawalTraditional
+      + withdrawalRoth
+      + withdrawalHSA;
     return {
-      withdrawalTaxable: 0,
+      balances,
+      withdrawalTaxable,
       withdrawalTraditional,
-      withdrawalRoth: 0,
-      withdrawalHSA: 0,
-      totalWithdrawn: withdrawalTraditional,
-      totalTaxes: taxResult.totalTax,
-      insufficientFunds: rmdRemaining > 1,
-      depositTaxable: Math.max(0, withdrawalTraditional - taxResult.totalTax),
+      withdrawalRoth,
+      withdrawalHSA,
+      totalWithdrawn,
+      totalTaxes,
+      cashAvailableAfterTax: socialSecurityBenefit + totalWithdrawn - totalTaxes,
     };
-  }
-
-  // Create deep copies to avoid mutating original balances
-  const workingBalances = accountBalances.map(acc => ({ ...acc }));
-  
-  // Step 1: Determine spending needs following standard withdrawal order
-  let targetGrossWithdrawal = targetAfterTaxAmount * 1.15; // Initial estimate
-  const maxIterations = 10;
-  const tolerance = 1;
-  
-  // Declare withdrawal variables outside the loop
-  let withdrawalTaxable = 0;
-  let withdrawalTraditional = 0;
-  let withdrawalRoth = 0;
-  let withdrawalHSA = 0;
-  
-  for (let iteration = 0; iteration < maxIterations; iteration++) {
-    // Reset working balances and withdrawals for this iteration
-    for (let i = 0; i < workingBalances.length; i++) {
-      workingBalances[i].balance = accountBalances[i].balance;
-    }
-    
-    withdrawalTaxable = 0;
-    withdrawalTraditional = 0;
-    withdrawalRoth = 0;
-    withdrawalHSA = 0;
-    let remainingNeeded = targetGrossWithdrawal;
-    
-    // Step A: If RMD required, withdraw full RMD from traditional accounts first
-    let spendingNeedsFromTraditional = 0;
-    
-    if (rmdAmount > 0) {
-      // Withdraw the full RMD amount from traditional accounts
-      let rmdRemaining = rmdAmount;
-      for (const account of workingBalances) {
-        if (account.type === 'Traditional' && account.balance > 0 && rmdRemaining > 0) {
-          const withdrawal = Math.min(rmdRemaining, account.balance);
-          account.balance -= withdrawal;
-          withdrawalTraditional += withdrawal;
-          rmdRemaining -= withdrawal;
-        }
-      }
-      
-      // Determine how much of the RMD covers spending
-      spendingNeedsFromTraditional = Math.min(withdrawalTraditional, remainingNeeded);
-      remainingNeeded -= spendingNeedsFromTraditional;
-    }
-    
-    // Step B: Continue with standard withdrawal order for remaining spending needs
-    
-    // Taxable accounts
-    for (const account of workingBalances) {
-      if (account.taxable && account.balance > 0 && remainingNeeded > 0) {
-        const withdrawal = Math.min(remainingNeeded, account.balance);
-        account.balance -= withdrawal;
-        withdrawalTaxable += withdrawal;
-        remainingNeeded -= withdrawal;
-      }
-    }
-    
-    // Traditional accounts (for additional spending beyond RMD if needed)
-    for (const account of workingBalances) {
-      if (account.type === 'Traditional' && account.balance > 0 && remainingNeeded > 0) {
-        const withdrawal = Math.min(remainingNeeded, account.balance);
-        account.balance -= withdrawal;
-        withdrawalTraditional += withdrawal;
-        remainingNeeded -= withdrawal;
-      }
-    }
-
-    // Update total spending needs from traditional (includes both RMD and additional spending)
-    if (rmdAmount === 0) {
-      spendingNeedsFromTraditional = withdrawalTraditional;
-    }
-    
-    // Roth accounts
-    for (const account of workingBalances) {
-      if (account.type === 'Roth' && account.balance > 0 && remainingNeeded > 0) {
-        const withdrawal = Math.min(remainingNeeded, account.balance);
-        account.balance -= withdrawal;
-        withdrawalRoth += withdrawal;
-        remainingNeeded -= withdrawal;
-      }
-    }
-    
-    // HSA accounts (last resort)
-    for (const account of workingBalances) {
-      if (account.type === 'HSA' && account.balance > 0 && remainingNeeded > 0) {
-        const withdrawal = Math.min(remainingNeeded, account.balance);
-        account.balance -= withdrawal;
-        withdrawalHSA += withdrawal;
-        remainingNeeded -= withdrawal;
-      }
-    }
-    
-    // Step 2: Calculate excess RMD (already withdrawn above)
-    const excessRmd = Math.max(0, rmdAmount - spendingNeedsFromTraditional);
-    
-    // Step 3: Calculate taxes on all withdrawals (including RMD excess)
-    const qualifiedIncome = withdrawalTaxable * taxableGainRatio;
-    
-    // All values now consistently in actual dollars - no conditional scaling needed
-    const taxResult = calculateRetirementTax(
-      withdrawalTraditional,
-      socialSecurityBenefit,
-      qualifiedIncome,
-      profile.age,
-      profile.filingStatus,
-      profile.state
-    );
-    
-    const totalTaxes = taxResult.totalTax;
-    const totalWithdrawn = withdrawalTaxable + withdrawalTraditional + withdrawalRoth + withdrawalHSA;
-    const netAmountForSpending = totalWithdrawn - totalTaxes;
-
-    // Check convergence for spending target (ignore RMD excess for convergence)
-    const difference = Math.abs(netAmountForSpending - excessRmd - targetAfterTaxAmount);
-
-    // Convergence check
-
-    if (difference <= tolerance) {
-      // Step 4: Calculate precise reinvestment for excess RMD
-      let depositTaxable = 0;
-      if (excessRmd > 0) {
-        // Calculate marginal tax on excess RMD portion
-        const marginalTaxOnExcess = calculateMarginalTaxOnExcess(
-          excessRmd,
-          spendingNeedsFromTraditional,
-          socialSecurityBenefit,
-          qualifiedIncome,
-          profile
-        );
-        depositTaxable = excessRmd - marginalTaxOnExcess;
-      }
-      
-      // Apply final balances to original accounts
-      for (let i = 0; i < accountBalances.length; i++) {
-        accountBalances[i].balance = workingBalances[i].balance;
-      }
-      
-      return {
-        withdrawalTaxable,
-        withdrawalTraditional,
-        withdrawalRoth,
-        withdrawalHSA,
-        totalWithdrawn,
-        totalTaxes: totalTaxes, // Already in actual dollars
-        insufficientFunds: remainingNeeded > 0,
-        depositTaxable
-      };
-    }
-    
-    // Adjust target for next iteration (only for spending, not RMD excess)
-    const spendingNet = netAmountForSpending - excessRmd;
-    if (spendingNet < targetAfterTaxAmount) {
-      const shortfall = targetAfterTaxAmount - spendingNet;
-      targetGrossWithdrawal += shortfall * 1.2;
-    } else {
-      const overage = spendingNet - targetAfterTaxAmount;
-      targetGrossWithdrawal -= overage * 0.8;
-    }
-    
-    targetGrossWithdrawal = Math.max(0, targetGrossWithdrawal);
-  }
-  
-  // Convergence failed - use final iteration values
-  const totalWithdrawn = withdrawalTaxable + withdrawalTraditional + withdrawalRoth + withdrawalHSA;
-  const qualifiedIncome = withdrawalTaxable * taxableGainRatio;
-  // All values consistently in actual dollars
-  const taxResult = calculateRetirementTax(
-    withdrawalTraditional,
-    socialSecurityBenefit,
-    qualifiedIncome,
-    profile.age,
-    profile.filingStatus,
-    profile.state
-  );
-  
-  // Calculate final deposit for excess RMD
-  const spendingNeedsFromTraditional = Math.min(withdrawalTraditional, targetAfterTaxAmount);
-  const excessRmd = Math.max(0, rmdAmount - spendingNeedsFromTraditional);
-  let depositTaxable = 0;
-  if (excessRmd > 0) {
-    const marginalTaxOnExcess = calculateMarginalTaxOnExcess(
-      excessRmd,
-      spendingNeedsFromTraditional,
-      socialSecurityBenefit,
-      qualifiedIncome,
-      profile
-    );
-    depositTaxable = excessRmd - marginalTaxOnExcess;
-  }
-  
-  // Apply final balances
-  for (let i = 0; i < accountBalances.length; i++) {
-    accountBalances[i].balance = workingBalances[i].balance;
-  }
-
-  // Note: Removed withdrawal convergence warning to clean up test output
-  // The withdrawal logic is working as intended, warnings were just noise
-
-  return {
-    withdrawalTaxable,
-    withdrawalTraditional,
-    withdrawalRoth,
-    withdrawalHSA,
-    totalWithdrawn,
-    totalTaxes: taxResult.totalTax, // Already in actual dollars
-    insufficientFunds: totalWithdrawn < targetAfterTaxAmount,
-    depositTaxable
   };
+
+  const finish = (evaluation: Evaluation) => {
+    for (let index = 0; index < accountBalances.length; index++) {
+      accountBalances[index].balance = evaluation.balances[index].balance;
+    }
+    const difference = evaluation.cashAvailableAfterTax - targetSpending;
+    return {
+      withdrawalTaxable: evaluation.withdrawalTaxable,
+      withdrawalTraditional: evaluation.withdrawalTraditional,
+      withdrawalRoth: evaluation.withdrawalRoth,
+      withdrawalHSA: evaluation.withdrawalHSA,
+      totalWithdrawn: evaluation.totalWithdrawn,
+      totalTaxes: evaluation.totalTaxes,
+      insufficientFunds: difference < -tolerance,
+      depositTaxable: difference > tolerance ? difference : 0,
+    };
+  };
+
+  const forced = evaluate(0);
+  if (forced.cashAvailableAfterTax + tolerance >= targetSpending) {
+    return finish(forced);
+  }
+
+  const maxVoluntaryBudget = forced.balances.reduce(
+    (sum, account) => sum + account.balance,
+    0,
+  );
+  if (maxVoluntaryBudget <= 0) return finish(forced);
+
+  // Find a funded upper bracket without starting at the entire portfolio;
+  // this keeps the bisection fast even for very large balances.
+  let low = 0;
+  let high = Math.min(
+    maxVoluntaryBudget,
+    Math.max(1, (targetSpending - forced.cashAvailableAfterTax) * 2),
+  );
+  let best = evaluate(high);
+  while (
+    best.cashAvailableAfterTax + tolerance < targetSpending
+    && high < maxVoluntaryBudget
+  ) {
+    low = high;
+    high = Math.min(maxVoluntaryBudget, high * 2);
+    best = evaluate(high);
+  }
+  if (best.cashAvailableAfterTax + tolerance < targetSpending) {
+    return finish(best);
+  }
+
+  // After-tax cash is monotone in the voluntary withdrawal budget. Bisect to
+  // the smallest funded withdrawal instead of relying on marginal-tax guesses.
+  for (let iteration = 0; iteration < 48; iteration++) {
+    if (Math.abs(best.cashAvailableAfterTax - targetSpending) <= tolerance) break;
+    const midpoint = (low + high) / 2;
+    const candidate = evaluate(midpoint);
+    if (candidate.cashAvailableAfterTax + tolerance >= targetSpending) {
+      high = midpoint;
+      best = candidate;
+    } else {
+      low = midpoint;
+    }
+  }
+
+  return finish(best);
 }

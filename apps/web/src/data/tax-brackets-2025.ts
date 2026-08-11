@@ -48,10 +48,10 @@ export const FEDERAL_TAX_BRACKETS_2025: Record<FilingStatus, TaxBracket[]> = {
 
 // 2025 Standard Deductions
 export const STANDARD_DEDUCTIONS_2025: Record<FilingStatus, number> = {
-  Single: 15000,
-  MarriedFilingJointly: 30000,
-  MarriedFilingSeparately: 15000,
-  HeadOfHousehold: 22500,
+  Single: 15750,
+  MarriedFilingJointly: 31500,
+  MarriedFilingSeparately: 15750,
+  HeadOfHousehold: 23625,
 };
 
 // Additional standard deduction for seniors (65+)
@@ -62,66 +62,66 @@ export const SENIOR_ADDITIONAL_DEDUCTION_2025: Record<FilingStatus, number> = {
   HeadOfHousehold: 2000,
 };
 
-// 2025 California Tax Brackets (approximate - CA hasn't released final 2025 yet)
+// Final 2025 California Tax Rate Schedules (FTB Form 540).
 export const CA_TAX_BRACKETS_2025: Record<FilingStatus, TaxBracket[]> = {
   Single: [
-    { min: 0, max: 10099, rate: 0.01 },
-    { min: 10099, max: 23942, rate: 0.02 },
-    { min: 23942, max: 37788, rate: 0.04 },
-    { min: 37788, max: 52455, rate: 0.06 },
-    { min: 52455, max: 66295, rate: 0.08 },
-    { min: 66295, max: 338639, rate: 0.093 },
-    { min: 338639, max: 406364, rate: 0.103 },
-    { min: 406364, max: 677278, rate: 0.113 },
-    { min: 677278, max: 1000000, rate: 0.123 },
+    { min: 0, max: 11079, rate: 0.01 },
+    { min: 11079, max: 26264, rate: 0.02 },
+    { min: 26264, max: 41452, rate: 0.04 },
+    { min: 41452, max: 57542, rate: 0.06 },
+    { min: 57542, max: 72724, rate: 0.08 },
+    { min: 72724, max: 371479, rate: 0.093 },
+    { min: 371479, max: 445771, rate: 0.103 },
+    { min: 445771, max: 742953, rate: 0.113 },
+    { min: 742953, max: 1000000, rate: 0.123 },
     { min: 1000000, max: null, rate: 0.133 }, // Mental Health Services Tax
   ],
   MarriedFilingJointly: [
-    { min: 0, max: 20198, rate: 0.01 },
-    { min: 20198, max: 47884, rate: 0.02 },
-    { min: 47884, max: 75576, rate: 0.04 },
-    { min: 75576, max: 104910, rate: 0.06 },
-    { min: 104910, max: 132590, rate: 0.08 },
-    { min: 132590, max: 677278, rate: 0.093 },
-    { min: 677278, max: 812728, rate: 0.103 },
-    // 11.3% statutory bracket runs to 1,354,556, but the 1% Mental Health
-    // Services Tax applies above 1,000,000 — split accordingly.
-    { min: 812728, max: 1000000, rate: 0.113 },
-    { min: 1000000, max: 1354556, rate: 0.123 },
-    { min: 1354556, max: null, rate: 0.133 },
+    { min: 0, max: 22158, rate: 0.01 },
+    { min: 22158, max: 52528, rate: 0.02 },
+    { min: 52528, max: 82904, rate: 0.04 },
+    { min: 82904, max: 115084, rate: 0.06 },
+    { min: 115084, max: 145448, rate: 0.08 },
+    { min: 145448, max: 742958, rate: 0.093 },
+    { min: 742958, max: 891542, rate: 0.103 },
+    // The 1% Mental Health Services Tax starts at $1,000,000, inside
+    // Schedule Y's 11.3% bracket, so that bracket is split here.
+    { min: 891542, max: 1000000, rate: 0.113 },
+    { min: 1000000, max: 1485906, rate: 0.123 },
+    { min: 1485906, max: null, rate: 0.133 },
   ],
   MarriedFilingSeparately: [
-    { min: 0, max: 10099, rate: 0.01 },
-    { min: 10099, max: 23942, rate: 0.02 },
-    { min: 23942, max: 37788, rate: 0.04 },
-    { min: 37788, max: 52455, rate: 0.06 },
-    { min: 52455, max: 66295, rate: 0.08 },
-    { min: 66295, max: 338639, rate: 0.093 },
-    { min: 338639, max: 406364, rate: 0.103 },
-    { min: 406364, max: 677278, rate: 0.113 },
-    { min: 677278, max: 1000000, rate: 0.123 },
+    { min: 0, max: 11079, rate: 0.01 },
+    { min: 11079, max: 26264, rate: 0.02 },
+    { min: 26264, max: 41452, rate: 0.04 },
+    { min: 41452, max: 57542, rate: 0.06 },
+    { min: 57542, max: 72724, rate: 0.08 },
+    { min: 72724, max: 371479, rate: 0.093 },
+    { min: 371479, max: 445771, rate: 0.103 },
+    { min: 445771, max: 742953, rate: 0.113 },
+    { min: 742953, max: 1000000, rate: 0.123 },
     { min: 1000000, max: null, rate: 0.133 },
   ],
   HeadOfHousehold: [
-    { min: 0, max: 20198, rate: 0.01 },
-    { min: 20198, max: 47884, rate: 0.02 },
-    { min: 47884, max: 61917, rate: 0.04 },
-    { min: 61917, max: 76138, rate: 0.06 },
-    { min: 76138, max: 90302, rate: 0.08 },
-    { min: 90302, max: 460547, rate: 0.093 },
-    { min: 460547, max: 552658, rate: 0.103 },
-    { min: 552658, max: 921095, rate: 0.113 },
-    { min: 921095, max: 1000000, rate: 0.123 },
-    { min: 1000000, max: null, rate: 0.133 },
+    { min: 0, max: 22173, rate: 0.01 },
+    { min: 22173, max: 52530, rate: 0.02 },
+    { min: 52530, max: 67716, rate: 0.04 },
+    { min: 67716, max: 83805, rate: 0.06 },
+    { min: 83805, max: 98990, rate: 0.08 },
+    { min: 98990, max: 505208, rate: 0.093 },
+    { min: 505208, max: 606251, rate: 0.103 },
+    { min: 606251, max: 1000000, rate: 0.113 },
+    { min: 1000000, max: 1010417, rate: 0.123 },
+    { min: 1010417, max: null, rate: 0.133 },
   ],
 };
 
-// CA Standard Deductions (2024, used as base for 2025)
+// Final 2025 CA standard deductions.
 export const CA_STANDARD_DEDUCTIONS_2025: Record<FilingStatus, number> = {
-  Single: 5540,
-  MarriedFilingJointly: 11080,
-  MarriedFilingSeparately: 5540,
-  HeadOfHousehold: 11080,
+  Single: 5706,
+  MarriedFilingJointly: 11412,
+  MarriedFilingSeparately: 5706,
+  HeadOfHousehold: 11412,
 };
 
 // 2025 Retirement Account Contribution Limits

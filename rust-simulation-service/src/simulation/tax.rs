@@ -20,8 +20,13 @@ pub struct TaxResult {
 pub struct WorkingCashFlowResult {
     pub tax: TaxResult,
     pub contributions: AnnualContributions,
-    pub total_contributions: f64,
+    pub unallocated_cash: f64,
     pub funding_gap: f64,
+}
+
+struct PretaxContributionTargets {
+    hsa: f64,
+    traditional: f64,
 }
 
 // 2025 Federal Tax Brackets
@@ -184,46 +189,46 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
         FilingStatus::Single => vec![
             TaxBracket {
                 min: 0.0,
-                max: Some(10099.0),
+                max: Some(11079.0),
                 rate: 0.01,
             },
             TaxBracket {
-                min: 10099.0,
-                max: Some(23942.0),
+                min: 11079.0,
+                max: Some(26264.0),
                 rate: 0.02,
             },
             TaxBracket {
-                min: 23942.0,
-                max: Some(37788.0),
+                min: 26264.0,
+                max: Some(41452.0),
                 rate: 0.04,
             },
             TaxBracket {
-                min: 37788.0,
-                max: Some(52455.0),
+                min: 41452.0,
+                max: Some(57542.0),
                 rate: 0.06,
             },
             TaxBracket {
-                min: 52455.0,
-                max: Some(66295.0),
+                min: 57542.0,
+                max: Some(72724.0),
                 rate: 0.08,
             },
             TaxBracket {
-                min: 66295.0,
-                max: Some(338639.0),
+                min: 72724.0,
+                max: Some(371479.0),
                 rate: 0.093,
             },
             TaxBracket {
-                min: 338639.0,
-                max: Some(406364.0),
+                min: 371479.0,
+                max: Some(445771.0),
                 rate: 0.103,
             },
             TaxBracket {
-                min: 406364.0,
-                max: Some(677278.0),
+                min: 445771.0,
+                max: Some(742953.0),
                 rate: 0.113,
             },
             TaxBracket {
-                min: 677278.0,
+                min: 742953.0,
                 max: Some(1000000.0),
                 rate: 0.123,
             },
@@ -236,53 +241,53 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
         FilingStatus::MarriedFilingJointly => vec![
             TaxBracket {
                 min: 0.0,
-                max: Some(20198.0),
+                max: Some(22158.0),
                 rate: 0.01,
             },
             TaxBracket {
-                min: 20198.0,
-                max: Some(47884.0),
+                min: 22158.0,
+                max: Some(52528.0),
                 rate: 0.02,
             },
             TaxBracket {
-                min: 47884.0,
-                max: Some(75576.0),
+                min: 52528.0,
+                max: Some(82904.0),
                 rate: 0.04,
             },
             TaxBracket {
-                min: 75576.0,
-                max: Some(104910.0),
+                min: 82904.0,
+                max: Some(115084.0),
                 rate: 0.06,
             },
             TaxBracket {
-                min: 104910.0,
-                max: Some(132590.0),
+                min: 115084.0,
+                max: Some(145448.0),
                 rate: 0.08,
             },
             TaxBracket {
-                min: 132590.0,
-                max: Some(677278.0),
+                min: 145448.0,
+                max: Some(742958.0),
                 rate: 0.093,
             },
             TaxBracket {
-                min: 677278.0,
-                max: Some(812728.0),
+                min: 742958.0,
+                max: Some(891542.0),
                 rate: 0.103,
             },
-            // 11.3% statutory bracket runs to 1,354,556, but the 1% Mental
-            // Health Services Tax applies above 1,000,000 — split accordingly.
+            // The 1% Mental Health Services Tax starts inside the statutory
+            // 11.3% bracket, so that bracket is split at $1,000,000.
             TaxBracket {
-                min: 812728.0,
+                min: 891542.0,
                 max: Some(1000000.0),
                 rate: 0.113,
             },
             TaxBracket {
                 min: 1000000.0,
-                max: Some(1354556.0),
+                max: Some(1485906.0),
                 rate: 0.123,
             },
             TaxBracket {
-                min: 1354556.0,
+                min: 1485906.0,
                 max: None,
                 rate: 0.133,
             },
@@ -290,46 +295,46 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
         FilingStatus::MarriedFilingSeparately => vec![
             TaxBracket {
                 min: 0.0,
-                max: Some(10099.0),
+                max: Some(11079.0),
                 rate: 0.01,
             },
             TaxBracket {
-                min: 10099.0,
-                max: Some(23942.0),
+                min: 11079.0,
+                max: Some(26264.0),
                 rate: 0.02,
             },
             TaxBracket {
-                min: 23942.0,
-                max: Some(37788.0),
+                min: 26264.0,
+                max: Some(41452.0),
                 rate: 0.04,
             },
             TaxBracket {
-                min: 37788.0,
-                max: Some(52455.0),
+                min: 41452.0,
+                max: Some(57542.0),
                 rate: 0.06,
             },
             TaxBracket {
-                min: 52455.0,
-                max: Some(66295.0),
+                min: 57542.0,
+                max: Some(72724.0),
                 rate: 0.08,
             },
             TaxBracket {
-                min: 66295.0,
-                max: Some(338639.0),
+                min: 72724.0,
+                max: Some(371479.0),
                 rate: 0.093,
             },
             TaxBracket {
-                min: 338639.0,
-                max: Some(406364.0),
+                min: 371479.0,
+                max: Some(445771.0),
                 rate: 0.103,
             },
             TaxBracket {
-                min: 406364.0,
-                max: Some(677278.0),
+                min: 445771.0,
+                max: Some(742953.0),
                 rate: 0.113,
             },
             TaxBracket {
-                min: 677278.0,
+                min: 742953.0,
                 max: Some(1000000.0),
                 rate: 0.123,
             },
@@ -342,51 +347,51 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
         FilingStatus::HeadOfHousehold => vec![
             TaxBracket {
                 min: 0.0,
-                max: Some(20198.0),
+                max: Some(22173.0),
                 rate: 0.01,
             },
             TaxBracket {
-                min: 20198.0,
-                max: Some(47884.0),
+                min: 22173.0,
+                max: Some(52530.0),
                 rate: 0.02,
             },
             TaxBracket {
-                min: 47884.0,
-                max: Some(61917.0),
+                min: 52530.0,
+                max: Some(67716.0),
                 rate: 0.04,
             },
             TaxBracket {
-                min: 61917.0,
-                max: Some(76138.0),
+                min: 67716.0,
+                max: Some(83805.0),
                 rate: 0.06,
             },
             TaxBracket {
-                min: 76138.0,
-                max: Some(90302.0),
+                min: 83805.0,
+                max: Some(98990.0),
                 rate: 0.08,
             },
             TaxBracket {
-                min: 90302.0,
-                max: Some(460547.0),
+                min: 98990.0,
+                max: Some(505208.0),
                 rate: 0.093,
             },
             TaxBracket {
-                min: 460547.0,
-                max: Some(552658.0),
+                min: 505208.0,
+                max: Some(606251.0),
                 rate: 0.103,
             },
             TaxBracket {
-                min: 552658.0,
-                max: Some(921095.0),
+                min: 606251.0,
+                max: Some(1000000.0),
                 rate: 0.113,
             },
             TaxBracket {
-                min: 921095.0,
-                max: Some(1000000.0),
+                min: 1000000.0,
+                max: Some(1010417.0),
                 rate: 0.123,
             },
             TaxBracket {
-                min: 1000000.0,
+                min: 1010417.0,
                 max: None,
                 rate: 0.133,
             },
@@ -395,12 +400,16 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
 }
 
 // Standard deductions
-fn get_standard_deduction(filing_status: &FilingStatus, age: u32) -> f64 {
+fn get_standard_deduction(
+    filing_status: &FilingStatus,
+    age: u32,
+    modified_adjusted_gross_income: f64,
+) -> f64 {
     let base = match filing_status {
-        FilingStatus::Single => 15000.0,
-        FilingStatus::MarriedFilingJointly => 30000.0,
-        FilingStatus::MarriedFilingSeparately => 15000.0,
-        FilingStatus::HeadOfHousehold => 22500.0,
+        FilingStatus::Single => 15750.0,
+        FilingStatus::MarriedFilingJointly => 31500.0,
+        FilingStatus::MarriedFilingSeparately => 15750.0,
+        FilingStatus::HeadOfHousehold => 23625.0,
     };
 
     // Additional deduction for seniors (65+)
@@ -415,16 +424,27 @@ fn get_standard_deduction(filing_status: &FilingStatus, age: u32) -> f64 {
         0.0
     };
 
-    base + additional
+    let enhanced = if age >= 65 && !matches!(filing_status, FilingStatus::MarriedFilingSeparately) {
+        let phaseout_start = if matches!(filing_status, FilingStatus::MarriedFilingJointly) {
+            150_000.0
+        } else {
+            75_000.0
+        };
+        (6_000.0 - (modified_adjusted_gross_income - phaseout_start).max(0.0) * 0.06).max(0.0)
+    } else {
+        0.0
+    };
+
+    base + additional + enhanced
 }
 
 // CA standard deductions
 fn get_ca_standard_deduction(filing_status: &FilingStatus) -> f64 {
     match filing_status {
-        FilingStatus::Single => 5540.0,
-        FilingStatus::MarriedFilingJointly => 11080.0,
-        FilingStatus::MarriedFilingSeparately => 5540.0,
-        FilingStatus::HeadOfHousehold => 11080.0,
+        FilingStatus::Single => 5706.0,
+        FilingStatus::MarriedFilingJointly => 11412.0,
+        FilingStatus::MarriedFilingSeparately => 5706.0,
+        FilingStatus::HeadOfHousehold => 11412.0,
     }
 }
 
@@ -482,34 +502,41 @@ pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
 
 /// Calculate federal and state income taxes during working years
 /// Matches TypeScript calculateTax() function
-pub fn calculate_tax(
+fn calculate_tax(
     gross_income: f64,
-    _qualified_income: f64,
+    qualified_income: f64,
     age: u32,
     filing_status: &FilingStatus,
     state: &State,
-    requested_hsa: f64,
-    requested_traditional: f64,
+    requested: &PretaxContributionTargets,
+    other_ordinary_income: f64,
 ) -> TaxResult {
     let hsa_max = get_hsa_contribution_limit(age);
     let k401_max = get_k401_contribution_limit(age);
-    let standard_deduction = get_standard_deduction(filing_status, age);
     let federal_brackets = get_federal_brackets(filing_status);
-    let hsa_contribution = requested_hsa.clamp(0.0, hsa_max).min(gross_income);
-    let k401_contribution = requested_traditional
+    let hsa_contribution = requested.hsa.clamp(0.0, hsa_max).min(gross_income);
+    let k401_contribution = requested
+        .traditional
         .clamp(0.0, k401_max)
         .min((gross_income - hsa_contribution).max(0.0));
 
     let after_hsa_income = gross_income - hsa_contribution;
     let after_k401_income = after_hsa_income - k401_contribution;
-    let federal_taxable_income = (after_k401_income - standard_deduction).max(0.0);
+    let standard_deduction = get_standard_deduction(
+        filing_status,
+        age,
+        after_k401_income + other_ordinary_income + qualified_income,
+    );
+    let federal_taxable_income =
+        (after_k401_income + other_ordinary_income - standard_deduction).max(0.0);
     let federal_tax = calculate_progressive_tax(federal_taxable_income, &federal_brackets);
 
     let state_tax = match state {
         State::CA => {
             let ca_deduction = get_ca_standard_deduction(filing_status);
             // California does not conform to the federal HSA deduction.
-            let ca_taxable = (gross_income - k401_contribution - ca_deduction).max(0.0);
+            let ca_taxable =
+                (gross_income + other_ordinary_income - k401_contribution - ca_deduction).max(0.0);
             let ca_brackets = get_ca_brackets(filing_status);
             calculate_progressive_tax(ca_taxable, &ca_brackets)
         }
@@ -553,27 +580,41 @@ pub fn calculate_working_cash_flow(
     filing_status: &FilingStatus,
     state: &State,
     targets: &AnnualContributions,
+    other_ordinary_income: f64,
 ) -> WorkingCashFlowResult {
-    let mut tax = calculate_tax(gross_income, 0.0, age, filing_status, state, 0.0, 0.0);
+    let mut requested = PretaxContributionTargets {
+        hsa: 0.0,
+        traditional: 0.0,
+    };
+    let mut tax = calculate_tax(
+        gross_income,
+        0.0,
+        age,
+        filing_status,
+        state,
+        &requested,
+        other_ordinary_income,
+    );
     for _ in 0..4 {
         let available_before_contributions =
-            (gross_income - tax.total_tax - annual_spending).max(0.0);
+            (gross_income + other_ordinary_income - tax.total_tax - annual_spending).max(0.0);
         let hsa = targets.hsa.min(available_before_contributions);
         let traditional = targets
             .traditional
             .min((available_before_contributions - hsa).max(0.0));
+        requested = PretaxContributionTargets { hsa, traditional };
         tax = calculate_tax(
             gross_income,
             0.0,
             age,
             filing_status,
             state,
-            hsa,
-            traditional,
+            &requested,
+            other_ordinary_income,
         );
     }
 
-    let cash_after_pretax_and_spending = gross_income
+    let cash_after_pretax_and_spending = gross_income + other_ordinary_income
         - tax.total_tax
         - annual_spending
         - tax.hsa_contribution
@@ -586,6 +627,7 @@ pub fn calculate_working_cash_flow(
         .min(after_tax_budget);
     after_tax_budget -= roth;
     let taxable = targets.taxable.min(after_tax_budget);
+    after_tax_budget -= taxable;
 
     let contributions = AnnualContributions {
         hsa: tax.hsa_contribution,
@@ -593,13 +635,10 @@ pub fn calculate_working_cash_flow(
         roth,
         taxable,
     };
-    let total_contributions =
-        contributions.hsa + contributions.traditional + contributions.roth + contributions.taxable;
-
     WorkingCashFlowResult {
         tax,
         contributions,
-        total_contributions,
+        unallocated_cash: after_tax_budget,
         funding_gap,
     }
 }
@@ -626,7 +665,8 @@ pub fn calculate_retirement_tax(
     let total_ordinary_income = traditional_withdrawals + taxable_ss;
 
     // Federal tax
-    let standard_deduction = get_standard_deduction(filing_status, age);
+    let standard_deduction =
+        get_standard_deduction(filing_status, age, total_ordinary_income + qualified_income);
     let federal_taxable_income = (total_ordinary_income - standard_deduction).max(0.0);
     let federal_brackets = get_federal_brackets(filing_status);
     let federal_tax = calculate_progressive_tax(federal_taxable_income, &federal_brackets);
@@ -639,7 +679,16 @@ pub fn calculate_retirement_tax(
         taxable_qualified_income,
         filing_status,
     );
-    let total_federal_tax = federal_tax + ltcg_tax;
+    let net_investment_income_threshold = match filing_status {
+        FilingStatus::MarriedFilingJointly => 250_000.0,
+        FilingStatus::MarriedFilingSeparately => 125_000.0,
+        _ => 200_000.0,
+    };
+    let net_investment_income_tax = 0.038
+        * qualified_income.min(
+            (total_ordinary_income + qualified_income - net_investment_income_threshold).max(0.0),
+        );
+    let total_federal_tax = federal_tax + ltcg_tax + net_investment_income_tax;
 
     // State tax
     let state_tax = match state {
@@ -813,6 +862,19 @@ mod tests {
     }
 
     #[test]
+    fn applies_2025_enhanced_senior_deduction() {
+        assert_eq!(
+            get_standard_deduction(&FilingStatus::Single, 65, 50_000.0),
+            23_750.0
+        );
+        assert_eq!(
+            get_standard_deduction(&FilingStatus::Single, 65, 175_000.0),
+            17_750.0
+        );
+        assert_eq!(get_ca_standard_deduction(&FilingStatus::Single), 5_706.0);
+    }
+
+    #[test]
     fn working_cash_flow_uses_explicit_targets_and_reconciles() {
         let result = calculate_working_cash_flow(
             100_000.0,
@@ -826,13 +888,18 @@ mod tests {
                 roth: 7_000.0,
                 taxable: 5_000.0,
             },
+            0.0,
         );
 
         assert_eq!(result.contributions.hsa, 4_300.0);
         assert_eq!(result.contributions.traditional, 10_000.0);
         assert_eq!(result.contributions.roth, 7_000.0);
         assert_eq!(result.contributions.taxable, 5_000.0);
-        assert!(result.tax.total_tax + 50_000.0 + result.total_contributions <= 100_000.0);
+        let total_contributions = result.contributions.hsa
+            + result.contributions.traditional
+            + result.contributions.roth
+            + result.contributions.taxable;
+        assert!(result.tax.total_tax + 50_000.0 + total_contributions <= 100_000.0);
 
         let underfunded = calculate_working_cash_flow(
             50_000.0,
@@ -846,8 +913,50 @@ mod tests {
                 roth: 0.0,
                 taxable: 0.0,
             },
+            0.0,
         );
         assert!(underfunded.funding_gap > 10_000.0);
+    }
+
+    #[test]
+    fn working_rmd_is_ordinary_income_but_not_wages() {
+        let targets = AnnualContributions {
+            hsa: 0.0,
+            traditional: 0.0,
+            roth: 0.0,
+            taxable: 0.0,
+        };
+        let wages_only = calculate_working_cash_flow(
+            100_000.0,
+            60_000.0,
+            75,
+            &FilingStatus::Single,
+            &State::TX,
+            &targets,
+            0.0,
+        );
+        let with_rmd = calculate_working_cash_flow(
+            100_000.0,
+            60_000.0,
+            75,
+            &FilingStatus::Single,
+            &State::TX,
+            &targets,
+            40_000.0,
+        );
+        let rmd_misclassified_as_wages = calculate_working_cash_flow(
+            140_000.0,
+            60_000.0,
+            75,
+            &FilingStatus::Single,
+            &State::TX,
+            &targets,
+            0.0,
+        );
+
+        assert!(with_rmd.tax.total_tax > wages_only.tax.total_tax);
+        assert!(with_rmd.unallocated_cash > wages_only.unallocated_cash);
+        assert!(rmd_misclassified_as_wages.tax.total_tax > with_rmd.tax.total_tax);
     }
 
     #[test]
@@ -855,5 +964,12 @@ mod tests {
         let taxable =
             calculate_taxable_social_security(20_000.0, 20_000.0, 0.0, &FilingStatus::Single);
         assert_eq!(taxable, 2_500.0);
+    }
+
+    #[test]
+    fn applies_net_investment_income_tax_above_threshold() {
+        let result =
+            calculate_retirement_tax(0.0, 0.0, 250_000.0, 64, &FilingStatus::Single, &State::TX);
+        assert!((result.total_tax - 29_770.0).abs() < 0.01);
     }
 }

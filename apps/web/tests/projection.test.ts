@@ -208,6 +208,173 @@ describe('Projection Engine', () => {
     }
   });
 
+  it('prorates current-year retirement spending and Social Security from the as-of date', () => {
+    const plan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 67,
+        birthYear: 1958,
+        retirementAge: 67,
+        lifeExpectancy: 68,
+        desiredSpending: 60_000,
+        spendingGrowthRate: 0,
+        asOfDate: '2025-07-02',
+        state: 'TX',
+      },
+      accounts: [createTestAccount({ type: 'Taxable', balance: 500_000 })],
+      socialSecurity: {
+        enabled: true,
+        claimAge: 67,
+        manualOverride: true,
+        estimatedBenefit: 20_000,
+      },
+      assumptions: createTestProjectionSettings({ taxableGainRatio: 0 }),
+    };
+
+    const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(firstYear.spending).toBeCloseTo(60_000 * (183 / 365), 0);
+    expect(firstYear.socialSecurityBenefit).toBeCloseTo(20_000 * (183 / 365), 0);
+  });
+
+  it('reinvests only after-tax RMD excess and reconciles spendable cash', () => {
+    const plan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 73,
+        birthYear: 1952,
+        retirementAge: 73,
+        lifeExpectancy: 74,
+        currentSalary: 0,
+        currentSpending: 30_000,
+        desiredSpending: 30_000,
+        spendingGrowthRate: 0,
+        asOfDate: '2025-01-01',
+        state: 'TX',
+      },
+      accounts: [createTestAccount({
+        type: 'Traditional',
+        balance: 1_000_000,
+        assetWeights: { stocks: 0, bonds: 1 },
+      })],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings(),
+    };
+
+    const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(firstYear.rmdAmount).toBeGreaterThan(firstYear.spending);
+    expect(firstYear.depositTaxable).toBeGreaterThan(0);
+    expect(
+      firstYear.withdrawalTraditional - firstYear.taxes - firstYear.depositTaxable,
+    ).toBeCloseTo(firstYear.spending, 0);
+    expect(firstYear.insufficientFunds).toBe(false);
+
+    const midYear = projectScenario({
+      ...plan,
+      profile: { ...plan.profile, asOfDate: '2025-07-02' },
+    }, { paths: 1, seed: 42 }).projections[0];
+    expect(midYear.rmdAmount).toBeCloseTo(firstYear.rmdAmount * (183 / 365), 6);
+  });
+
+  it('withdraws, taxes, and preserves RMDs while still working', () => {
+    const plan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 75,
+        birthYear: 1950,
+        retirementAge: 80,
+        lifeExpectancy: 81,
+        currentSalary: 100_000,
+        currentSpending: 60_000,
+        asOfDate: '2025-01-01',
+        state: 'TX',
+      },
+      accounts: [createTestAccount({
+        type: 'Traditional',
+        balance: 1_000_000,
+        assetWeights: { stocks: 0, bonds: 1 },
+      })],
+      assumptions: createTestProjectionSettings(),
+    };
+
+    const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(firstYear.isRetired).toBe(false);
+    expect(firstYear.withdrawalTraditional).toBeGreaterThan(0);
+    expect(firstYear.rmdAmount).toBeCloseTo(firstYear.withdrawalTraditional, 6);
+    expect(firstYear.depositTaxable).toBeGreaterThan(0);
+    expect(firstYear.taxes).toBeGreaterThan(0);
+  });
+
+  it('taxes and preserves Social Security income above the spending target', () => {
+    const plan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 67,
+        birthYear: 1958,
+        retirementAge: 65,
+        lifeExpectancy: 68,
+        desiredSpending: 50_000,
+        spendingGrowthRate: 0,
+        asOfDate: '2025-01-01',
+        state: 'TX',
+      },
+      accounts: [],
+      socialSecurity: {
+        enabled: true,
+        claimAge: 67,
+        manualOverride: true,
+        estimatedBenefit: 200_000,
+      },
+      assumptions: createTestProjectionSettings({ taxableGainRatio: 0 }),
+    };
+
+    const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(firstYear.taxes).toBeGreaterThan(0);
+    expect(firstYear.depositTaxable).toBeGreaterThan(0);
+    expect(
+      firstYear.socialSecurityBenefit
+        + firstYear.withdrawalTaxable
+        + firstYear.withdrawalTraditional
+        + firstYear.withdrawalRoth
+        + firstYear.withdrawalHSA
+        - firstYear.taxes
+        - firstYear.depositTaxable,
+    ).toBeCloseTo(firstYear.spending, 0);
+  });
+
+  it('fully funds a high-tax retirement year when sufficient assets exist', () => {
+    const plan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 67,
+        birthYear: 1958,
+        retirementAge: 65,
+        lifeExpectancy: 68,
+        desiredSpending: 1_000_000_000,
+        spendingGrowthRate: 0,
+        asOfDate: '2025-01-01',
+        state: 'CA',
+      },
+      accounts: [createTestAccount({
+        type: 'Traditional',
+        balance: 10_000_000_000,
+        assetWeights: { stocks: 0, bonds: 1 },
+      })],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings(),
+    };
+
+    const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(firstYear.insufficientFunds).toBe(false);
+    expect(
+      firstYear.withdrawalTraditional - firstYear.taxes - firstYear.depositTaxable,
+    ).toBeCloseTo(firstYear.spending, 0);
+  });
+
 });
 
 describe('Random Number Generation', () => {

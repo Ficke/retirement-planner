@@ -31,12 +31,12 @@ import { fmtCurrency, fmtPercent } from "../format";
 import { cn } from "@/lib/utils";
 
 const STATE_OPTIONS: [State, string][] = [
-  ["CA", "California"],
-  ["TX", "Texas"],
-  ["FL", "Florida"],
-  ["NY", "New York"],
-  ["WA", "Washington"],
-  ["Other", "Other"],
+  ["CA", "California — 2025 tax estimate"],
+  ["TX", "Texas — no individual income tax"],
+  ["FL", "Florida — no individual income tax"],
+  ["NY", "New York — state/local tax excluded"],
+  ["WA", "Washington — capital-gains tax excluded"],
+  ["Other", "Other — state/local tax excluded"],
 ];
 
 const FILING_OPTIONS: [FilingStatus, string][] = [
@@ -113,7 +113,7 @@ export function PagePlan() {
       <DashboardCard>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           <NumberField
-            label="Current age"
+            label="Primary age"
             value={p.age}
             onChange={(v) => updateProfile({
               age: v,
@@ -148,7 +148,7 @@ export function PagePlan() {
             onChange={(v) => updateProfile({ filingStatus: v as FilingStatus })}
           />
           <CurrencyField
-            label="Current salary"
+            label="Primary annual wages"
             value={p.currentSalary}
             onChange={(v) => updateProfile({ currentSalary: v })}
           />
@@ -171,9 +171,16 @@ export function PagePlan() {
         </div>
       </DashboardCard>
 
+      {(p.state === "NY" || p.state === "WA" || p.state === "Other") && (
+        <div className="border-warning/40 bg-warning/10 text-foreground rounded-lg border px-4 py-3 text-sm">
+          State and local taxes are excluded for this selection, so projected spendable income and
+          success can be overstated. Federal tax remains modeled using 2025 law in real dollars.
+        </div>
+      )}
+
       <DashboardCard
         title="Social Security"
-        description="Use the annual benefit from your SSA statement when available. The salary-based option is a planning estimate using the 2025 PIA formula, not an official benefit quote."
+        description="Use a combined annual household benefit at the selected claim age when available. The salary-based option estimates only the primary person from primary wages using the 2025 PIA formula, without wage-indexing past earnings; it is not an official SSA quote."
       >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <SelectField
@@ -195,7 +202,7 @@ export function PagePlan() {
           />
           {ss.manualOverride && (
             <CurrencyField
-              label="Annual SSA statement benefit"
+              label="Annual household benefit at claim age"
               value={ss.estimatedBenefit ?? 0}
               onChange={(value) => updateSocialSecurity({ estimatedBenefit: value })}
             />

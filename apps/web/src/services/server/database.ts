@@ -10,6 +10,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import type { Account, CreateAccountData } from '@/domain/types';
+import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
 
 export interface DatabaseMigration {
   version: number;
@@ -118,6 +119,13 @@ export class ProfileRevisionConflictError extends Error {
   constructor() {
     super('Cloud profile changed since it was loaded');
     this.name = 'ProfileRevisionConflictError';
+  }
+}
+
+export class AccountLimitError extends Error {
+  constructor() {
+    super(`A plan may contain at most ${MAX_PLAN_ACCOUNTS} accounts`);
+    this.name = 'AccountLimitError';
   }
 }
 
@@ -304,17 +312,28 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     const stocksPct = data.stocksPct ?? 0.6;
     const bondsPct = data.bondsPct ?? 1 - stocksPct;
 
-    const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id
-    `, [data.name, data.institution, data.type, data.balance ?? 0, stocksPct, bondsPct, data.userId]);
+    const row = await this.connection!.transaction(async (transaction) => {
+      // Serialize creates for one owner so concurrent requests cannot race
+      // past the product/resource limit.
+      await transaction.execute('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `retirement-plan-accounts:${data.userId}`,
+      ]);
+      const count = await transaction.queryOne<{ count: string }>(
+        'SELECT COUNT(*)::text AS count FROM accounts WHERE user_id = $1',
+        [data.userId],
+      );
+      if (Number(count?.count ?? 0) >= MAX_PLAN_ACCOUNTS) {
+        throw new AccountLimitError();
+      }
+      return transaction.queryOne<AccountRow>(`
+        INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `, [data.name, data.institution, data.type, data.balance ?? 0, stocksPct, bondsPct, data.userId]);
+    });
 
-    if (!result?.id) throw new Error('Failed to create account');
-
-    const account = await this.getAccount(result.id, data.userId);
-    if (!account) throw new Error('Failed to create account');
-    return account;
+    if (!row) throw new Error('Failed to create account');
+    return mapRowToAccount(row);
   }
 
   async getAccount(id: string, userId: string): Promise<Account | null> {

@@ -100,8 +100,12 @@ pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns>
     let normal = Normal::new(0.0, 1.0)?;
 
     let degrees_of_freedom: f64 = 6.0;
-    let stock_shock =
-        student_t.sample(rng) / (degrees_of_freedom / (degrees_of_freedom - 2.0)).sqrt();
+    // Match the browser engine's numerical guard. An unbounded Student-t draw
+    // passed through exp() can overflow an entire path; ±10 retains very heavy
+    // tails while keeping both engines finite and semantically aligned.
+    let raw_stock_shock: f64 = student_t.sample(rng);
+    let stock_shock = raw_stock_shock.clamp(-10.0, 10.0)
+        / (degrees_of_freedom / (degrees_of_freedom - 2.0)).sqrt();
     let bond_shock = normal.sample(rng);
 
     // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]
@@ -157,8 +161,8 @@ mod tests {
         }
 
         // Bounded below by -1 by construction
-        assert!(stock_returns.iter().all(|&r| r > -1.0));
-        assert!(bond_returns.iter().all(|&r| r > -1.0));
+        assert!(stock_returns.iter().all(|&r| r.is_finite() && r > -1.0));
+        assert!(bond_returns.iter().all(|&r| r.is_finite() && r > -1.0));
 
         let stock_mean = mean(&stock_returns);
         let bond_mean = mean(&bond_returns);

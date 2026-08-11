@@ -164,7 +164,9 @@ export function PageOverview() {
 
   const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
   const yearsToRetire = Math.max(0, plan.profile.retirementAge - plan.profile.age);
-  const retirementYear = new Date().getFullYear() + yearsToRetire;
+  const asOfYear = Number(plan.profile.asOfDate.slice(0, 4));
+  const retirementYear = asOfYear + plan.profile.retirementAge - plan.profile.age;
+  const alreadyRetired = plan.profile.retirementAge <= plan.profile.age;
   const successProb = result?.successProbability ?? 0;
   const { label: successLabel, tone: successToneValue } = successTone(successProb);
   const usedFallback = result?.source === "client" && useServerSideCalculations;
@@ -246,9 +248,11 @@ export function PageOverview() {
         />
         <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} />
         <Stat
-          label="Retirement Date"
+          label="Retirement Year"
           value={String(retirementYear)}
-          trend={`Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
+          trend={alreadyRetired
+            ? `Age ${plan.profile.retirementAge} · already retired`
+            : `Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
         />
         <Stat
           label="Monthly Spending"
@@ -259,15 +263,17 @@ export function PageOverview() {
 
       <DashboardCard
         title="Levers"
-        description="Drag to change your plan. Each curve shows how success probability responds across the lever's range."
+        description={plan.socialSecurity.manualOverride
+          ? "Drag to change your plan. Curves show success across each modeled range; manual household Social Security stays at its selected claim-age point because another-age benefit cannot be inferred safely."
+          : "Drag to change your plan. Each curve shows how success probability responds across the lever's range."}
       >
         <div className="grid grid-cols-1 gap-7 md:grid-cols-3">
           <LeverCard
-            label="Retirement age"
+            label="Planned / actual retirement age"
             value={plan.profile.retirementAge}
             display={`Age ${plan.profile.retirementAge}`}
             min={MIN_RETIREMENT_AGE}
-            max={75}
+            max={Math.min(100, plan.profile.lifeExpectancy - 1)}
             onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
             points={agePts}
             xFormat={(v) => `Age ${v}`}

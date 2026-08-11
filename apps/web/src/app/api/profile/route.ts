@@ -4,7 +4,7 @@ import {
   getUnifiedDatabaseService,
   ProfileRevisionConflictError,
 } from '@/services/server/database';
-import { SaveProfileSchema, validateRequest } from '@/lib/validation';
+import { readLimitedJson, SaveProfileSchema, validateRequest } from '@/lib/validation';
 
 export async function GET() {
   try {
@@ -31,7 +31,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request, 64 * 1024);
     const validation = validateRequest(SaveProfileSchema, body);
     if (!validation.success) {
       return NextResponse.json(
@@ -57,6 +57,12 @@ export async function PUT(request: NextRequest) {
         { error: 'Profile changed in another browser. Reload before saving again.' },
         { status: 409 },
       );
+    }
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 413 });
+    }
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
     }
     console.error('Save profile error:', error);
     return NextResponse.json({ error: 'Failed to save profile' }, { status: 500 });

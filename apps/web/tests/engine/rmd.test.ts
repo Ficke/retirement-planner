@@ -148,8 +148,8 @@ describe('RMD Calculation', () => {
       expect(firstYear.depositTaxable).toBe(0);
     });
 
-    it('should correctly calculate marginal taxes on excess RMD', () => {
-      // Simple scenario to test marginal tax calculation
+    it('should preserve excess RMD after taxes and spending', () => {
+      // Simple scenario to test the reconciled RMD cash flow
       const plan = createTestPlan(73, 500000, 10000); // Low spending, moderate RMD
       const config = { paths: 1, seed: 42 };
       

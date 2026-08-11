@@ -6,6 +6,31 @@ import {
 } from '@/engine/tax';
 
 describe('Retirement Tax Calculation', () => {
+  it('taxes working-year RMD income without applying payroll tax to it', () => {
+    const targets = { hsa: 0, traditional: 0, roth: 0, taxable: 0 };
+    const wagesOnly = calculateWorkingCashFlow(
+      100_000,
+      60_000,
+      75,
+      'Single',
+      'TX',
+      targets,
+    );
+    const withRmd = calculateWorkingCashFlow(
+      100_000,
+      60_000,
+      75,
+      'Single',
+      'TX',
+      targets,
+      40_000,
+    );
+
+    expect(withRmd.tax.ficaTax).toBe(wagesOnly.tax.ficaTax);
+    expect(withRmd.tax.totalTax).toBeGreaterThan(wagesOnly.tax.totalTax);
+    expect(withRmd.unallocatedCash).toBeGreaterThan(wagesOnly.unallocatedCash);
+  });
+
   describe('Working-year cash flow', () => {
     it('uses explicit targets and preserves the cash-flow identity', () => {
       const result = calculateWorkingCashFlow(
@@ -120,6 +145,20 @@ describe('Retirement Tax Calculation', () => {
       // Over 65 should pay less tax due to higher standard deduction
       expect(over65Tax.totalTax).toBeLessThan(under65Tax.totalTax);
     });
+
+    it('applies the 2025 enhanced senior deduction and phaseout', () => {
+      const eligible = calculateRetirementTax(50_000, 0, 0, 65, 'Single', 'TX');
+      expect(eligible.federalTax).toBeCloseTo(2_911.5, 2);
+
+      const phasedOut = calculateRetirementTax(175_000, 0, 0, 65, 'Single', 'TX');
+      const under65 = calculateRetirementTax(175_000, 0, 0, 64, 'Single', 'TX');
+      expect(phasedOut.federalTax).toBe(under65.federalTax - 2_000 * 0.24);
+    });
+
+    it('uses final 2025 California brackets and standard deduction', () => {
+      const result = calculateRetirementTax(100_000, 0, 0, 64, 'Single', 'CA');
+      expect(result.stateTax).toBeCloseTo(5_207.98, 2);
+    });
     
     it('should handle LTCG stacking correctly', () => {
       // Test LTCG preferential rates
@@ -132,6 +171,13 @@ describe('Retirement Tax Calculation', () => {
       // LTCG should be taxed at preferential rates (0%, 15%, or 20%)
       const ltcgTaxAmount = withLTCGTax.totalTax - noLTCGTax.totalTax;
       expect(ltcgTaxAmount).toBeLessThan(20000 * 0.25); // Should be less than ordinary income rate
+    });
+
+    it('applies the Net Investment Income Tax above the filing threshold', () => {
+      const result = calculateRetirementTax(0, 0, 250_000, 64, 'Single', 'TX');
+      // $234,250 after the standard deduction: $185,800 at 15%, plus
+      // 3.8% NIIT on the $50,000 of MAGI above $200,000.
+      expect(result.federalTax).toBeCloseTo(29_770, 2);
     });
   });
 
@@ -200,7 +246,7 @@ describe('Retirement Tax Calculation', () => {
       
       // Combined income = 60k + 10k + (30k * 0.5) = 85k > 34k threshold
       // Up to 85% of SS should be taxable
-      expect(taxResult.totalTax).toBeGreaterThan(14000); // Should be substantial
+      expect(taxResult.totalTax).toBeCloseTo(12797.17, 2);
     });
     
     it('should handle married filing jointly thresholds correctly', () => {
@@ -254,8 +300,8 @@ describe('Retirement Tax Calculation', () => {
       );
       
       // Should be much higher tax rate
-      expect(highTraditionalTax.totalTax).toBeGreaterThan(12000);
-      expect(highTraditionalTax.effectiveRate).toBeGreaterThan(0.15); // Over 15%
+      expect(highTraditionalTax.totalTax).toBeCloseTo(11206.48, 2);
+      expect(highTraditionalTax.effectiveRate).toBeGreaterThan(0.13);
     });
   });
 });

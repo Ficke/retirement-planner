@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Moon, Sun } from "lucide-react";
+import { AlertTriangle, Moon, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/firebase";
 import { usePlan } from "@/state/usePlan";
 import { Sidebar, type PageId } from "@/components/retire/sidebar";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageOverview } from "@/components/retire/pages/overview";
 import { PagePlan } from "@/components/retire/pages/plan";
 import { PageAccounts } from "@/components/retire/pages/accounts";
@@ -22,9 +23,12 @@ const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> =
 };
 
 export default function Home() {
-  const { user, loading } = useAuth();
+  const { user, cloudReady, loading, error: authError } = useAuth();
   const bootstrap = usePlan((s) => s.bootstrap);
   const bootstrapped = usePlan((s) => s.bootstrapped);
+  const bootstrappedOwner = usePlan((s) => s.authUser?.id ?? null);
+  const planError = usePlan((s) => s.error);
+  const clearError = usePlan((s) => s.clearError);
   const { resolvedTheme, setTheme } = useTheme();
 
   const [page, setPage] = useState<PageId>("overview");
@@ -34,10 +38,11 @@ export default function Home() {
   // re-runs on every auth change so sign-in/out swaps the data source.
   useEffect(() => {
     if (loading) return;
-    bootstrap(user ? { id: user.uid } : null);
-  }, [loading, user, bootstrap]);
+    bootstrap(user ? { id: user.uid } : null, cloudReady);
+  }, [loading, user, cloudReady, bootstrap]);
 
-  if (loading || !bootstrapped) {
+  const authenticatedOwner = user?.uid ?? null;
+  if (loading || !bootstrapped || bootstrappedOwner !== authenticatedOwner) {
     return (
       <div className="bg-background flex min-h-screen items-center justify-center">
         <div className="space-y-4 text-center">
@@ -78,6 +83,29 @@ export default function Home() {
         </header>
         <main className="flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-[1400px] space-y-4 px-7 pt-6 pb-16">
+            {(authError || planError) && (
+              <Alert variant="destructive">
+                <AlertTriangle className="size-4" />
+                <AlertDescription className="flex items-start justify-between gap-4">
+                  <span>
+                    {authError
+                      ? "Cloud storage could not be prepared. This session is staying in browser-only mode; reload to retry."
+                      : planError}
+                  </span>
+                  {!authError && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="-my-2 size-8 shrink-0"
+                      onClick={clearError}
+                      aria-label="Dismiss error"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
             <Page />
           </div>
         </main>

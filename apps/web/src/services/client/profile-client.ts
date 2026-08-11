@@ -23,20 +23,24 @@ export class ProfileClient {
     this.baseUrl = baseUrl;
   }
 
-  async getProfile(): Promise<ProfileSettings | null> {
-    const response = await authenticatedFetch(`${this.baseUrl}/profile`);
+  async getProfile(expectedUserId?: string): Promise<ProfileSettings | null> {
+    const response = await authenticatedFetch(`${this.baseUrl}/profile`, {}, expectedUserId);
     if (!response.ok) {
       throw new Error(`Failed to fetch profile: ${response.statusText}`);
     }
     return response.json();
   }
 
-  async saveProfile(settings: ProfileSaveData, revision: number | null): Promise<number> {
+  async saveProfile(
+    settings: ProfileSaveData,
+    revision: number | null,
+    expectedUserId?: string,
+  ): Promise<number> {
     const response = await authenticatedFetch(`${this.baseUrl}/profile`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...settings, revision }),
-    });
+    }, expectedUserId);
     if (response.status === 409) throw new ProfileConflictError();
     if (!response.ok) {
       throw new Error(`Failed to save profile: ${response.statusText}`);

@@ -56,7 +56,22 @@ describe('Monte Carlo Simulation', () => {
     
     const errors = validateSimulationInputs(invalidPlan);
     expect(errors.length).toBeGreaterThan(0);
-    expect(errors[0]).toContain('asset weights must sum to 1.0');
+    expect(errors[0]).toMatch(/asset weights must sum to 1.0/i);
+  });
+
+  it('accepts already-retired and Social-Security-only plans', () => {
+    const retiredPlan: RetirementPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 73,
+        birthYear: 1952,
+        retirementAge: 65,
+        lifeExpectancy: 90,
+      },
+      accounts: [],
+    };
+    expect(validateSimulationInputs(retiredPlan)).toEqual([]);
   });
 
   it.skip('should produce reasonable success probability (requires browser environment)', async () => {

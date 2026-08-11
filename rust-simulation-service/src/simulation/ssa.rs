@@ -1,8 +1,7 @@
-use once_cell::sync::Lazy;
 /// Social Security Administration benefit calculations
 /// Ports TypeScript ssa.ts logic to Rust
 /// Implements AIME/PIA calculation using bend points and claiming age adjustments
-use std::collections::HashMap;
+use once_cell::sync::Lazy;
 
 #[derive(Debug, Clone)]
 pub struct SSABendPoint {
@@ -33,21 +32,6 @@ static BEND_POINTS: Lazy<Vec<SSABendPoint>> = Lazy::new(|| {
     ]
 });
 
-/// Claiming age adjustment factors
-static CLAIM_AGE_ADJUSTMENTS: Lazy<HashMap<u32, f64>> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    m.insert(62, 0.70);
-    m.insert(63, 0.75);
-    m.insert(64, 0.80);
-    m.insert(65, 0.8667);
-    m.insert(66, 0.9333);
-    m.insert(67, 1.0); // Full retirement age
-    m.insert(68, 1.08);
-    m.insert(69, 1.16);
-    m.insert(70, 1.24);
-    m
-});
-
 const MAX_TAXABLE_WAGE: f64 = 176_100.0;
 
 /// Estimate Social Security benefits based on salary history and claim age
@@ -55,10 +39,14 @@ const MAX_TAXABLE_WAGE: f64 = 176_100.0;
 /// @param salary_history - Array of annual salaries (ideally 35 years)
 /// @param claim_age - Age when benefits are claimed (62-70)
 /// @returns Detailed benefit calculation
-pub fn calculate_ssa_benefit(salary_history: &[f64], claim_age: u32) -> SSABenefitResult {
+pub fn calculate_ssa_benefit(
+    salary_history: &[f64],
+    claim_age: u32,
+    birth_year: i32,
+) -> SSABenefitResult {
     let aime = calculate_aime(salary_history);
     let pia = calculate_pia(aime, &BEND_POINTS);
-    let claim_adjustment = get_claim_age_adjustment(claim_age);
+    let claim_adjustment = get_claim_age_adjustment(claim_age, birth_year);
 
     let annual_benefit = pia * claim_adjustment * 12.0;
 
@@ -122,11 +110,43 @@ pub fn calculate_pia(aime: f64, bend_points: &[SSABendPoint]) -> f64 {
 ///
 /// @param claim_age - Age when benefits are claimed (62-70)
 /// @returns Adjustment factor to apply to PIA
-pub fn get_claim_age_adjustment(claim_age: u32) -> f64 {
-    CLAIM_AGE_ADJUSTMENTS
-        .get(&claim_age)
-        .copied()
-        .unwrap_or(1.0)
+pub fn get_full_retirement_age_months(birth_year: i32) -> i32 {
+    if birth_year <= 1937 {
+        65 * 12
+    } else if birth_year <= 1942 {
+        65 * 12 + (birth_year - 1937) * 2
+    } else if birth_year <= 1954 {
+        66 * 12
+    } else if birth_year <= 1959 {
+        66 * 12 + (birth_year - 1954) * 2
+    } else {
+        67 * 12
+    }
+}
+
+fn delayed_retirement_credit_per_month(birth_year: i32) -> f64 {
+    match birth_year {
+        ..=1934 => 11.0 / 2400.0,
+        1935..=1936 => 1.0 / 200.0,
+        1937..=1938 => 13.0 / 2400.0,
+        1939..=1940 => 7.0 / 1200.0,
+        1941..=1942 => 1.0 / 160.0,
+        _ => 1.0 / 150.0,
+    }
+}
+
+pub fn get_claim_age_adjustment(claim_age: u32, birth_year: i32) -> f64 {
+    let claim_months = claim_age.clamp(62, 70) as i32 * 12;
+    let full_retirement_age_months = get_full_retirement_age_months(birth_year);
+    if claim_months < full_retirement_age_months {
+        let months_early = full_retirement_age_months - claim_months;
+        let first_36_months = months_early.min(36);
+        let additional_months = (months_early - 36).max(0);
+        return 1.0 - first_36_months as f64 / 180.0 - additional_months as f64 / 240.0;
+    }
+
+    let months_delayed = claim_months.min(70 * 12) - full_retirement_age_months;
+    1.0 + months_delayed as f64 * delayed_retirement_credit_per_month(birth_year)
 }
 
 /// Estimate salary history for Social Security calculation
@@ -207,15 +227,19 @@ mod tests {
 
     #[test]
     fn test_claim_age_adjustments() {
-        assert_eq!(get_claim_age_adjustment(62), 0.70); // FRA 67: 30% early-claim reduction
-        assert_eq!(get_claim_age_adjustment(67), 1.0); // Full retirement age
-        assert_eq!(get_claim_age_adjustment(70), 1.24); // Delayed claiming
+        assert!((get_claim_age_adjustment(62, 1960) - 0.70).abs() < 1e-12); // FRA 67: 30% early
+        assert_eq!(get_claim_age_adjustment(67, 1960), 1.0);
+        assert_eq!(get_claim_age_adjustment(70, 1960), 1.24);
+
+        assert_eq!(get_full_retirement_age_months(1956), 66 * 12 + 4);
+        assert!((get_claim_age_adjustment(67, 1956) - 1.0533333333).abs() < 1e-9);
+        assert!((get_claim_age_adjustment(62, 1959) - 0.7083333333).abs() < 1e-9);
     }
 
     #[test]
     fn test_full_benefit_calculation() {
         let salary_history: Vec<f64> = vec![75000.0; 35];
-        let result = calculate_ssa_benefit(&salary_history, 67);
+        let result = calculate_ssa_benefit(&salary_history, 67, 1960);
 
         // At FRA (67), claim adjustment is 1.0, so annual_benefit = PIA * 12.
         let aime = (75000.0_f64 / 12.0).floor();

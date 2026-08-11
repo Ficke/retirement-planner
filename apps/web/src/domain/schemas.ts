@@ -32,14 +32,19 @@ export const accountSchema = z.object({
   taxable: z.boolean(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
-});
+}).transform((account) => ({
+  ...account,
+  // Account type is authoritative; never trust a redundant wire flag to
+  // change withdrawal order or tax treatment.
+  taxable: account.type === 'Taxable',
+}));
 
 export const userProfileSchema = z.object({
   age: z.number().int().min(18, "Age must be at least 18").max(100, "Age must be reasonable"),
   birthYear: z.number().int().min(1900).max(2200).optional(),
   state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other'] as const),
   filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold'] as const),
-  retirementAge: z.number().int().min(MIN_RETIREMENT_AGE, `Retirement age must be at least ${MIN_RETIREMENT_AGE}`).max(80, "Retirement age must be reasonable"),
+  retirementAge: z.number().int().min(MIN_RETIREMENT_AGE, `Retirement age must be at least ${MIN_RETIREMENT_AGE}`).max(100, "Retirement age must be reasonable"),
   currentSalary: z.number().min(0, "Salary must be non-negative").max(1_000_000_000),
   salaryGrowthRate: z.number().min(-0.1, "Salary growth rate must be reasonable").max(0.2, "Salary growth rate must be reasonable"),
   currentSpending: z.number().min(0, "Current spending must be non-negative").max(1_000_000_000),
@@ -47,11 +52,8 @@ export const userProfileSchema = z.object({
   spendingGrowthRate: z.number().min(-0.1, "Spending growth rate must be reasonable").max(0.1, "Spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),
   asOfDate: isoDateSchema,
-}).refine((profile) => profile.retirementAge > profile.age, {
-  message: "Retirement age must be greater than current age",
-  path: ["retirementAge"],
-}).refine((profile) => profile.lifeExpectancy > profile.retirementAge, {
-  message: "Life expectancy must be greater than retirement age",
+}).refine((profile) => profile.lifeExpectancy > Math.max(profile.age, profile.retirementAge), {
+  message: "Life expectancy must be greater than current and retirement ages",
   path: ["lifeExpectancy"],
 }).refine((profile) => {
   if (profile.birthYear === undefined) return true;
@@ -89,7 +91,8 @@ export const assumptionSettingsSchema = projectionSettingsSchema;
 
 export const retirementPlanSchema = z.object({
   profile: userProfileSchema,
-  accounts: z.array(accountSchema).min(1, "At least one account is required"),
+  // A zero-balance / Social-Security-only plan is still a meaningful scenario.
+  accounts: z.array(accountSchema),
   socialSecurity: socialSecuritySettingsSchema,
   assumptions: assumptionSettingsSchema,
 });

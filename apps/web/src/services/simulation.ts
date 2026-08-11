@@ -47,6 +47,25 @@ interface BatchSimulationResponse {
   result: SimulationResult;
 }
 
+/** Strip account ownership and display metadata before transient cloud compute. */
+function toServerPlan(plan: RetirementPlan): RetirementPlan {
+  return {
+    ...plan,
+    accounts: plan.accounts.map((account, index) => ({
+      id: `account-${index + 1}`,
+      name: `Account ${index + 1}`,
+      institution: '',
+      type: account.type,
+      user_id: null,
+      balance: account.balance,
+      assetWeights: { ...account.assetWeights },
+      taxable: account.type === 'Taxable',
+      createdAt: '1970-01-01T00:00:00.000Z',
+      updatedAt: '1970-01-01T00:00:00.000Z',
+    })),
+  };
+}
+
 /**
  * Base seed for a run. A fixed seed (Settings → Randomness) gives reproducible
  * results; otherwise each run draws a fresh sample.
@@ -62,14 +81,19 @@ function historicalBootstrapFor(plan: RetirementPlan): boolean {
 // --- Scenario builders (shared by both engines) ---
 
 function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
-  const ages = Array.from({ length: 9 }, (_, i) => 62 + i);
+  // Disabled benefits make every path identical. A manual household benefit
+  // is authoritative only at its selected claim age; without spouse/statement
+  // detail, inventing nine differently adjusted benefits would be misleading.
+  const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
+    ? Array.from({ length: 9 }, (_, i) => 62 + i)
+    : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
     scenario: {
       id: `ss-${claimAge}`,
       plan: {
         ...plan,
-        socialSecurity: { ...plan.socialSecurity, enabled: true, claimAge },
+        socialSecurity: { ...plan.socialSecurity, claimAge },
       },
       paths: SWEEP_PATHS,
       // Common random numbers isolate the effect of claim age from MC noise.
@@ -82,7 +106,11 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
   // 11 levels centered on desiredSpending, step ≈ 10% rounded to nearest $5k
   const base = plan.profile.desiredSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
-  const levels = Array.from({ length: 11 }, (_, i) => base + step * (i - 5)).filter((s) => s > 0);
+  const levels = [...new Set(
+    Array.from({ length: 11 }, (_, i) => (
+      Math.max(0, Math.min(1_000_000_000, base + step * (i - 5)))
+    )),
+  )];
   return levels.map((annualSpending) => ({
     annualSpending,
     scenario: {
@@ -98,10 +126,25 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
 }
 
 function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
-  // ±5 years around the planned retirement age, clamped to a sane window.
+  // For an already-retired plan, changing a historical retirement age cannot
+  // affect future cash flows, so avoid spending compute on duplicate paths.
   const center = plan.profile.retirementAge;
-  const min = Math.max(plan.profile.age + 1, Math.min(center - 5, 70), MIN_RETIREMENT_AGE);
-  const max = Math.min(75, Math.max(center + 5, min));
+  if (center <= plan.profile.age) {
+    return [{
+      retirementAge: center,
+      scenario: {
+        id: `retirementAge-${center}`,
+        plan,
+        paths: SWEEP_PATHS,
+        seed: seed + 3000,
+      },
+    }];
+  }
+
+  // ±5 years around a future retirement date, bounded by the current age and
+  // the modeled lifetime so every generated scenario remains valid.
+  const min = Math.max(plan.profile.age, center - 5, MIN_RETIREMENT_AGE);
+  const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
   const ages: number[] = [];
   for (let a = min; a <= max; a++) ages.push(a);
   return ages.map((retirementAge) => ({
@@ -128,7 +171,7 @@ async function runOnServer(
   const body = {
     simulations: scenarios.map((s) => ({
       id: s.id,
-      plan: s.plan,
+      plan: toServerPlan(s.plan),
       config: {
         paths: s.paths,
         seed: s.seed,
@@ -211,7 +254,7 @@ class SimulationServiceImpl implements SimulationService {
           headers: { 'Content-Type': 'application/json' },
           signal,
           body: JSON.stringify({
-            plan,
+            plan: toServerPlan(plan),
             config: {
               paths: MAIN_PATHS,
               seed,
