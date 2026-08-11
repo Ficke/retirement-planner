@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tsPath = join(root, 'apps/web/src/data/market-history-annual.ts');
 const rsPath = join(root, 'rust-simulation-service/src/simulation/historical_data.rs');
+const checkOnly = process.argv.includes('--check');
 
 const ts = readFileSync(tsPath, 'utf8');
 const rowRe = /year:\s*(\d{4}),\s*stock_return:\s*(-?[\d.]+),\s*bond_return:\s*(-?[\d.]+),\s*inflation_rate:\s*(-?[\d.]+)/g;
@@ -31,7 +32,12 @@ const first = rows[0].year;
 const last = rows[rows.length - 1].year;
 
 const rustRows = rows
-  .map(r => `    AnnualMarketReturn { year: ${r.year}, stock_return: ${num(r.stock)}, bond_return: ${num(r.bond)}, inflation_rate: ${num(r.inflation)} },`)
+  .map(r => `    AnnualMarketReturn {
+        year: ${r.year},
+        stock_return: ${num(r.stock)},
+        bond_return: ${num(r.bond)},
+        inflation_rate: ${num(r.inflation)},
+    },`)
   .join('\n');
 
 function num(s) {
@@ -66,8 +72,10 @@ ${rustRows}
 pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
     let random_year = &HISTORICAL_RETURNS[rng.gen_range(0..HISTORICAL_RETURNS.len())];
 
-    let real_stock_return = (1.0 + random_year.stock_return) / (1.0 + random_year.inflation_rate) - 1.0;
-    let real_bond_return = (1.0 + random_year.bond_return) / (1.0 + random_year.inflation_rate) - 1.0;
+    let real_stock_return =
+        (1.0 + random_year.stock_return) / (1.0 + random_year.inflation_rate) - 1.0;
+    let real_bond_return =
+        (1.0 + random_year.bond_return) / (1.0 + random_year.inflation_rate) - 1.0;
 
     (real_stock_return, real_bond_return)
 }
@@ -75,25 +83,31 @@ pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
 /// Sample a block of consecutive years for block bootstrap.
 /// Returns real returns (adjusted for inflation).
 pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f64)> {
-    let max_start_index = HISTORICAL_RETURNS.len().saturating_sub(block_size);
-    let start_index = if max_start_index > 0 {
-        rng.gen_range(0..=max_start_index)
-    } else {
-        0
-    };
+    let start_index = rng.gen_range(0..HISTORICAL_RETURNS.len());
+    let block_size = block_size.min(HISTORICAL_RETURNS.len());
 
-    let block_size = block_size.min(HISTORICAL_RETURNS.len() - start_index);
-
-    HISTORICAL_RETURNS[start_index..start_index + block_size]
-        .iter()
+    (0..block_size)
+        .map(|offset| &HISTORICAL_RETURNS[(start_index + offset) % HISTORICAL_RETURNS.len()])
         .map(|year_data| {
-            let real_stock_return = (1.0 + year_data.stock_return) / (1.0 + year_data.inflation_rate) - 1.0;
-            let real_bond_return = (1.0 + year_data.bond_return) / (1.0 + year_data.inflation_rate) - 1.0;
+            let real_stock_return =
+                (1.0 + year_data.stock_return) / (1.0 + year_data.inflation_rate) - 1.0;
+            let real_bond_return =
+                (1.0 + year_data.bond_return) / (1.0 + year_data.inflation_rate) - 1.0;
             (real_stock_return, real_bond_return)
         })
         .collect()
 }
 `;
 
-writeFileSync(rsPath, out);
-console.log(`Wrote ${rows.length} years (${first}-${last}) to ${rsPath}`);
+if (checkOnly) {
+  const current = readFileSync(rsPath, 'utf8');
+  if (current !== out) {
+    throw new Error(
+      `${rsPath} is stale. Run node scripts/gen-rust-historical-data.mjs and commit the result.`,
+    );
+  }
+  console.log(`Historical data is current: ${rows.length} years (${first}-${last})`);
+} else {
+  writeFileSync(rsPath, out);
+  console.log(`Wrote ${rows.length} years (${first}-${last}) to ${rsPath}`);
+}
