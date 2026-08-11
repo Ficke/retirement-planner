@@ -14,6 +14,7 @@ const validPlan = {
     retirementAge: 65,
     currentSalary: 100000,
     salaryGrowthRate: 0.01,
+    currentSpending: 50000,
     desiredSpending: 50000,
     spendingGrowthRate: 0,
     lifeExpectancy: 90,
@@ -23,14 +24,21 @@ const validPlan = {
     {
       id: 'a1',
       name: 'Brokerage',
+      institution: 'Test Brokerage',
       type: 'Taxable',
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
       taxable: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     },
   ],
   socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
-  assumptions: { simulationModel: 'historical', useBackdoorRoth: true },
+  assumptions: {
+    simulationModel: 'historical',
+    taxableGainRatio: 0.5,
+    contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+  },
 };
 
 const validConfig = { paths: 5000, seed: 42 };

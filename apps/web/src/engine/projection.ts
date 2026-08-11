@@ -1,11 +1,10 @@
 import type { RetirementPlan, PathResult, PathProjection, Account, FilingStatus } from '@/domain/types';
-import { calculateTax, calculateRetirementTax } from './tax';
+import { calculateWorkingCashFlow, calculateRetirementTax } from './tax';
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
-import { RMD_START_AGE } from '@/data/rmd-tables';
+import { getRmdStartAge } from '@/data/rmd-tables';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
-import { RETIREMENT_LIMITS_2025 } from '@/data/tax-brackets-2025';
 import seedrandom from 'seedrandom';
 
 export interface ProjectionConfig {
@@ -41,6 +40,8 @@ export function projectScenario(
   // Simple day-based calculation to avoid timezone issues
   const asOfDate = new Date(profile.asOfDate + 'T00:00:00');
   const currentYear = asOfDate.getFullYear();
+  const birthYear = profile.birthYear ?? currentYear - profile.age;
+  const rmdStartAge = getRmdStartAge(birthYear);
   const startOfYear = new Date(currentYear, 0, 1);
   const daysInYear = (currentYear % 4 === 0 && currentYear % 100 !== 0) || (currentYear % 400 === 0) ? 366 : 365;
   const dayOfYear = Math.floor((asOfDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -74,13 +75,13 @@ export function projectScenario(
     // Calculate RMD amount for this year based on previous year's traditional balance
     // For the first year, use current balance if we don't have a previous year balance
     let rmdAmount = 0;
-    if (currentAge >= RMD_START_AGE) {
+    if (currentAge >= rmdStartAge) {
       const balanceForRmd = previousYearTraditionalBalance > 0 
         ? previousYearTraditionalBalance
         : accountBalances
             .filter(acc => acc.type === 'Traditional')
             .reduce((sum, acc) => sum + acc.balance, 0);
-      rmdAmount = calculateRmd(balanceForRmd, currentAge); // balanceForRmd already in actual dollars
+      rmdAmount = calculateRmd(balanceForRmd, currentAge, rmdStartAge);
     }
     
     // For first year, prorate salary based on remaining year fraction
@@ -103,42 +104,47 @@ export function projectScenario(
     let insufficientFundsYear = false;
     
     if (!isRetired) {
-      // Working phase: salary, taxes, 401k/Roth contributions, spending
-      // Always show full annual amounts for income/tax/savings display
-      income = annualSalary;
+      // Working phase uses explicit contribution targets. Targets are only
+      // eligible when a matching account exists, and are reduced in the clear
+      // priority HSA → Traditional → Roth → Taxable when cash is insufficient.
+      const annualWorkingSpending = profile.currentSpending;
+      // Keep direct engine callers resilient to plans saved before explicit
+      // contribution targets existed. Persistence migrates these plans, while
+      // the projection boundary treats missing targets as an intentional zero.
+      const targets = plan.assumptions.contributions ?? {
+        hsa: 0,
+        traditional: 0,
+        roth: 0,
+        taxable: 0,
+      };
+      const hasHSA = accountBalances.some((account) => account.type === 'HSA');
+      const hasTraditional = accountBalances.some((account) => account.type === 'Traditional');
+      const hasRoth = accountBalances.some((account) => account.type === 'Roth');
+      const hasTaxable = accountBalances.some((account) => account.type === 'Taxable');
 
-      // Calculate spending first to ensure contributions don't exceed available savings
-      spending = profile.desiredSpending * Math.pow(1 + profile.spendingGrowthRate, year);
-
-      // Calculate taxes based on full annual salary (not prorated)
-      const taxResult = calculateTax(
+      const workingCashFlow = calculateWorkingCashFlow(
         annualSalary,
-        0, // No qualified income during working years
+        annualWorkingSpending,
         currentAge,
         profile.filingStatus,
         profile.state,
-        spending // Pass spending to ensure we don't over-contribute
+        {
+          hsa: hasHSA ? targets.hsa : 0,
+          traditional: hasTraditional ? targets.traditional : 0,
+          roth: hasRoth ? targets.roth : 0,
+          taxable: hasTaxable ? targets.taxable : 0,
+        },
       );
+      const taxResult = workingCashFlow.tax;
+      const rothContribution = workingCashFlow.contributions.roth;
+      const taxableContribution = workingCashFlow.contributions.taxable;
+      insufficientFundsYear = workingCashFlow.fundingGap > 1;
 
-      taxes = taxResult.totalTax;
-      
-      // Calculate savings correctly: first determine discretionary income after spending
-      const iraMax = getIRAContributionLimit(currentAge);
-      const afterTaxIncome = annualSalary - taxes - taxResult.hsaContribution - taxResult.k401Contribution;
-
-      // This is the critical change: subtract spending to find true discretionary income
-      const discretionaryIncome = afterTaxIncome - spending;
-
-      // Backdoor Roth is funded from what's left after spending (if enabled)
-      const backdoorRothContribution = plan.assumptions.useBackdoorRoth
-        ? Math.min(Math.max(0, discretionaryIncome), iraMax)
-        : 0;
-
-      // Additional savings are what's left after the Roth contribution
-      const additionalSavings = Math.max(0, discretionaryIncome - backdoorRothContribution);
-
-      // The new total savings amount
-      savings = taxResult.hsaContribution + taxResult.k401Contribution + backdoorRothContribution + additionalSavings;
+      const periodFraction = year === 0 ? remainingYearFraction : 1;
+      income = annualSalary * periodFraction;
+      spending = annualWorkingSpending * periodFraction;
+      taxes = taxResult.totalTax * periodFraction;
+      savings = workingCashFlow.totalContributions * periodFraction;
 
 
       // Generate market returns for this year using the configured generator
@@ -161,7 +167,7 @@ export function projectScenario(
 
       // Add new savings to appropriate accounts based on contribution rules
       // For first year, prorate contributions based on remaining year fraction
-      const contributionProration = year === 0 ? remainingYearFraction : 1;
+      const contributionProration = periodFraction;
 
 
       // HSA contributions go to HSA accounts first (highest tax advantage)
@@ -186,22 +192,22 @@ export function projectScenario(
         }
       }
 
-      // Backdoor Roth contributions go to Roth accounts
-      if (backdoorRothContribution > 0) {
+      // Roth contributions go to Roth accounts
+      if (rothContribution > 0) {
         const rothAccount = accountBalances.find(acc => acc.type === 'Roth');
         if (rothAccount) {
-          const deposit = backdoorRothContribution * contributionProration;
+          const deposit = rothContribution * contributionProration;
           rothAccount.balance += deposit;
           depositRothYear = deposit;
 
         }
       }
 
-      // Additional savings (after-tax) go to taxable accounts
-      if (additionalSavings > 0) {
+      // Explicit after-tax savings go to taxable accounts
+      if (taxableContribution > 0) {
         const taxableAccount = accountBalances.find(acc => acc.taxable);
         if (taxableAccount) {
-          const deposit = additionalSavings * contributionProration;
+          const deposit = taxableContribution * contributionProration;
           taxableAccount.balance += deposit;
           depositTaxableYear = deposit;
 
@@ -216,15 +222,17 @@ export function projectScenario(
       const targetSpending = profile.desiredSpending * Math.pow(1 + profile.spendingGrowthRate, year);
 
       if (socialSecurity.enabled && currentAge >= socialSecurity.claimAge) {
-        // Calculate SS benefit using actual SSA calculation
-        const salaryHistory = estimateSalaryHistory(
-          profile.currentSalary,
-          profile.salaryGrowthRate,
-          profile.age,
-          profile.retirementAge
-        );
-        const ssaBenefit = calculateSSABenefit(salaryHistory, socialSecurity.claimAge);
-        socialSecurityBenefit = ssaBenefit.annualBenefit;
+        socialSecurityBenefit = socialSecurity.manualOverride
+          ? Math.max(0, socialSecurity.estimatedBenefit ?? 0)
+          : calculateSSABenefit(
+              estimateSalaryHistory(
+                profile.currentSalary,
+                profile.salaryGrowthRate,
+                profile.age,
+                profile.retirementAge,
+              ),
+              socialSecurity.claimAge,
+            ).annualBenefit;
       }
 
       // Generate market returns for this year using the configured generator
@@ -246,14 +254,15 @@ export function projectScenario(
       // Calculate total withdrawals needed (spending - SS)
       const netWithdrawalNeeded = Math.max(0, targetSpending - socialSecurityBenefit);
 
-      // Execute optimal withdrawal strategy and get actual withdrawals with tax calculation
+      // Execute the explicit Taxable → Traditional → Roth → HSA policy.
       const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } =
-        executeOptimalWithdrawals(
+        executeOrderedWithdrawals(
           netWithdrawalNeeded,
           accountBalances,
           { age: currentAge, filingStatus: profile.filingStatus, state: profile.state },
           socialSecurityBenefit,
-          rmdAmount
+          rmdAmount,
+          plan.assumptions.taxableGainRatio ?? 0.5,
         );
 
       // RMD excess gets reinvested in taxable account
@@ -291,7 +300,7 @@ export function projectScenario(
       .reduce((sum, acc) => sum + acc.balance, 0);
     
     yearlyProjections.push({
-      year: profile.age + year,
+      year: currentYear + year,
       age: currentAge,
       portfolioValue: currentPortfolioValue,
       income,
@@ -317,7 +326,7 @@ export function projectScenario(
   // Monte Carlo worker aggregates multiple paths to create SimulationResult
   const finalWealth = currentPortfolioValue;
   const everHadInsufficientFunds = yearlyProjections.some(p => p.insufficientFunds);
-  const success = finalWealth > 0 && !everHadInsufficientFunds;
+  const success = !everHadInsufficientFunds;
 
   return {
     terminalWealth: finalWealth,
@@ -486,14 +495,13 @@ export class BlockBootstrapGenerator implements MarketReturnsGenerator {
   }
 
   private generateNewBlock(): void {
-    // Randomly select starting position for block
-    const maxStartIndex = HISTORICAL_RETURNS.length - this.blockSize;
-    const startIndex = Math.floor(this.rng.next() * (maxStartIndex + 1));
+    // Circular blocks give every historical year equal probability of appearing.
+    const startIndex = Math.floor(this.rng.next() * HISTORICAL_RETURNS.length);
     
     // Extract consecutive block of returns and convert to real returns
     this.currentBlock = [];
     for (let i = 0; i < this.blockSize; i++) {
-      const yearData = HISTORICAL_RETURNS[startIndex + i];
+      const yearData = HISTORICAL_RETURNS[(startIndex + i) % HISTORICAL_RETURNS.length];
       // Convert nominal returns to real returns: real = (1 + nominal) / (1 + inflation) - 1
       const realStockReturn = (1 + yearData.stock_return) / (1 + yearData.inflation_rate) - 1;
       const realBondReturn = (1 + yearData.bond_return) / (1 + yearData.inflation_rate) - 1;
@@ -573,7 +581,8 @@ export function createRNG(seed: number): SeededRNG {
 
 /**
  * Estimate salary history for Social Security calculation.
- * Projects backwards from current salary and growth rate to estimate career earnings.
+ * Anchors earnings at current age, projecting backward for prior years and
+ * forward through the final working year. Wage indexing is handled separately.
  * 
  * @param currentSalary - Current annual salary
  * @param salaryGrowthRate - Real annual salary growth rate
@@ -581,7 +590,7 @@ export function createRNG(seed: number): SeededRNG {
  * @param retirementAge - Planned retirement age
  * @returns Array of estimated annual salaries for SS calculation
  */
-function estimateSalaryHistory(
+export function estimateSalaryHistory(
   currentSalary: number,
   salaryGrowthRate: number,
   currentAge: number,
@@ -589,26 +598,15 @@ function estimateSalaryHistory(
 ): number[] {
   const salaryHistory: number[] = [];
   
-  // Assume started working at age 22
-  const careerStartAge = 22;
-  const yearsOfWork = Math.min(retirementAge - careerStartAge, 35); // SS uses top 35 years
-  
-  // Project backwards from current salary to estimate career progression
-  for (let yearsAgo = yearsOfWork - 1; yearsAgo >= 0; yearsAgo--) {
-    const salaryThatYear = currentSalary / Math.pow(1 + salaryGrowthRate, yearsAgo);
-    salaryHistory.push(salaryThatYear);
+  // Use age 22 as the estimated career start, unless the user is already
+  // earning a salary at a younger current age.
+  const careerStartAge = Math.min(22, currentAge);
+  for (let age = careerStartAge; age < retirementAge; age++) {
+    const yearsFromCurrentAge = age - currentAge;
+    salaryHistory.push(currentSalary * Math.pow(1 + salaryGrowthRate, yearsFromCurrentAge));
   }
   
   return salaryHistory;
-}
-
-/**
- * Get IRA contribution limit based on age
- */
-function getIRAContributionLimit(age: number): number {
-  return age >= 50
-    ? RETIREMENT_LIMITS_2025.ira_base + RETIREMENT_LIMITS_2025.ira_catchup
-    : RETIREMENT_LIMITS_2025.ira_base;
 }
 
 /**
@@ -648,7 +646,7 @@ function calculateMarginalTaxOnExcess(
 }
 
 /**
- * Execute tax-efficient withdrawal strategy with iterative tax calculation.
+ * Execute the configured deterministic withdrawal order with iterative taxes.
  * Solves for the gross withdrawal amount that, after taxes, provides the target after-tax amount.
  * Uses Taxable → Traditional → Roth ordering per CLAUDE.md.
  * 
@@ -658,12 +656,13 @@ function calculateMarginalTaxOnExcess(
  * @param socialSecurityBenefit - SS income that affects tax brackets
  * @returns Withdrawal amounts and tax implications
  */
-function executeOptimalWithdrawals(
+function executeOrderedWithdrawals(
   targetAfterTaxAmount: number,
   accountBalances: Account[],
   profile: { age: number; filingStatus: FilingStatus; state: string },
   socialSecurityBenefit: number,
-  rmdAmount: number
+  rmdAmount: number,
+  taxableGainRatio: number,
 ): {
   withdrawalTaxable: number;
   withdrawalTraditional: number;
@@ -674,7 +673,7 @@ function executeOptimalWithdrawals(
   insufficientFunds: boolean;
   depositTaxable: number;
 } {
-  if (targetAfterTaxAmount <= 0) {
+  if (targetAfterTaxAmount <= 0 && rmdAmount <= 0) {
     return {
       withdrawalTaxable: 0,
       withdrawalTraditional: 0,
@@ -702,6 +701,39 @@ function executeOptimalWithdrawals(
     if (account.balance < 0) {
       account.balance = 0;
     }
+  }
+
+  // Social Security or other income can cover all spending, but an RMD is
+  // still mandatory. Take it, pay the resulting tax, and reinvest the net.
+  if (targetAfterTaxAmount <= 0) {
+    let rmdRemaining = rmdAmount;
+    let withdrawalTraditional = 0;
+    for (const account of accountBalances) {
+      if (account.type === 'Traditional' && account.balance > 0 && rmdRemaining > 0) {
+        const withdrawal = Math.min(account.balance, rmdRemaining);
+        account.balance -= withdrawal;
+        withdrawalTraditional += withdrawal;
+        rmdRemaining -= withdrawal;
+      }
+    }
+    const taxResult = calculateRetirementTax(
+      withdrawalTraditional,
+      socialSecurityBenefit,
+      0,
+      profile.age,
+      profile.filingStatus,
+      profile.state,
+    );
+    return {
+      withdrawalTaxable: 0,
+      withdrawalTraditional,
+      withdrawalRoth: 0,
+      withdrawalHSA: 0,
+      totalWithdrawn: withdrawalTraditional,
+      totalTaxes: taxResult.totalTax,
+      insufficientFunds: rmdRemaining > 1,
+      depositTaxable: Math.max(0, withdrawalTraditional - taxResult.totalTax),
+    };
   }
 
   // Create deep copies to avoid mutating original balances
@@ -801,7 +833,7 @@ function executeOptimalWithdrawals(
     const excessRmd = Math.max(0, rmdAmount - spendingNeedsFromTraditional);
     
     // Step 3: Calculate taxes on all withdrawals (including RMD excess)
-    const qualifiedIncome = withdrawalTaxable; // Assume LTCG
+    const qualifiedIncome = withdrawalTaxable * taxableGainRatio;
     
     // All values now consistently in actual dollars - no conditional scaling needed
     const taxResult = calculateRetirementTax(
@@ -869,7 +901,7 @@ function executeOptimalWithdrawals(
   
   // Convergence failed - use final iteration values
   const totalWithdrawn = withdrawalTaxable + withdrawalTraditional + withdrawalRoth + withdrawalHSA;
-  const qualifiedIncome = withdrawalTaxable;
+  const qualifiedIncome = withdrawalTaxable * taxableGainRatio;
   // All values consistently in actual dollars
   const taxResult = calculateRetirementTax(
     withdrawalTraditional,

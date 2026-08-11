@@ -36,6 +36,7 @@ const mockPlan: RetirementPlan = {
     retirementAge: 65,
     currentSalary: 75000,
     salaryGrowthRate: 0.03,
+    currentSpending: 50000,
     desiredSpending: 50000,
     spendingGrowthRate: 0.02,
     lifeExpectancy: 90,

@@ -19,6 +19,7 @@ const plan: RetirementPlan = {
     retirementAge: 65,
     currentSalary: 120_000,
     salaryGrowthRate: 0.03,
+    currentSpending: 60_000,
     desiredSpending: 60_000,
     spendingGrowthRate: 0.025,
     lifeExpectancy: 90,

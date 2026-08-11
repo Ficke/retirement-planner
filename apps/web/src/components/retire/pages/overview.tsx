@@ -128,6 +128,29 @@ export function PageOverview() {
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
   const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
+  const isSimulatingSensitivities = usePlan((s) => s.isSimulatingSensitivities);
+  const runSensitivityAnalyses = usePlan((s) => s.runSensitivityAnalyses);
+
+  // Sensitivity sweeps are expensive and only this page displays them. Load
+  // the three curves together so cloud mode uses one bounded batch request.
+  useEffect(() => {
+    if (
+      !isSimulatingSensitivities
+      && ssAnalysisResult === null
+      && spendingAnalysisResult === null
+      && retirementAgeAnalysisResult === null
+    ) {
+      const timeout = window.setTimeout(() => void runSensitivityAnalyses(), 500);
+      return () => window.clearTimeout(timeout);
+    }
+  }, [
+    plan,
+    isSimulatingSensitivities,
+    ssAnalysisResult,
+    spendingAnalysisResult,
+    retirementAgeAnalysisResult,
+    runSensitivityAnalyses,
+  ]);
 
   // Keep the last completed result visible while a new simulation runs,
   // so slider drags don't flash "0% / Off track" between recomputes.
@@ -216,7 +239,7 @@ export function PageOverview() {
                 Updating projection…
               </span>
             ) : (
-              `${successLabel} · simulated paths fund full retirement`
+              `${successLabel} · simulated paths fully fund the plan`
             )
           }
           tone={isUpdating ? "neutral" : successToneValue}

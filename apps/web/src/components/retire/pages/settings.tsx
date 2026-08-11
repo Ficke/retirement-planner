@@ -215,8 +215,40 @@ export function PageSettings() {
                 source="IRS Pub. 590-B"
               />
               <ReferenceRow label="Contribution limits" value="2025" source="IRS" />
+              <ReferenceRow
+                label="Taxable withdrawal gain share"
+                value={`${(a.taxableGainRatio * 100).toFixed(0)}%`}
+                source="Your modeling assumption"
+              />
             </TableBody>
           </Table>
+        </DashboardCard>
+
+        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+          Tax model
+        </h2>
+        <DashboardCard>
+          <Setting
+            label="Taxable withdrawal gain share"
+            helper="The portion of each taxable-brokerage withdrawal treated as long-term capital gain; the remainder is return of cost basis. Use 0% for all basis and 100% for all gain. HSA withdrawals are assumed to pay qualified medical expenses and remain tax-free."
+          >
+            <div className="flex max-w-40 items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Number((a.taxableGainRatio * 100).toFixed(1))}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) {
+                    updateAssumptions({ taxableGainRatio: Math.max(0, Math.min(100, value)) / 100 });
+                  }
+                }}
+              />
+              <span className="text-muted-foreground text-sm">%</span>
+            </div>
+          </Setting>
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -251,29 +283,6 @@ export function PageSettings() {
           </div>
         </DashboardCard>
 
-        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Strategy
-        </h2>
-        <DashboardCard>
-          <Setting
-            label="Backdoor Roth"
-            helper="Convert post-tax dollars into Roth annually when income exceeds direct-Roth limits."
-          >
-            <ToggleGroup
-              type="single"
-              value={a.useBackdoorRoth ? "on" : "off"}
-              onValueChange={(v) => {
-                if (!v) return;
-                updateAssumptions({ useBackdoorRoth: v === "on" });
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="on">On</ToggleGroupItem>
-              <ToggleGroupItem value="off">Off</ToggleGroupItem>
-            </ToggleGroup>
-          </Setting>
-        </DashboardCard>
       </PageShell>
   );
 }

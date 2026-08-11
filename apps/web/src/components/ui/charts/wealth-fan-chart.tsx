@@ -35,14 +35,12 @@ export function WealthFanChart({
   retirementAge?: number;
 }) {
   const { data, yMax } = useMemo(() => {
-    const p75Max = Math.max(1, ...projections.map((p) => p.p75 || 0));
     const p90Max = Math.max(1, ...projections.map((p) => p.p90 || 0));
-    // Cap so the median line isn't crushed when P90 balloons over a long horizon.
-    const cap = Math.min(p90Max, p75Max * 1.8) * 1.05;
+    const cap = p90Max * 1.05;
     const rows = projections.map((p) => ({
       age: p.age,
-      band90: [p.p10, Math.min(p.p90, cap)] as [number, number],
-      band75: [p.p25, Math.min(p.p75, cap)] as [number, number],
+      band90: [p.p10, p.p90] as [number, number],
+      band75: [p.p25, p.p75] as [number, number],
       p50: p.p50,
       isRetired: p.isRetired,
     }));

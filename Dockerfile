@@ -1,7 +1,7 @@
 # Multi-stage build for Next.js production deployment
 
 # Stage 1: Dependencies and Builder
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 RUN apk add --no-cache libc6-compat
 
 # Install pnpm
@@ -45,7 +45,7 @@ WORKDIR /app/apps/web
 RUN pnpm build
 
 # Stage 3: Runner
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 RUN apk add --no-cache libc6-compat
 
 WORKDIR /app

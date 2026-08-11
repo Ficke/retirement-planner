@@ -11,6 +11,7 @@ const testPlan: RetirementPlan = {
     retirementAge: 65,
     currentSalary: 100000,
     salaryGrowthRate: 0.03,
+    currentSpending: 50000,
     desiredSpending: 80000,
     spendingGrowthRate: 0.02,
     lifeExpectancy: 85,
@@ -57,6 +58,7 @@ const testPlan: RetirementPlan = {
   },
   assumptions: createTestProjectionSettings({
     simulationModel: 'historical',
+    contributions: { hsa: 4_300, traditional: 23_500, roth: 7_000, taxable: 5_000 },
   }),
 };
 
@@ -69,6 +71,8 @@ describe('Projection Engine', () => {
 
     expect(result1.terminalWealth).toBe(result2.terminalWealth);
     expect(result1.projections.length).toBe(result2.projections.length);
+    expect(result1.projections[0].year).toBe(2025);
+    expect(result1.projections[0].age).toBe(35);
   });
 
   it('should show portfolio growth during working years', () => {

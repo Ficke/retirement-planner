@@ -7,7 +7,7 @@ pub enum AccountType {
     Traditional,
     Roth,
     #[serde(rename = "HSA")]
-    HSA,
+    Hsa,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +26,7 @@ pub enum State {
     FL,
     NY,
     WA,
+    #[serde(rename = "Other")]
     Other,
 }
 
@@ -56,6 +57,8 @@ pub struct Account {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
     pub age: u32,
+    #[serde(rename = "birthYear")]
+    pub birth_year: i32,
     pub state: State,
     #[serde(rename = "filingStatus")]
     pub filing_status: FilingStatus,
@@ -65,6 +68,8 @@ pub struct UserProfile {
     pub current_salary: f64,
     #[serde(rename = "salaryGrowthRate")]
     pub salary_growth_rate: f64,
+    #[serde(rename = "currentSpending")]
+    pub current_spending: f64,
     #[serde(rename = "desiredSpending")]
     pub desired_spending: f64,
     #[serde(rename = "spendingGrowthRate")]
@@ -95,13 +100,22 @@ pub enum SimulationModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnualContributions {
+    pub hsa: f64,
+    pub traditional: f64,
+    pub roth: f64,
+    pub taxable: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionSettings {
     #[serde(rename = "simulationModel")]
     pub simulation_model: SimulationModel,
     #[serde(rename = "randomSeed")]
     pub random_seed: Option<u64>,
-    #[serde(rename = "useBackdoorRoth")]
-    pub use_backdoor_roth: bool,
+    #[serde(rename = "taxableGainRatio")]
+    pub taxable_gain_ratio: f64,
+    pub contributions: AnnualContributions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,7 +203,7 @@ pub struct IncomeSourcesRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationResult {
-    /// Fraction of paths that fund the full retirement without ever running short.
+    /// Fraction of paths that fully fund every modeled working and retirement year.
     #[serde(rename = "successProbability")]
     pub success_probability: f64,
     #[serde(rename = "medianTerminalWealth")]
@@ -202,10 +216,14 @@ pub struct SimulationResult {
     pub percentile90_terminal_wealth: f64,
     #[serde(rename = "yearlyProjections")]
     pub yearly_projections: Vec<YearlyProjection>,
-    /// 1 - success_probability. A path is ruined if it ever runs short mid-retirement.
+    /// 1 - success_probability. A path fails when any modeled year is underfunded.
     #[serde(rename = "riskOfRuin")]
     pub risk_of_ruin: f64,
-    #[serde(rename = "incomeSourcesPath", skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(
+        rename = "incomeSourcesPath",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub income_sources_path: Vec<IncomeSourcesRow>,
 }
 
@@ -215,14 +233,21 @@ pub struct MCConfig {
     pub seed: u64,
     /// When Historical mode, true → block bootstrap, false → single-year bootstrap.
     /// Defaults to true to match MONTE_CARLO_DEFAULTS.use_historical_bootstrap.
-    #[serde(rename = "useHistoricalBootstrap", default = "default_use_historical_bootstrap")]
+    #[serde(
+        rename = "useHistoricalBootstrap",
+        default = "default_use_historical_bootstrap"
+    )]
     pub use_historical_bootstrap: bool,
     #[serde(rename = "blockSize", default = "default_block_size")]
     pub block_size: usize,
 }
 
-fn default_use_historical_bootstrap() -> bool { true }
-fn default_block_size() -> usize { 3 }
+fn default_use_historical_bootstrap() -> bool {
+    true
+}
+fn default_block_size() -> usize {
+    3
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationRequest {
@@ -251,4 +276,15 @@ pub struct BatchRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResponse {
     pub results: Vec<BatchSimulationResponse>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::State;
+
+    #[test]
+    fn other_state_matches_typescript_wire_value() {
+        let state: State = serde_json::from_str("\"Other\"").unwrap();
+        assert!(matches!(state, State::Other));
+    }
 }

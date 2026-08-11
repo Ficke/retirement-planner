@@ -3,7 +3,7 @@
  * Server-side Firebase for verifying auth tokens and managing users
  */
 
-import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
+import { applicationDefault, initializeApp, getApps, cert, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 
 let adminApp: App | undefined;
@@ -29,20 +29,22 @@ function initializeAdminApp(): App {
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-  if (!projectId || !clientEmail || !privateKey) {
+  const hasAnyExplicitCredential = Boolean(projectId || clientEmail || privateKey);
+  const hasCompleteExplicitCredential = Boolean(projectId && clientEmail && privateKey);
+  if (hasAnyExplicitCredential && !hasCompleteExplicitCredential) {
     throw new Error(
-      'Firebase Admin SDK credentials not found. Please set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.'
+      'Firebase Admin SDK credentials are incomplete. Set all explicit credential fields or use Application Default Credentials.'
     );
   }
 
-  // Initialize with service account credentials
   adminApp = initializeApp({
-    credential: cert({
-      projectId,
-      clientEmail,
-      // Handle escaped newlines in private key
-      privateKey: privateKey.replace(/\\n/g, '\n'),
-    }),
+    credential: hasCompleteExplicitCredential
+      ? cert({
+          projectId: projectId!,
+          clientEmail: clientEmail!,
+          privateKey: privateKey!.replace(/\\n/g, '\n'),
+        })
+      : applicationDefault(),
   });
 
   return adminApp;
@@ -67,7 +69,7 @@ export function getAdminAuth(): Auth {
  */
 export async function verifyAuthToken(
   authHeader: string | null
-): Promise<{ uid: string; email?: string } | null> {
+): Promise<{ uid: string; email?: string; name?: string; emailVerified: boolean } | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
@@ -79,10 +81,12 @@ export async function verifyAuthToken(
 
   try {
     const auth = getAdminAuth();
-    const decodedToken = await auth.verifyIdToken(token);
+    const decodedToken = await auth.verifyIdToken(token, true);
     return {
       uid: decodedToken.uid,
       email: decodedToken.email,
+      name: decodedToken.name,
+      emailVerified: decodedToken.email_verified ?? false,
     };
   } catch (error) {
     console.error('Error verifying auth token:', error);

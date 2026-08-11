@@ -1,7 +1,74 @@
 import { describe, it, expect } from 'vitest';
-import { calculateRetirementTax } from '@/engine/tax';
+import {
+  calculateRetirementTax,
+  calculateTaxableSocialSecurity,
+  calculateWorkingCashFlow,
+} from '@/engine/tax';
 
 describe('Retirement Tax Calculation', () => {
+  describe('Working-year cash flow', () => {
+    it('uses explicit targets and preserves the cash-flow identity', () => {
+      const result = calculateWorkingCashFlow(
+        100_000,
+        50_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 4_300, traditional: 10_000, roth: 7_000, taxable: 5_000 },
+      );
+
+      expect(result.contributions).toEqual({
+        hsa: 4_300,
+        traditional: 10_000,
+        roth: 7_000,
+        taxable: 5_000,
+      });
+      expect(
+        result.tax.totalTax
+          + 50_000
+          + result.totalContributions
+          + result.unallocatedCash,
+      ).toBeCloseTo(100_000, 6);
+    });
+
+    it('does not infer contributions and caps explicit targets', () => {
+      const none = calculateWorkingCashFlow(
+        100_000,
+        40_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      );
+      expect(none.totalContributions).toBe(0);
+
+      const capped = calculateWorkingCashFlow(
+        500_000,
+        40_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 99_000, traditional: 99_000, roth: 99_000, taxable: 0 },
+      );
+      expect(capped.contributions.hsa).toBe(4_300);
+      expect(capped.contributions.traditional).toBe(23_500);
+      expect(capped.contributions.roth).toBe(7_000);
+    });
+
+    it('reports salary-only working-year funding gaps', () => {
+      const result = calculateWorkingCashFlow(
+        50_000,
+        60_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      );
+      expect(result.fundingGap).toBeGreaterThan(10_000);
+      expect(result.unallocatedCash).toBe(0);
+    });
+  });
+
   describe('Bug Fix Verification', () => {
     it('should calculate realistic taxes on Traditional withdrawals', () => {
       // Test case from bug report: $91.4K withdrawal should yield much more than $2.1K taxes
@@ -27,7 +94,7 @@ describe('Retirement Tax Calculation', () => {
       
       // No retirement contributions
       expect(taxResult.k401Contribution).toBe(0);
-      expect(taxResult.backdoorRothContribution).toBe(0);
+      expect(taxResult.hsaContribution).toBe(0);
     });
     
     it('should handle mixed withdrawal sources correctly', () => {
@@ -69,6 +136,24 @@ describe('Retirement Tax Calculation', () => {
   });
 
   describe('Social Security Taxation', () => {
+    it('applies the IRS 50% formula in the first taxable tier', () => {
+      expect(calculateTaxableSocialSecurity(20_000, 20_000, 0, 'Single')).toBe(2_500);
+    });
+
+    it('caps the upper tier at 85% of benefits', () => {
+      expect(calculateTaxableSocialSecurity(40_000, 20_000, 0, 'Single')).toBe(17_000);
+    });
+
+    it('excludes Social Security from California taxable income', () => {
+      const withoutBenefits = calculateRetirementTax(20_000, 0, 0, 67, 'Single', 'CA');
+      const withBenefits = calculateRetirementTax(20_000, 50_000, 0, 67, 'Single', 'CA');
+      expect(withBenefits.stateTax).toBeCloseTo(withoutBenefits.stateTax, 8);
+    });
+
+    it('applies unused standard deduction to capital gains', () => {
+      const result = calculateRetirementTax(0, 0, 10_000, 67, 'Single', 'TX');
+      expect(result.federalTax).toBe(0);
+    });
     it('should not tax SS when combined income is below threshold', () => {
       // Low income scenario - no SS should be taxable
       const taxResult = calculateRetirementTax(
@@ -98,7 +183,7 @@ describe('Retirement Tax Calculation', () => {
       
       // Combined income = 20k + 0 + (20k * 0.5) = 30k (between 25k and 34k)
       // Some SS should be taxable but not all
-      expect(taxResult.totalTax).toBeGreaterThan(1000);
+      expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.totalTax).toBeLessThan(8000);
     });
     

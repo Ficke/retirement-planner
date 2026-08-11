@@ -230,7 +230,8 @@ export function PageProjections() {
         : yearly;
     return filtered.map((p) => ({
       ...p,
-      externalIncome: p.income + p.socialSecurityBenefit,
+      // `income` already includes Social Security in retirement projections.
+      externalIncome: p.income,
     }));
   }, [yearly, yearFilter]);
 

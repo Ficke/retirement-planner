@@ -3,6 +3,12 @@
  */
 
 import { z } from 'zod';
+import {
+  projectionSettingsSchema,
+  socialSecuritySettingsSchema,
+  userProfileSchema,
+  isoDateSchema,
+} from '@/domain/schemas';
 
 // Account validation
 export const CreateAccountSchema = z.object({
@@ -11,45 +17,29 @@ export const CreateAccountSchema = z.object({
   type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA'], {
     message: 'Account type must be Taxable, Traditional, Roth, or HSA',
   }),
-  balance: z.number().min(0, 'Balance must be non-negative').optional(),
-  stocksPct: z.number().min(0).max(1, 'Stocks percentage must be between 0 and 1').optional(),
-  bondsPct: z.number().min(0).max(1, 'Bonds percentage must be between 0 and 1').optional(),
+  balance: z.number().min(0, 'Balance must be non-negative').max(1_000_000_000_000_000).default(0),
+  stocksPct: z.number().min(0).max(1, 'Stocks percentage must be between 0 and 1').default(0.6),
+  bondsPct: z.number().min(0).max(1, 'Bonds percentage must be between 0 and 1').default(0.4),
+}).refine(({ stocksPct, bondsPct }) => Math.abs(stocksPct + bondsPct - 1) <= 0.000001, {
+  message: 'Stock and bond percentages must sum to 1',
+  path: ['stocksPct'],
 });
 
 export const UpdateAccountSchema = CreateAccountSchema.partial().extend({
-  balance: z.number().min(0).optional(),
+  balance: z.number().min(0).max(1_000_000_000_000_000).optional(),
   assetWeights: z.object({
     stocks: z.number().min(0).max(1),
     bonds: z.number().min(0).max(1),
   }).optional(),
-  balanceAsOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format').optional(),
+  balanceAsOf: isoDateSchema.optional(),
 });
 
 // Profile validation
 export const SaveProfileSchema = z.object({
-  profile: z.object({
-    age: z.number().min(1).max(120),
-    state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other']),
-    filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold']),
-    retirementAge: z.number().min(1).max(120),
-    currentSalary: z.number().min(0),
-    salaryGrowthRate: z.number(),
-    desiredSpending: z.number().min(0),
-    spendingGrowthRate: z.number(),
-    lifeExpectancy: z.number().min(1).max(120),
-    asOfDate: z.string(),
-  }).optional(),
-  socialSecurity: z.object({
-    enabled: z.boolean(),
-    estimatedBenefit: z.number().optional(),
-    claimAge: z.number().min(62).max(70),
-    manualOverride: z.boolean(),
-  }).optional(),
-  assumptions: z.object({
-    simulationModel: z.enum(['historical', 'parametric']),
-    randomSeed: z.number().optional(),
-    useBackdoorRoth: z.boolean(),
-  }).optional(),
+  profile: userProfileSchema,
+  socialSecurity: socialSecuritySettingsSchema,
+  assumptions: projectionSettingsSchema,
+  revision: z.number().int().min(0).nullable(),
 });
 
 // Helper function to validate and return formatted errors

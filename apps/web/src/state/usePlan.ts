@@ -13,7 +13,8 @@ import type {
 } from '@/domain/types';
 import { getSimulationService } from '@/services/simulation';
 import { getAccountsClient } from '@/services/client/accounts-client';
-import { getProfileClient } from '@/services/client/profile-client';
+import { getProfileClient, ProfileConflictError } from '@/services/client/profile-client';
+import { retirementPlanSchema } from '@/domain/schemas';
 import {
   loadUserPreferences,
   saveUserPreferences,
@@ -42,55 +43,72 @@ import {
  * including `plan.accounts`.
  */
 
-// Debounce plan changes before re-running all simulations
+// Debounce plan changes before re-running the primary result. Sensitivity
+// sweeps are lazy and run only while the Overview consumes them.
 const SIMULATION_DELAY = 300; // ms
 let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 // Generation counters let stale async results be discarded
 let mainSimGeneration = 0;
-let ssSimGeneration = 0;
-let spendingSimGeneration = 0;
-let retirementAgeSimGeneration = 0;
+let sensitivitySimGeneration = 0;
+let activeSimulationController = new AbortController();
 
 function scheduleSimulations(get: () => PlanState) {
   if (simulationTimeoutId) clearTimeout(simulationTimeoutId);
   simulationTimeoutId = setTimeout(() => {
-    const { runMainSimulation, runSSAnalysis, runSpendingAnalysis, runRetirementAgeAnalysis } = get();
-    runMainSimulation();
-    runSSAnalysis();
-    runSpendingAnalysis();
-    runRetirementAgeAnalysis();
+    if (!retirementPlanSchema.safeParse(get().plan).success) {
+      simulationTimeoutId = null;
+      return;
+    }
+    get().runMainSimulation();
     simulationTimeoutId = null;
   }, SIMULATION_DELAY);
 }
 
 // --- Cloud profile flush (cloud mode only) ---
 let profileDirty = false;
+let profileSaveInFlight = false;
+let profileConflictDetected = false;
+let bootstrapGeneration = 0;
 let dbSaveIntervalId: ReturnType<typeof setInterval> | null = null;
 
-async function flushProfileToDb(get: () => PlanState) {
+async function flushProfileToDb(get: () => PlanState, set: PlanSetter) {
   const state = get();
-  if (!profileDirty || state.dataMode() !== 'cloud') return;
+  if (
+    !profileDirty
+    || profileSaveInFlight
+    || profileConflictDetected
+    || state.dataMode() !== 'cloud'
+  ) return;
+  profileSaveInFlight = true;
   profileDirty = false;
   try {
-    await getProfileClient().saveProfile({
+    const revision = await getProfileClient().saveProfile({
       profile: state.plan.profile as unknown as Record<string, unknown>,
       socialSecurity: state.plan.socialSecurity as unknown as Record<string, unknown>,
       assumptions: state.plan.assumptions as unknown as Record<string, unknown>,
-    });
+    }, state.profileRevision);
+    set({ profileRevision: revision });
   } catch (error) {
     console.error('Failed to save profile to DB:', error);
-    profileDirty = true; // retry on next flush
+    if (error instanceof ProfileConflictError) {
+      profileConflictDetected = true;
+      set({ error: error.message });
+    } else {
+      profileDirty = true; // transient failure: retry on next flush
+    }
+  } finally {
+    profileSaveInFlight = false;
   }
 }
 
-function setupProfileAutoSave(get: () => PlanState) {
+function setupProfileAutoSave(get: () => PlanState, set: PlanSetter) {
   if (dbSaveIntervalId) return;
-  dbSaveIntervalId = setInterval(() => flushProfileToDb(get), 30_000);
+  dbSaveIntervalId = setInterval(() => flushProfileToDb(get, set), 30_000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushProfileToDb(get);
+    if (document.visibilityState === 'hidden') void flushProfileToDb(get, set);
   });
-  window.addEventListener('beforeunload', () => flushProfileToDb(get));
+  window.addEventListener('beforeunload', () => void flushProfileToDb(get, set));
 }
 
 function newLocalAccount(data: CreateAccountData): Account {
@@ -116,11 +134,13 @@ function newLocalAccount(data: CreateAccountData): Account {
 const defaultPlan: RetirementPlan = {
   profile: {
     age: 35,
+    birthYear: new Date().getFullYear() - 35,
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
     currentSalary: 75000,
     salaryGrowthRate: 0.01,
+    currentSpending: 50000,
     desiredSpending: 50000,
     spendingGrowthRate: 0.0, // constant real spending
     lifeExpectancy: 90,
@@ -134,11 +154,18 @@ const defaultPlan: RetirementPlan = {
   },
   assumptions: {
     simulationModel: 'historical',
-    useBackdoorRoth: true,
+    taxableGainRatio: 0.5,
+    contributions: {
+      hsa: 0,
+      traditional: 0,
+      roth: 0,
+      taxable: 0,
+    },
   },
 };
 
 export type DataMode = 'local' | 'cloud';
+type PlanSetter = (partial: Partial<PlanState>) => void;
 
 interface PlanState {
   plan: RetirementPlan;
@@ -147,6 +174,7 @@ interface PlanState {
   authUser: { id: string } | null;
   cloudSyncEnabled: boolean;
   useServerSideCalculations: boolean;
+  profileRevision: number | null;
   dataMode: () => DataMode;
 
   // Simulation results
@@ -155,9 +183,7 @@ interface PlanState {
   spendingAnalysisResult: SpendingAnalysisResult[] | null;
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
   isSimulatingMain: boolean;
-  isSimulatingSS: boolean;
-  isSimulatingSpending: boolean;
-  isSimulatingRetirementAge: boolean;
+  isSimulatingSensitivities: boolean;
 
   // Lifecycle
   bootstrapped: boolean;
@@ -178,9 +204,7 @@ interface PlanState {
   clearError: () => void;
 
   runMainSimulation: () => Promise<void>;
-  runSSAnalysis: () => Promise<void>;
-  runSpendingAnalysis: () => Promise<void>;
-  runRetirementAgeAnalysis: () => Promise<void>;
+  runSensitivityAnalyses: () => Promise<void>;
 }
 
 function getInitialPreferences() {
@@ -196,14 +220,24 @@ function persistPreferences(get: () => PlanState) {
   saveUserPreferences({ useServerSideCalculations, cloudSyncEnabled });
 }
 
-/** Clear results and reschedule all simulations after a plan change. */
+function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
+  return state.authUser?.id ?? null;
+}
+
+/** Cancel obsolete work, clear results, and reschedule the primary result. */
 function invalidateResults(get: () => PlanState) {
+  activeSimulationController.abort();
+  activeSimulationController = new AbortController();
+  mainSimGeneration++;
+  sensitivitySimGeneration++;
   scheduleSimulations(get);
   return {
     simulationResult: null as SimulationResult | null,
     ssAnalysisResult: null as SSAnalysisResult[] | null,
     spendingAnalysisResult: null as SpendingAnalysisResult[] | null,
     retirementAgeAnalysisResult: null as RetirementAgeAnalysisResult[] | null,
+    isSimulatingMain: false,
+    isSimulatingSensitivities: false,
   };
 }
 
@@ -212,6 +246,7 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   authUser: null,
   ...getInitialPreferences(),
+  profileRevision: null,
   dataMode: () => (get().authUser && get().cloudSyncEnabled ? 'cloud' : 'local'),
 
   simulationResult: null,
@@ -219,9 +254,7 @@ export const usePlan = create<PlanState>((set, get) => ({
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
   isSimulatingMain: false,
-  isSimulatingSS: false,
-  isSimulatingSpending: false,
-  isSimulatingRetirementAge: false,
+  isSimulatingSensitivities: false,
 
   bootstrapped: false,
   error: null,
@@ -232,13 +265,17 @@ export const usePlan = create<PlanState>((set, get) => ({
    * (sign-in and sign-out both re-bootstrap).
    */
   bootstrap: async (authUser) => {
+    const generation = ++bootstrapGeneration;
     clearLegacyLocalData();
+    profileDirty = false;
+    profileConflictDetected = false;
     set({ authUser });
 
     const cloud = get().dataMode() === 'cloud';
+    const ownerId = authUser?.id ?? null;
 
-    // Profile: defaults < cloud < local. Local wins because it may hold
-    // changes made moments ago (or before signing in) not yet flushed.
+    // Cloud is authoritative when present. The UID-scoped cache is a fallback
+    // for local mode and temporary cloud unavailability.
     let dbProfile: Awaited<ReturnType<ReturnType<typeof getProfileClient>['getProfile']>> = null;
     if (cloud) {
       try {
@@ -247,22 +284,42 @@ export const usePlan = create<PlanState>((set, get) => ({
         console.error('Failed to load cloud profile, continuing with local:', error);
       }
     }
-    const localProfile = loadLocalProfile();
+    const localProfile = loadLocalProfile(ownerId);
+    const profileSource = cloud && dbProfile?.profile ? dbProfile.profile : localProfile?.profile;
+    const socialSecuritySource = cloud && dbProfile?.socialSecurity
+      ? dbProfile.socialSecurity
+      : localProfile?.socialSecurity;
+    const assumptionsSource = cloud && dbProfile?.assumptions
+      ? dbProfile.assumptions
+      : localProfile?.assumptions;
 
     const profile = {
       ...defaultPlan.profile,
-      ...(dbProfile?.profile as Partial<UserProfile> | undefined),
-      ...localProfile?.profile,
+      ...(profileSource as Partial<UserProfile> | undefined),
+      // Plans saved before current/retirement spending were separated used
+      // desiredSpending for both phases. Preserve that behavior on migration.
+      currentSpending:
+        (profileSource as Partial<UserProfile> | undefined)?.currentSpending
+        ?? (profileSource as Partial<UserProfile> | undefined)?.desiredSpending
+        ?? defaultPlan.profile.currentSpending,
+      birthYear:
+        (profileSource as Partial<UserProfile> | undefined)?.birthYear
+        ?? Number(
+          ((profileSource as Partial<UserProfile> | undefined)?.asOfDate
+            ?? defaultPlan.profile.asOfDate).slice(0, 4),
+        ) - ((profileSource as Partial<UserProfile> | undefined)?.age ?? defaultPlan.profile.age),
     } as UserProfile;
     const socialSecurity = {
       ...defaultPlan.socialSecurity,
-      ...(dbProfile?.socialSecurity as Partial<SocialSecuritySettings> | undefined),
-      ...localProfile?.socialSecurity,
+      ...(socialSecuritySource as Partial<SocialSecuritySettings> | undefined),
     } as SocialSecuritySettings;
     const assumptions = {
       ...defaultPlan.assumptions,
-      ...(dbProfile?.assumptions as Partial<AssumptionSettings> | undefined),
-      ...localProfile?.assumptions,
+      ...(assumptionsSource as Partial<AssumptionSettings> | undefined),
+      contributions: {
+        ...defaultPlan.assumptions.contributions,
+        ...(assumptionsSource as Partial<AssumptionSettings> | undefined)?.contributions,
+      },
     } as AssumptionSettings;
 
     // Accounts
@@ -270,37 +327,29 @@ export const usePlan = create<PlanState>((set, get) => ({
     try {
       if (cloud) {
         accounts = await getAccountsClient().getAccounts();
-        // First sign-in with data built anonymously: import local accounts.
-        const localAccounts = loadLocalAccounts<Account>() ?? [];
-        if (accounts.length === 0 && localAccounts.length > 0) {
-          for (const local of localAccounts) {
-            await getAccountsClient().createAccount({
-              name: local.name,
-              institution: local.institution,
-              type: local.type,
-              balance: local.balance,
-              stocksPct: local.assetWeights.stocks,
-              bondsPct: local.assetWeights.bonds,
-            });
-          }
-          accounts = await getAccountsClient().getAccounts();
-        }
+        saveLocalAccounts(accounts, ownerId);
       } else {
-        accounts = loadLocalAccounts<Account>() ?? [];
+        accounts = loadLocalAccounts<Account>(ownerId) ?? [];
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load accounts';
       console.error('Failed to load accounts:', error);
-      set({ error: message });
+      if (generation === bootstrapGeneration) set({ error: message });
     }
+
+    // Auth can change while cloud requests are in flight. Never let an older
+    // bootstrap overwrite the newer user's owner-scoped state.
+    if (generation !== bootstrapGeneration) return;
 
     set({
       plan: { profile, socialSecurity, assumptions, accounts },
+      profileRevision: cloud ? dbProfile?.revision ?? null : null,
       bootstrapped: true,
       ...invalidateResults(get),
     });
+    saveLocalProfile({ profile, socialSecurity, assumptions, accounts }, ownerId);
 
-    setupProfileAutoSave(get);
+    setupProfileAutoSave(get, set);
   },
 
   updatePlan: (updates) =>
@@ -312,11 +361,20 @@ export const usePlan = create<PlanState>((set, get) => ({
           socialSecurity: { ...state.plan.socialSecurity, ...updates.socialSecurity },
         }),
         ...(updates.assumptions && {
-          assumptions: { ...state.plan.assumptions, ...updates.assumptions },
+          assumptions: {
+            ...state.plan.assumptions,
+            ...updates.assumptions,
+            ...(updates.assumptions.contributions && {
+              contributions: {
+                ...state.plan.assumptions.contributions,
+                ...updates.assumptions.contributions,
+              },
+            }),
+          },
         }),
       };
 
-      saveLocalProfile(plan);
+      saveLocalProfile(plan, cacheOwner(state));
       profileDirty = true;
 
       return { plan, ...invalidateResults(get) };
@@ -329,9 +387,11 @@ export const usePlan = create<PlanState>((set, get) => ({
       if (get().dataMode() === 'cloud') {
         await getAccountsClient().createAccount(data);
         accounts = await getAccountsClient().getAccounts();
+        saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
-        accounts = [...(loadLocalAccounts<Account>() ?? []), newLocalAccount(data)];
-        saveLocalAccounts(accounts);
+        const ownerId = cacheOwner(get());
+        accounts = [...(loadLocalAccounts<Account>(ownerId) ?? []), newLocalAccount(data)];
+        saveLocalAccounts(accounts, ownerId);
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
@@ -347,8 +407,10 @@ export const usePlan = create<PlanState>((set, get) => ({
       if (get().dataMode() === 'cloud') {
         await getAccountsClient().updateAccount(id, updates);
         accounts = await getAccountsClient().getAccounts();
+        saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
-        accounts = (loadLocalAccounts<Account>() ?? []).map((a) =>
+        const ownerId = cacheOwner(get());
+        accounts = (loadLocalAccounts<Account>(ownerId) ?? []).map((a) =>
           a.id === id
             ? {
                 ...a,
@@ -358,7 +420,7 @@ export const usePlan = create<PlanState>((set, get) => ({
               }
             : a,
         );
-        saveLocalAccounts(accounts);
+        saveLocalAccounts(accounts, ownerId);
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
@@ -374,9 +436,11 @@ export const usePlan = create<PlanState>((set, get) => ({
       if (get().dataMode() === 'cloud') {
         await getAccountsClient().deleteAccount(id);
         accounts = await getAccountsClient().getAccounts();
+        saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
-        accounts = (loadLocalAccounts<Account>() ?? []).filter((a) => a.id !== id);
-        saveLocalAccounts(accounts);
+        const ownerId = cacheOwner(get());
+        accounts = (loadLocalAccounts<Account>(ownerId) ?? []).filter((a) => a.id !== id);
+        saveLocalAccounts(accounts, ownerId);
       }
       set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get) }));
     } catch (error) {
@@ -398,8 +462,8 @@ export const usePlan = create<PlanState>((set, get) => ({
   setCloudSyncEnabled: async (enabled) => {
     if (get().cloudSyncEnabled === enabled) return;
     if (!enabled) {
-      const existing = loadLocalAccounts<Account>() ?? [];
-      if (existing.length === 0) saveLocalAccounts(get().plan.accounts);
+      saveLocalAccounts(get().plan.accounts, cacheOwner(get()));
+      saveLocalProfile(get().plan, cacheOwner(get()));
     }
     set({ cloudSyncEnabled: enabled });
     persistPreferences(get);
@@ -411,60 +475,54 @@ export const usePlan = create<PlanState>((set, get) => ({
   runMainSimulation: async () => {
     const { plan, useServerSideCalculations } = get();
     const generation = ++mainSimGeneration;
+    const signal = activeSimulationController.signal;
     set({ isSimulatingMain: true });
     try {
-      const result = await getSimulationService().runMainSimulation(plan, useServerSideCalculations);
+      const result = await getSimulationService().runMainSimulation(
+        plan,
+        useServerSideCalculations,
+        signal,
+      );
       if (generation !== mainSimGeneration) return;
       set({ simulationResult: result, isSimulatingMain: false });
     } catch (error) {
       if (generation !== mainSimGeneration) return;
+      if (signal.aborted) return;
       console.error('Main simulation failed:', error);
       set({ isSimulatingMain: false, simulationResult: null });
     }
   },
 
-  runSSAnalysis: async () => {
+  runSensitivityAnalyses: async () => {
+    if (get().isSimulatingSensitivities) return;
     const { plan, useServerSideCalculations } = get();
-    const generation = ++ssSimGeneration;
-    set({ isSimulatingSS: true });
+    if (!retirementPlanSchema.safeParse(plan).success) return;
+    const generation = ++sensitivitySimGeneration;
+    const signal = activeSimulationController.signal;
+    set({ isSimulatingSensitivities: true });
     try {
-      const results = await getSimulationService().runSocialSecurityAnalysis(plan, useServerSideCalculations);
-      if (generation !== ssSimGeneration) return;
-      set({ ssAnalysisResult: results, isSimulatingSS: false });
+      const results = await getSimulationService().runSensitivityAnalyses(
+        plan,
+        useServerSideCalculations,
+        signal,
+      );
+      if (generation !== sensitivitySimGeneration) return;
+      set({
+        ssAnalysisResult: results.socialSecurity,
+        spendingAnalysisResult: results.spending,
+        retirementAgeAnalysisResult: results.retirementAge,
+        isSimulatingSensitivities: false,
+      });
     } catch (error) {
-      if (generation !== ssSimGeneration) return;
-      console.error('SS analysis failed:', error);
-      set({ isSimulatingSS: false, ssAnalysisResult: null });
-    }
-  },
-
-  runSpendingAnalysis: async () => {
-    const { plan, useServerSideCalculations } = get();
-    const generation = ++spendingSimGeneration;
-    set({ isSimulatingSpending: true });
-    try {
-      const results = await getSimulationService().runSpendingAnalysis(plan, useServerSideCalculations);
-      if (generation !== spendingSimGeneration) return;
-      set({ spendingAnalysisResult: results, isSimulatingSpending: false });
-    } catch (error) {
-      if (generation !== spendingSimGeneration) return;
-      console.error('Spending analysis failed:', error);
-      set({ isSimulatingSpending: false, spendingAnalysisResult: null });
-    }
-  },
-
-  runRetirementAgeAnalysis: async () => {
-    const { plan, useServerSideCalculations } = get();
-    const generation = ++retirementAgeSimGeneration;
-    set({ isSimulatingRetirementAge: true });
-    try {
-      const results = await getSimulationService().runRetirementAgeAnalysis(plan, useServerSideCalculations);
-      if (generation !== retirementAgeSimGeneration) return;
-      set({ retirementAgeAnalysisResult: results, isSimulatingRetirementAge: false });
-    } catch (error) {
-      if (generation !== retirementAgeSimGeneration) return;
-      console.error('Retirement age analysis failed:', error);
-      set({ isSimulatingRetirementAge: false, retirementAgeAnalysisResult: null });
+      if (generation !== sensitivitySimGeneration) return;
+      if (signal.aborted) return;
+      console.error('Sensitivity analysis failed:', error);
+      set({
+        isSimulatingSensitivities: false,
+        ssAnalysisResult: null,
+        spendingAnalysisResult: null,
+        retirementAgeAnalysisResult: null,
+      });
     }
   },
 }));

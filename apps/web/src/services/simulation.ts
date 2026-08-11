@@ -19,10 +19,17 @@ import type {
 } from '@/domain/types';
 
 export interface SimulationService {
-  runMainSimulation(plan: RetirementPlan, useServerSide?: boolean): Promise<SimulationResult>;
-  runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SSAnalysisResult[]>;
-  runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SpendingAnalysisResult[]>;
-  runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<RetirementAgeAnalysisResult[]>;
+  runMainSimulation(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SimulationResult>;
+  runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SSAnalysisResult[]>;
+  runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SpendingAnalysisResult[]>;
+  runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<RetirementAgeAnalysisResult[]>;
+  runSensitivityAnalyses(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SensitivityAnalysisResults>;
+}
+
+export interface SensitivityAnalysisResults {
+  socialSecurity: SSAnalysisResult[];
+  spending: SpendingAnalysisResult[];
+  retirementAge: RetirementAgeAnalysisResult[];
 }
 
 const MAIN_PATHS = 5000;
@@ -65,7 +72,8 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
         socialSecurity: { ...plan.socialSecurity, enabled: true, claimAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 1000 + claimAge,
+      // Common random numbers isolate the effect of claim age from MC noise.
+      seed: seed + 1000,
     },
   }));
 }
@@ -84,7 +92,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
         profile: { ...plan.profile, desiredSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 2000 + annualSpending,
+      seed: seed + 2000,
     },
   }));
 }
@@ -105,14 +113,18 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         profile: { ...plan.profile, retirementAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 3000 + retirementAge,
+      seed: seed + 3000,
     },
   }));
 }
 
 // --- Engine backends ---
 
-async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise<Map<string, SimulationResult>> {
+async function runOnServer(
+  scenarios: Scenario[],
+  plan: RetirementPlan,
+  signal?: AbortSignal,
+): Promise<Map<string, SimulationResult>> {
   const body = {
     simulations: scenarios.map((s) => ({
       id: s.id,
@@ -130,6 +142,7 @@ async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -145,10 +158,18 @@ async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise
   return map;
 }
 
-async function runOnClient(scenarios: Scenario[]): Promise<Map<string, SimulationResult>> {
+async function runOnClient(
+  scenarios: Scenario[],
+  signal?: AbortSignal,
+): Promise<Map<string, SimulationResult>> {
   const map = new Map<string, SimulationResult>();
   for (const s of scenarios) {
-    const result = await runMonteCarloSimulation(s.plan, { paths: s.paths, seed: s.seed });
+    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
+    const result = await runMonteCarloSimulation(
+      s.plan,
+      { paths: s.paths, seed: s.seed },
+      signal,
+    );
     map.set(s.id, { ...result, source: 'client' });
   }
   return map;
@@ -162,19 +183,25 @@ async function runScenarios(
   scenarios: Scenario[],
   plan: RetirementPlan,
   useServerSide: boolean,
+  signal?: AbortSignal,
 ): Promise<Map<string, SimulationResult>> {
   if (useServerSide) {
     try {
-      return await runOnServer(scenarios, plan);
+      return await runOnServer(scenarios, plan, signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       console.warn('Server-side simulation failed, falling back to client engine:', error);
     }
   }
-  return runOnClient(scenarios);
+  return runOnClient(scenarios, signal);
 }
 
 class SimulationServiceImpl implements SimulationService {
-  async runMainSimulation(plan: RetirementPlan, useServerSide = true): Promise<SimulationResult> {
+  async runMainSimulation(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SimulationResult> {
     const seed = baseSeed(plan);
 
     if (useServerSide) {
@@ -182,6 +209,7 @@ class SimulationServiceImpl implements SimulationService {
         const response = await fetch('/api/simulation/monte-carlo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal,
           body: JSON.stringify({
             plan,
             config: {
@@ -199,18 +227,23 @@ class SimulationServiceImpl implements SimulationService {
         const result: SimulationResult = await response.json();
         return { ...result, source: 'server' };
       } catch (error) {
+        if (signal?.aborted) throw error;
         console.warn('Server-side simulation failed, falling back to client engine:', error);
       }
     }
 
-    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed });
+    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed }, signal);
     return { ...result, source: 'client' };
   }
 
-  async runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SSAnalysisResult[]> {
+  async runSocialSecurityAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SSAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = ssScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ claimAge, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for SS age ${claimAge}`);
@@ -218,10 +251,14 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  async runSpendingAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SpendingAnalysisResult[]> {
+  async runSpendingAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SpendingAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = spendingScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ annualSpending, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for spending level ${annualSpending}`);
@@ -229,15 +266,55 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  async runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide = true): Promise<RetirementAgeAnalysisResult[]> {
+  async runRetirementAgeAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<RetirementAgeAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = retirementAgeScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ retirementAge, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
       return { retirementAge, result };
     });
+  }
+
+  /** Run all Overview sensitivity curves in one bounded server batch. */
+  async runSensitivityAnalyses(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SensitivityAnalysisResults> {
+    const seed = baseSeed(plan);
+    const socialSecurityEntries = ssScenarios(plan, seed);
+    const spendingEntries = spendingScenarios(plan, seed);
+    const retirementAgeEntries = retirementAgeScenarios(plan, seed);
+    const allScenarios = [
+      ...socialSecurityEntries.map((entry) => entry.scenario),
+      ...spendingEntries.map((entry) => entry.scenario),
+      ...retirementAgeEntries.map((entry) => entry.scenario),
+    ];
+    const results = await runScenarios(allScenarios, plan, useServerSide, signal);
+
+    return {
+      socialSecurity: socialSecurityEntries.map(({ claimAge, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for SS age ${claimAge}`);
+        return { claimAge, result };
+      }),
+      spending: spendingEntries.map(({ annualSpending, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for spending level ${annualSpending}`);
+        return { annualSpending, result };
+      }),
+      retirementAge: retirementAgeEntries.map(({ retirementAge, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
+        return { retirementAge, result };
+      }),
+    };
   }
 }
 

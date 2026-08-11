@@ -11,6 +11,7 @@ const testPlan: RetirementPlan = {
     retirementAge: 65,
     currentSalary: 100000,
     salaryGrowthRate: 0.03,
+    currentSpending: 60000,
     desiredSpending: 60000,
     spendingGrowthRate: 0.02,
     lifeExpectancy: 85,
@@ -33,7 +34,8 @@ const testPlan: RetirementPlan = {
   },
   assumptions: {
     simulationModel: 'historical',
-    useBackdoorRoth: false,
+    taxableGainRatio: 0.5,
+    contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
   },
 };
 

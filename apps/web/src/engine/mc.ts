@@ -14,6 +14,7 @@ export interface MCConfig {
 }
 
 let workerInstance: Comlink.Remote<WorkerAPI> | null = null;
+let rawWorkerInstance: Worker | null = null;
 
 /**
  * Initialize Web Worker for Monte Carlo simulation.
@@ -24,13 +25,20 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
     return workerInstance;
   }
 
-  const rawWorker = new Worker(
+  rawWorkerInstance = new Worker(
     new URL('@/workers/mc.worker.ts', import.meta.url),
     { type: 'module' }
   );
 
-  workerInstance = Comlink.wrap<WorkerAPI>(rawWorker);
+  workerInstance = Comlink.wrap<WorkerAPI>(rawWorkerInstance);
   return workerInstance;
+}
+
+/** Terminate CPU work immediately; the next run creates a fresh worker. */
+export function cancelMonteCarloSimulation(): void {
+  rawWorkerInstance?.terminate();
+  rawWorkerInstance = null;
+  workerInstance = null;
 }
 
 /**
@@ -43,15 +51,23 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
  */
 export async function runMonteCarloSimulation(
   plan: RetirementPlan,
-  config: MCConfig = { paths: 5000, seed: 42 }
+  config: MCConfig = { paths: 5000, seed: 42 },
+  signal?: AbortSignal,
 ): Promise<SimulationResult> {
+  if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
+  const cancel = () => cancelMonteCarloSimulation();
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
     const worker = await initializeWorker();
     const result = await worker.runSimulation(plan, config);
+    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
     return result;
   } catch (error) {
+    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
     console.error('Monte Carlo simulation failed:', error);
     throw new Error('Simulation failed. Please check your inputs and try again.');
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
 }
 

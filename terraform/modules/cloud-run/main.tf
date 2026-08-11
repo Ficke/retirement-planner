@@ -16,11 +16,15 @@ resource "google_service_account" "cloud_run" {
   description  = "Service account used by Cloud Run service ${var.service_name}"
 }
 
-# Grant Secret Manager access to Cloud Run service account
-resource "google_project_iam_member" "cloud_run_secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.cloud_run.email}"
+# Grant access only to secrets actually mounted by this service. In particular,
+# the compute-only Rust identity receives no Secret Manager role.
+resource "google_secret_manager_secret_iam_member" "cloud_run_secret_accessor" {
+  for_each = var.secret_env_vars
+
+  project   = var.project_id
+  secret_id = each.value.secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.cloud_run.email}"
 }
 
 # Cloud Run service
@@ -123,7 +127,7 @@ resource "google_cloud_run_v2_service" "main" {
   }
 
   depends_on = [
-    google_project_iam_member.cloud_run_secret_accessor
+    google_secret_manager_secret_iam_member.cloud_run_secret_accessor
   ]
 }
 

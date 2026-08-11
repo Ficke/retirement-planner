@@ -21,6 +21,7 @@ export interface SSABenefitResult {
 
 const BEND_POINTS: SSABendPoint[] = bendPointsData.bendPoints;
 const CLAIM_AGE_ADJUSTMENTS = bendPointsData.claimAgeAdjustments as Record<string, number | string>;
+const MAX_TAXABLE_WAGE = bendPointsData.maxTaxableWage;
 
 export function calculateSSABenefit(
   salaryHistory: number[],
@@ -45,15 +46,17 @@ export function calculateSSABenefit(
 /**
  * Calculate Average Indexed Monthly Earnings (AIME) from salary history.
  * Uses the highest 35 years of earnings (nominal — wage indexing is not applied).
+ * SSA always divides by 420 months; missing years are zero-earning years.
  */
 export function calculateAIME(salaryHistory: number[]): number {
   const sortedSalaries = [...salaryHistory].sort((a, b) => b - a);
-  const top35Years = sortedSalaries.slice(0, Math.min(35, sortedSalaries.length));
+  const top35Years = sortedSalaries.slice(0, 35);
 
-  const totalEarnings = top35Years.reduce((sum, salary) => sum + salary, 0);
-  const monthsOfEarnings = top35Years.length * 12;
-
-  return monthsOfEarnings > 0 ? totalEarnings / monthsOfEarnings : 0;
+  const totalEarnings = top35Years.reduce(
+    (sum, salary) => sum + Math.min(Math.max(0, salary), MAX_TAXABLE_WAGE),
+    0,
+  );
+  return Math.floor(totalEarnings / 420);
 }
 
 export function calculatePIA(aime: number, bendPoints: SSABendPoint[]): number {
@@ -75,7 +78,7 @@ export function calculatePIA(aime: number, bendPoints: SSABendPoint[]): number {
     previousThreshold = currentThreshold;
   }
 
-  return pia;
+  return Math.floor(pia * 10) / 10;
 }
 
 /**

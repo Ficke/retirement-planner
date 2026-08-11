@@ -13,6 +13,12 @@ const STORAGE_KEYS = {
   LOCAL_PROFILE: 'retireplan:profile',
 } as const;
 
+const ANONYMOUS_OWNER = 'anonymous';
+
+function ownerKey(base: string, ownerId: string | null): string {
+  return `${base}:${ownerId ?? ANONYMOUS_OWNER}`;
+}
+
 interface UserPreferences {
   useServerSideCalculations: boolean;
   cloudSyncEnabled: boolean;
@@ -57,17 +63,17 @@ export interface LocalProfileData {
   assumptions?: Partial<AssumptionSettings>;
 }
 
-export function loadLocalProfile(): LocalProfileData | null {
+export function loadLocalProfile(ownerId: string | null): LocalProfileData | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.LOCAL_PROFILE);
+    const raw = localStorage.getItem(ownerKey(STORAGE_KEYS.LOCAL_PROFILE, ownerId));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-export function saveLocalProfile(plan: RetirementPlan): void {
+export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): void {
   if (typeof window === 'undefined') return;
   try {
     const data: LocalProfileData = {
@@ -75,7 +81,7 @@ export function saveLocalProfile(plan: RetirementPlan): void {
       socialSecurity: plan.socialSecurity,
       assumptions: plan.assumptions,
     };
-    localStorage.setItem(STORAGE_KEYS.LOCAL_PROFILE, JSON.stringify(data));
+    localStorage.setItem(ownerKey(STORAGE_KEYS.LOCAL_PROFILE, ownerId), JSON.stringify(data));
   } catch {
     // localStorage full or unavailable — non-fatal
   }
@@ -83,10 +89,10 @@ export function saveLocalProfile(plan: RetirementPlan): void {
 
 // --- Accounts (local mode) ---
 
-export function loadLocalAccounts<T = unknown>(): T[] | null {
+export function loadLocalAccounts<T = unknown>(ownerId: string | null): T[] | null {
   if (typeof window === 'undefined') return null;
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.LOCAL_ACCOUNTS);
+    const saved = localStorage.getItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId));
     if (!saved) return null;
     const parsed = JSON.parse(saved);
     return Array.isArray(parsed) ? parsed : null;
@@ -95,10 +101,10 @@ export function loadLocalAccounts<T = unknown>(): T[] | null {
   }
 }
 
-export function saveLocalAccounts<T = unknown>(accounts: T[]): void {
+export function saveLocalAccounts<T = unknown>(accounts: T[], ownerId: string | null): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.LOCAL_ACCOUNTS, JSON.stringify(accounts));
+    localStorage.setItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId), JSON.stringify(accounts));
   } catch (error) {
     console.error('Failed to save local accounts:', error);
   }
@@ -117,6 +123,16 @@ export function clearLegacyLocalData(): void {
     'retire_catch_up_calculations',
   ];
   try {
+    // Move the former global cache into the anonymous namespace. Never attach
+    // unowned browser data to an authenticated Firebase UID automatically.
+    for (const base of [STORAGE_KEYS.LOCAL_PROFILE, STORAGE_KEYS.LOCAL_ACCOUNTS]) {
+      const anonymousKey = ownerKey(base, null);
+      const legacyValue = localStorage.getItem(base);
+      if (legacyValue && !localStorage.getItem(anonymousKey)) {
+        localStorage.setItem(anonymousKey, legacyValue);
+      }
+      localStorage.removeItem(base);
+    }
     for (const key of legacyKeys) {
       localStorage.removeItem(key);
     }
@@ -130,8 +146,13 @@ export function clearPersistedData(): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEYS.USER_PREFERENCES);
-    localStorage.removeItem(STORAGE_KEYS.LOCAL_PROFILE);
-    localStorage.removeItem(STORAGE_KEYS.LOCAL_ACCOUNTS);
+    const ownedPrefixes = [`${STORAGE_KEYS.LOCAL_PROFILE}:`, `${STORAGE_KEYS.LOCAL_ACCOUNTS}:`];
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key && ownedPrefixes.some((prefix) => key.startsWith(prefix))) {
+        localStorage.removeItem(key);
+      }
+    }
   } catch (error) {
     console.error('Failed to clear persisted data:', error);
   }

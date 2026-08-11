@@ -39,11 +39,16 @@ export interface CreateAccountData {
 
 export interface UserProfile {
   age: number;
+  /** Calendar birth year for cohort-specific RMD rules. */
+  birthYear?: number;
   state: State;
   filingStatus: FilingStatus;
   retirementAge: number;
   currentSalary: number;
   salaryGrowthRate: number;
+  /** Current annual spending in real dollars during working years. */
+  currentSpending: number;
+  /** Target annual retirement spending in real dollars. */
   desiredSpending: number;
   spendingGrowthRate: number;
   lifeExpectancy: number;
@@ -72,10 +77,20 @@ export interface TaxBracket {
 
 export type SimulationModel = 'historical' | 'parametric';
 
+export interface AnnualContributions {
+  hsa: number;
+  traditional: number;
+  roth: number;
+  taxable: number;
+}
+
 export interface ProjectionSettings {
   simulationModel: SimulationModel;
   randomSeed?: number;
-  useBackdoorRoth: boolean;
+  /** Portion of taxable-account withdrawals treated as long-term capital gain. */
+  taxableGainRatio: number;
+  /** Annual contribution targets, reduced when statutory limits or cash flow require it. */
+  contributions: AnnualContributions;
 }
 
 /** @deprecated Use ProjectionSettings instead */
@@ -89,7 +104,7 @@ export interface RetirementPlan {
 }
 
 export interface SimulationResult {
-  /** Fraction of paths that fund the full retirement without ever running short. */
+  /** Fraction of paths that fully fund every modeled working and retirement year. */
   successProbability: number;
   medianTerminalWealth: number;
   percentile5TerminalWealth: number;
@@ -97,13 +112,11 @@ export interface SimulationResult {
   percentile90TerminalWealth: number;
   yearlyProjections: YearlyProjection[];
   /**
-   * Smoothed income-sources path: per-year mean of withdrawal/SS amounts
-   * across paths whose terminal wealth lands in the [p25, p75] band.
-   * Each row reflects a coherent withdrawal strategy averaged over similar
-   * outcomes, so summed components match the average net spending target.
+   * Cash flows from the median-terminal-wealth path. A single representative
+   * path keeps income, taxes, spending, deposits, and withdrawals coherent.
    */
   incomeSourcesPath?: IncomeSourcesRow[];
-  /** 1 - successProbability. A path is ruined if it ever runs short mid-retirement. */
+  /** 1 - successProbability. A path fails when any modeled year is underfunded. */
   riskOfRuin: number;
   /** Which engine produced this result. Set by the simulation service, not the engine. */
   source?: 'server' | 'client';
@@ -161,7 +174,7 @@ export interface PathProjection {
 export interface PathResult {
   terminalWealth: number;
   projections: PathProjection[];
-  success: boolean; // Whether portfolio lasted until life expectancy
+  success: boolean; // Whether every modeled year was fully funded
 }
 
 /**
@@ -204,4 +217,3 @@ export interface AccountValidation {
   errors: string[];
   warnings: string[];
 }
-

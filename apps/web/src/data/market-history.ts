@@ -89,7 +89,10 @@ const BOND_LOG = toLogParams(US_BOND_REAL_RETURNS.mean, US_BOND_REAL_RETURNS.vol
  * is bounded below by -1 (total loss) by construction; no artificial clamps.
  */
 export function generateCorrelatedReturns(rng: SeededRNG): { stockReturn: number; bondReturn: number } {
-  const stockShock = rng.studentT(6);
+  const degreesOfFreedom = 6;
+  // Student-t(df) has variance df/(df-2); standardize it before applying
+  // volatility calibrated from historical unit-variance shocks.
+  const stockShock = rng.studentT(degreesOfFreedom) / Math.sqrt(degreesOfFreedom / (degreesOfFreedom - 2));
   const bondShock = rng.normal();
 
   // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]

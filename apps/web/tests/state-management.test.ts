@@ -51,7 +51,7 @@ describe('State Management - Simple Invalidation Logic', () => {
 
   it('should clear all analysis results when assumptions change', () => {
     seedMockResults();
-    usePlan.getState().updatePlan({ assumptions: { useBackdoorRoth: false } });
+    usePlan.getState().updatePlan({ assumptions: { randomSeed: 123 } });
     expectAllCleared();
   });
 });

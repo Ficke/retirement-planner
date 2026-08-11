@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/firebase/server';
-import { getUnifiedDatabaseService } from '@/services/server/database';
+import {
+  getUnifiedDatabaseService,
+  ProfileRevisionConflictError,
+} from '@/services/server/database';
 import { SaveProfileSchema, validateRequest } from '@/lib/validation';
 
 export async function GET() {
@@ -41,14 +44,20 @@ export async function PUT(request: NextRequest) {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    await db.saveUserProfile(user.id, {
-      profile: data.profile ?? {},
-      socialSecurity: data.socialSecurity ?? {},
-      assumptions: data.assumptions ?? {},
-    });
+    const revision = await db.saveUserProfile(user.id, {
+      profile: data.profile,
+      socialSecurity: data.socialSecurity,
+      assumptions: data.assumptions,
+    }, data.revision);
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ revision });
   } catch (error) {
+    if (error instanceof ProfileRevisionConflictError) {
+      return NextResponse.json(
+        { error: 'Profile changed in another browser. Reload before saving again.' },
+        { status: 409 },
+      );
+    }
     console.error('Save profile error:', error);
     return NextResponse.json({ error: 'Failed to save profile' }, { status: 500 });
   }

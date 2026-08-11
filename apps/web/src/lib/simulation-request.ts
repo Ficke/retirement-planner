@@ -64,3 +64,23 @@ export const SIMULATION_RATE_LIMIT = {
   limit: 60,
   windowMs: 60 * 1000,
 } as const;
+
+/** Per-instance backstop; production also needs a distributed quota. */
+export const SIMULATION_PATH_RATE_LIMIT = {
+  // A normal Overview refresh costs ~36k paths (main + three curves).
+  // Allow a few interactive edits while bounding per-instance CPU exposure.
+  limit: 120_000,
+  windowMs: 60 * 1000,
+} as const;
+
+export async function readLimitedJson(request: Request, maxBytes = 256 * 1024): Promise<unknown> {
+  const declaredLength = Number(request.headers.get('content-length') ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new RangeError('Request body is too large');
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    throw new RangeError('Request body is too large');
+  }
+  return JSON.parse(text);
+}

@@ -76,7 +76,7 @@ describe('Bug Fixes', () => {
       expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.ficaTax).toBe(0); // No FICA in retirement
       expect(taxResult.k401Contribution).toBe(0); // No contributions in retirement
-      expect(taxResult.backdoorRothContribution).toBe(0); // No contributions in retirement
+      expect(taxResult.hsaContribution).toBe(0); // No contributions in retirement
     });
     
     it('should apply senior standard deduction for 65+ taxpayers', () => {

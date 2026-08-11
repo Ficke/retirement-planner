@@ -17,18 +17,13 @@ export async function GET(
     const { id } = await params;
     const db = getUnifiedDatabaseService();
     await db.initialize();
-    const account = await db.getAccount(id);
+    const account = await db.getAccount(id, user.id);
 
     if (!account) {
       return NextResponse.json(
         { error: 'Account not found' },
         { status: 404 }
       );
-    }
-
-    // Verify account belongs to user
-    if (account.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     return NextResponse.json(account);
@@ -55,12 +50,6 @@ export async function PATCH(
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Verify account belongs to user before updating
-    const existingAccount = await db.getAccount(id);
-    if (!existingAccount || existingAccount.user_id !== user.id) {
-      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
-    }
-
     const body = await request.json();
     const validation = validateRequest(UpdateAccountSchema, body);
     if (!validation.success) {
@@ -71,7 +60,10 @@ export async function PATCH(
     }
 
     const updates = validation.data as Partial<Omit<Account, 'id' | 'createdAt'>>;
-    const account = await db.updateAccount(id, updates);
+    const account = await db.updateAccount(id, user.id, updates);
+    if (!account) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
 
     return NextResponse.json(account);
   } catch (error) {
@@ -97,13 +89,10 @@ export async function DELETE(
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Verify account belongs to user before deleting
-    const existingAccount = await db.getAccount(id);
-    if (!existingAccount || existingAccount.user_id !== user.id) {
+    const deleted = await db.deleteAccount(id, user.id);
+    if (!deleted) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
-
-    await db.deleteAccount(id);
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

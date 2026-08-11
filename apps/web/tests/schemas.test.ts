@@ -1,7 +1,15 @@
-import { retirementPlanSchema } from '@/domain/schemas';
+import { accountSchema, isoDateSchema, retirementPlanSchema } from '@/domain/schemas';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
 describe('Domain Schemas', () => {
+  it('rejects impossible calendar dates and numerically unsafe balances', () => {
+    expect(isoDateSchema.safeParse('2026-02-29').success).toBe(false);
+    expect(accountSchema.safeParse(createTestAccount({
+      type: 'Taxable',
+      balance: 1_000_000_000_000_001,
+    })).success).toBe(false);
+  });
+
   it('should accept valid default retirement plan', () => {
     const defaultPlan = {
       profile: {
@@ -11,6 +19,7 @@ describe('Domain Schemas', () => {
         retirementAge: 65,
         currentSalary: 100000,
         salaryGrowthRate: 0.03,
+        currentSpending: 80000,
         desiredSpending: 80000,
         spendingGrowthRate: 0.02,
         lifeExpectancy: 95,
@@ -52,6 +61,7 @@ describe('Domain Schemas', () => {
         retirementAge: 65,
         currentSalary: 100000,
         salaryGrowthRate: 0.03,
+        currentSpending: 80000,
         desiredSpending: 80000,
         spendingGrowthRate: 0.02,
         lifeExpectancy: 95,

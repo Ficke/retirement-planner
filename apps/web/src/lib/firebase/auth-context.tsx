@@ -22,22 +22,13 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 async function syncUserRecord(user: User): Promise<void> {
-  try {
-    const token = await user.getIdToken();
-    await fetch('/api/auth/sync-user', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        firebaseUid: user.uid,
-        email: user.email,
-        name: user.displayName || null,
-      }),
-    });
-  } catch (error) {
-    console.error('Failed to sync user record:', error);
+  const token = await user.getIdToken();
+  const response = await fetch('/api/auth/sync-user', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error(`User synchronization failed with status ${response.status}`);
   }
 }
 
@@ -58,19 +49,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    let active = true;
     // Subscribe to auth state changes
     const unsubscribe = onAuthStateChanged(
       auth,
-      (user) => {
+      async (user) => {
+        let syncError: Error | null = null;
+        if (user) {
+          try {
+            // Account/profile routes reference this row. Await the idempotent
+            // upsert before exposing the user to plan bootstrap.
+            await syncUserRecord(user);
+          } catch (error) {
+            syncError = error instanceof Error ? error : new Error('Failed to sync user record');
+            console.error('Failed to sync user record:', error);
+          }
+        }
+        if (!active) return;
         setUser(user);
         setLoading(false);
-        setError(null);
-        // Ensure the DB user row exists (idempotent upsert). Cloud account
-        // rows reference it, so this must succeed at least once per user —
-        // running on every sign-in covers signup-time failures and new devices.
-        if (user) {
-          void syncUserRecord(user);
-        }
+        setError(syncError);
       },
       (error) => {
         console.error('Auth state change error:', error);
@@ -80,7 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     // Cleanup subscription on unmount
-    return () => unsubscribe();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   return (

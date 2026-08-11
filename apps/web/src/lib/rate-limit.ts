@@ -9,7 +9,7 @@
  */
 
 interface RateLimitStore {
-  requests: number[];
+  requests: Array<{ time: number; cost: number }>;
   resetTime: number;
 }
 
@@ -39,7 +39,8 @@ class RateLimiter {
   async check(
     identifier: string,
     limit: number,
-    windowMs: number
+    windowMs: number,
+    cost = 1,
   ): Promise<{
     success: boolean;
     remaining: number;
@@ -52,22 +53,23 @@ class RateLimiter {
 
     if (!record) {
       record = {
-        requests: [now],
+        requests: [{ time: now, cost }],
         resetTime: now + windowMs,
       };
       this.store.set(identifier, record);
       return {
         success: true,
-        remaining: limit - 1,
+        remaining: Math.max(0, limit - cost),
         reset: record.resetTime,
       };
     }
 
     // Filter out requests outside the current window
-    record.requests = record.requests.filter((time) => time > windowStart);
+    record.requests = record.requests.filter((request) => request.time > windowStart);
+    const used = record.requests.reduce((sum, request) => sum + request.cost, 0);
 
-    if (record.requests.length >= limit) {
-      const oldestRequest = Math.min(...record.requests);
+    if (used + cost > limit) {
+      const oldestRequest = Math.min(...record.requests.map((request) => request.time));
       return {
         success: false,
         remaining: 0,
@@ -76,12 +78,12 @@ class RateLimiter {
     }
 
     // Add current request
-    record.requests.push(now);
+    record.requests.push({ time: now, cost });
     record.resetTime = now + windowMs;
 
     return {
       success: true,
-      remaining: limit - record.requests.length,
+      remaining: Math.max(0, limit - used - cost),
       reset: record.resetTime,
     };
   }
@@ -100,9 +102,10 @@ const rateLimiter = new RateLimiter();
  */
 export async function rateLimit(
   identifier: string,
-  config: { limit: number; windowMs: number }
+  config: { limit: number; windowMs: number },
+  cost = 1,
 ) {
-  return rateLimiter.check(identifier, config.limit, config.windowMs);
+  return rateLimiter.check(identifier, config.limit, config.windowMs, cost);
 }
 
 /**
@@ -112,7 +115,10 @@ export function getClientIp(headers: Headers): string {
   // Try different headers in order of preference
   const forwardedFor = headers.get('x-forwarded-for');
   if (forwardedFor) {
-    return forwardedFor.split(',')[0].trim();
+    const addresses = forwardedFor.split(',').map((address) => address.trim()).filter(Boolean);
+    // Google load balancers append the client and load-balancer addresses;
+    // any values before those may be user supplied.
+    return addresses[addresses.length - 2] ?? addresses[addresses.length - 1] ?? 'unknown';
   }
 
   const realIp = headers.get('x-real-ip');

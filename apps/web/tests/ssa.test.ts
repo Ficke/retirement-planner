@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { calculateSSABenefit, calculateAIME, calculatePIA, getClaimAgeAdjustment } from '@/engine/ssa';
+import { estimateSalaryHistory } from '@/engine/projection';
 
 describe('Social Security Administration', () => {
   const testSalaryHistory = Array(35).fill(80000); // 35 years at $80k
@@ -49,6 +50,22 @@ describe('Social Security Administration', () => {
       expect(aime).toBeGreaterThan(6000);
       expect(aime).toBeLessThan(8000);
     });
+
+    it('uses zero-earning years when fewer than 35 years are supplied', () => {
+      const aime = calculateAIME(Array(20).fill(60000));
+      expect(aime).toBe(Math.floor((20 * 60000) / 420));
+    });
+
+    it('caps annual earnings at the 2025 Social Security wage base', () => {
+      expect(calculateAIME(Array(35).fill(1_000_000))).toBe(14_675);
+    });
+
+    it('anchors estimated earnings at current age', () => {
+      const history = estimateSalaryHistory(100000, 0.02, 40, 42);
+      expect(history).toHaveLength(20);
+      expect(history[18]).toBeCloseTo(100000, 6);
+      expect(history[19]).toBeCloseTo(102000, 6);
+    });
     
     it('should calculate reasonable PIA using bend points', () => {
       const aime = calculateAIME(testSalaryHistory);
@@ -82,7 +99,7 @@ describe('Social Security Administration', () => {
         { threshold: 7391, rate: 0.32 },
         { threshold: null, rate: 0.15 },
       ]);
-      expect(pia).toBeCloseTo(2311.08, 1);
+      expect(pia).toBe(2311.0);
     });
   });
 });
