@@ -3,7 +3,7 @@
  * Pure calculation logic for IRS-mandated retirement account withdrawals
  */
 
-import { RMD_UNIFORM_LIFETIME_TABLE, RMD_START_AGE } from '@/data/rmd-tables';
+import { RMD_UNIFORM_LIFETIME_TABLE } from '@/data/rmd-tables';
 
 /**
  * Calculate Required Minimum Distribution for a given account balance and age
@@ -11,8 +11,12 @@ import { RMD_UNIFORM_LIFETIME_TABLE, RMD_START_AGE } from '@/data/rmd-tables';
  * @param age - Current age of account owner
  * @returns Required minimum distribution amount (0 if under RMD age)
  */
-export function calculateRmd(previousYearEndBalance: number, age: number): number {
-  if (age < RMD_START_AGE) {
+export function calculateRmd(
+  previousYearEndBalance: number,
+  age: number,
+  applicableAge = 73,
+): number {
+  if (age < applicableAge) {
     return 0;
   }
 

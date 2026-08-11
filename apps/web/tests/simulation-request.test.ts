@@ -5,6 +5,8 @@ import {
   MAX_PATHS,
   MAX_BATCH_SIMULATIONS,
 } from '@/lib/simulation-request';
+import { getClientIp } from '@/lib/rate-limit';
+import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
   profile: {
@@ -14,6 +16,7 @@ const validPlan = {
     retirementAge: 65,
     currentSalary: 100000,
     salaryGrowthRate: 0.01,
+    currentSpending: 50000,
     desiredSpending: 50000,
     spendingGrowthRate: 0,
     lifeExpectancy: 90,
@@ -23,14 +26,21 @@ const validPlan = {
     {
       id: 'a1',
       name: 'Brokerage',
+      institution: 'Test Brokerage',
       type: 'Taxable',
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
       taxable: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     },
   ],
   socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
-  assumptions: { simulationModel: 'historical', useBackdoorRoth: true },
+  assumptions: {
+    simulationModel: 'historical',
+    taxableGainRatio: 0.5,
+    contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+  },
 };
 
 const validConfig = { paths: 5000, seed: 42 };
@@ -81,5 +91,41 @@ describe('simulation request limits', () => {
       config: { paths: 1000, seed: 3000 + i },
     }));
     expect(batchRequestSchema.safeParse({ simulations: sims }).success).toBe(true);
+  });
+});
+
+describe('simulation client address handling', () => {
+  it('uses the load-balancer-appended client address, not a spoofed prefix', () => {
+    const headers = new Headers({
+      'x-forwarded-for': '198.51.100.99, 203.0.113.7, 169.254.1.1',
+    });
+    expect(getClientIp(headers)).toBe('203.0.113.7');
+  });
+
+  it('uses the shared limiter bucket when the forwarding chain is untrusted', () => {
+    expect(getClientIp(new Headers({ 'x-forwarded-for': '198.51.100.99' }))).toBe('unknown');
+    expect(getClientIp(new Headers({ 'x-real-ip': '198.51.100.99' }))).toBe('unknown');
+  });
+});
+
+describe('bounded JSON parsing', () => {
+  it('rejects declared and actual bodies above the cap', async () => {
+    await expect(readLimitedJson(new Request('https://example.test', {
+      method: 'POST',
+      headers: { 'content-length': '100' },
+      body: '{}',
+    }), 10)).rejects.toBeInstanceOf(RangeError);
+
+    await expect(readLimitedJson(new Request('https://example.test', {
+      method: 'POST',
+      body: JSON.stringify({ payload: 'too large' }),
+    }), 10)).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it('rejects malformed JSON as a client error', async () => {
+    await expect(readLimitedJson(new Request('https://example.test', {
+      method: 'POST',
+      body: '{',
+    }), 10)).rejects.toBeInstanceOf(SyntaxError);
   });
 });

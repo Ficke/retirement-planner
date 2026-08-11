@@ -42,13 +42,17 @@ async function waitForAuthReady(): Promise<User | null> {
  */
 export async function authenticatedFetch(
   url: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  expectedUserId?: string,
 ): Promise<Response> {
   // Wait for Firebase to initialize
   const user = await waitForAuthReady();
 
   if (!user) {
     throw new Error('Not authenticated');
+  }
+  if (expectedUserId && user.uid !== expectedUserId) {
+    throw new Error('Authenticated account changed before the request was sent');
   }
 
   // Get fresh ID token

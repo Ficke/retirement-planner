@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/firebase/server';
-import { getUnifiedDatabaseService } from '@/services/server/database';
-import { CreateAccountSchema, validateRequest } from '@/lib/validation';
+import { AccountLimitError, getUnifiedDatabaseService } from '@/services/server/database';
+import { CreateAccountSchema, readLimitedJson, validateRequest } from '@/lib/validation';
 import type { CreateAccountData } from '@/domain/types';
 
 export async function GET() {
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request, 64 * 1024);
 
     // Validate input with Zod
     const validation = validateRequest(CreateAccountSchema, body);
@@ -59,6 +59,15 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(account, { status: 201 });
   } catch (error) {
+    if (error instanceof AccountLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 413 });
+    }
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+    }
     console.error('Create account error:', error);
     return NextResponse.json(
       { error: 'Failed to create account' },

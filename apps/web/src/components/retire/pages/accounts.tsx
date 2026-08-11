@@ -31,6 +31,7 @@ import {
 } from "@/components/retire/ui";
 import { fmtCurrency } from "../format";
 import { cn } from "@/lib/utils";
+import { MAX_PLAN_ACCOUNTS } from "@/domain/constants";
 
 const KIND_META: Record<AccountType, { label: string; color: string }> = {
   Taxable: { label: "Taxable", color: "var(--color-account-taxable)" },
@@ -140,9 +141,15 @@ export function PageAccounts() {
       <PageHeader
         title="Accounts"
         actions={
-          <Button onClick={openCreate}>
+          <Button
+            onClick={openCreate}
+            disabled={accounts.length >= MAX_PLAN_ACCOUNTS}
+            title={accounts.length >= MAX_PLAN_ACCOUNTS
+              ? `Plans support up to ${MAX_PLAN_ACCOUNTS} accounts`
+              : undefined}
+          >
             <Plus className="size-4" />
-            Add account
+            {accounts.length >= MAX_PLAN_ACCOUNTS ? "Account limit reached" : "Add account"}
           </Button>
         }
       />

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/firebase/server';
 import { getUnifiedDatabaseService } from '@/services/server/database';
-import { UpdateAccountSchema, validateRequest } from '@/lib/validation';
+import {
+  AccountIdSchema,
+  readLimitedJson,
+  UpdateAccountSchema,
+  validateRequest,
+} from '@/lib/validation';
 import type { Account } from '@/domain/types';
 
 export async function GET(
@@ -15,20 +20,18 @@ export async function GET(
     }
 
     const { id } = await params;
+    if (!AccountIdSchema.safeParse(id).success) {
+      return NextResponse.json({ error: 'Invalid account ID' }, { status: 400 });
+    }
     const db = getUnifiedDatabaseService();
     await db.initialize();
-    const account = await db.getAccount(id);
+    const account = await db.getAccount(id, user.id);
 
     if (!account) {
       return NextResponse.json(
         { error: 'Account not found' },
         { status: 404 }
       );
-    }
-
-    // Verify account belongs to user
-    if (account.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     return NextResponse.json(account);
@@ -52,16 +55,13 @@ export async function PATCH(
     }
 
     const { id } = await params;
+    if (!AccountIdSchema.safeParse(id).success) {
+      return NextResponse.json({ error: 'Invalid account ID' }, { status: 400 });
+    }
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Verify account belongs to user before updating
-    const existingAccount = await db.getAccount(id);
-    if (!existingAccount || existingAccount.user_id !== user.id) {
-      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
-    }
-
-    const body = await request.json();
+    const body = await readLimitedJson(request, 64 * 1024);
     const validation = validateRequest(UpdateAccountSchema, body);
     if (!validation.success) {
       return NextResponse.json(
@@ -71,10 +71,19 @@ export async function PATCH(
     }
 
     const updates = validation.data as Partial<Omit<Account, 'id' | 'createdAt'>>;
-    const account = await db.updateAccount(id, updates);
+    const account = await db.updateAccount(id, user.id, updates);
+    if (!account) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
 
     return NextResponse.json(account);
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 413 });
+    }
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+    }
     console.error('Update account error:', error);
     return NextResponse.json(
       { error: 'Failed to update account' },
@@ -94,16 +103,16 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    if (!AccountIdSchema.safeParse(id).success) {
+      return NextResponse.json({ error: 'Invalid account ID' }, { status: 400 });
+    }
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    // Verify account belongs to user before deleting
-    const existingAccount = await db.getAccount(id);
-    if (!existingAccount || existingAccount.user_id !== user.id) {
+    const deleted = await db.deleteAccount(id, user.id);
+    if (!deleted) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
-
-    await db.deleteAccount(id);
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

@@ -3,7 +3,7 @@
  * For use in API routes and Server Components
  */
 
-import { cookies, headers } from 'next/headers';
+import { headers } from 'next/headers';
 import { verifyAuthToken } from './admin';
 
 export interface AuthUser {
@@ -14,7 +14,7 @@ export interface AuthUser {
 
 /**
  * Get the authenticated user from the request
- * Checks both Authorization header and cookies for Firebase ID token
+ * Checks the Authorization header for a Firebase ID token.
  * Returns user info directly from Firebase JWT (no database lookup)
  *
  * Usage in API routes:
@@ -27,31 +27,14 @@ export interface AuthUser {
  */
 export async function getAuthUser(): Promise<AuthUser | null> {
   try {
-    // Get token from Authorization header or cookie
     const headersList = await headers();
     const authHeader = headersList.get('authorization');
-
-    let token: string | null = null;
-
-    // Try Authorization header first
-    if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.split('Bearer ')[1];
-    }
-
-    // Try cookie as fallback
-    if (!token) {
-      const cookieStore = await cookies();
-      token = cookieStore.get('firebase-token')?.value || null;
-    }
-
-    if (!token) {
+    if (!authHeader?.startsWith('Bearer ')) {
       return null;
     }
 
     // Verify token with Firebase Admin
-    // Note: verifyAuthToken expects "Bearer <token>" format
-    const authHeaderValue = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-    const decodedToken = await verifyAuthToken(authHeaderValue);
+    const decodedToken = await verifyAuthToken(authHeader);
     if (!decodedToken) {
       return null;
     }

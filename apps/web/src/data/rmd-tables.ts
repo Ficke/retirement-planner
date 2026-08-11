@@ -4,8 +4,16 @@
  * Updated: 2022 SECURE Act changes
  */
 
-// RMD starting age per SECURE 2.0 Act
-export const RMD_START_AGE = 73;
+/**
+ * SECURE/SECURE 2.0 applicable age by birth cohort.
+ * The model is annual, so the pre-2020 age-70½ cohort is represented as age 70.
+ */
+export function getRmdStartAge(birthYear: number): number {
+  if (birthYear <= 1948) return 70;
+  if (birthYear <= 1950) return 72;
+  if (birthYear <= 1959) return 73;
+  return 75;
+}
 
 // IRS Uniform Lifetime Table (for account owners with spouses not more than 10 years younger)
 export const RMD_UNIFORM_LIFETIME_TABLE: Record<number, number> = {
@@ -16,4 +24,3 @@ export const RMD_UNIFORM_LIFETIME_TABLE: Record<number, number> = {
   108: 3.9, 109: 3.7, 110: 3.5, 111: 3.4, 112: 3.3, 113: 3.1, 114: 3.0, 115: 2.9, 116: 2.8,
   117: 2.7, 118: 2.5, 119: 2.3, 120: 2.0,
 };
-

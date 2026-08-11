@@ -19,10 +19,17 @@ import type {
 } from '@/domain/types';
 
 export interface SimulationService {
-  runMainSimulation(plan: RetirementPlan, useServerSide?: boolean): Promise<SimulationResult>;
-  runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SSAnalysisResult[]>;
-  runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<SpendingAnalysisResult[]>;
-  runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean): Promise<RetirementAgeAnalysisResult[]>;
+  runMainSimulation(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SimulationResult>;
+  runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SSAnalysisResult[]>;
+  runSpendingAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SpendingAnalysisResult[]>;
+  runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<RetirementAgeAnalysisResult[]>;
+  runSensitivityAnalyses(plan: RetirementPlan, useServerSide?: boolean, signal?: AbortSignal): Promise<SensitivityAnalysisResults>;
+}
+
+export interface SensitivityAnalysisResults {
+  socialSecurity: SSAnalysisResult[];
+  spending: SpendingAnalysisResult[];
+  retirementAge: RetirementAgeAnalysisResult[];
 }
 
 const MAIN_PATHS = 5000;
@@ -40,6 +47,25 @@ interface BatchSimulationResponse {
   result: SimulationResult;
 }
 
+/** Strip account ownership and display metadata before transient cloud compute. */
+function toServerPlan(plan: RetirementPlan): RetirementPlan {
+  return {
+    ...plan,
+    accounts: plan.accounts.map((account, index) => ({
+      id: `account-${index + 1}`,
+      name: `Account ${index + 1}`,
+      institution: '',
+      type: account.type,
+      user_id: null,
+      balance: account.balance,
+      assetWeights: { ...account.assetWeights },
+      taxable: account.type === 'Taxable',
+      createdAt: '1970-01-01T00:00:00.000Z',
+      updatedAt: '1970-01-01T00:00:00.000Z',
+    })),
+  };
+}
+
 /**
  * Base seed for a run. A fixed seed (Settings → Randomness) gives reproducible
  * results; otherwise each run draws a fresh sample.
@@ -55,17 +81,23 @@ function historicalBootstrapFor(plan: RetirementPlan): boolean {
 // --- Scenario builders (shared by both engines) ---
 
 function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
-  const ages = Array.from({ length: 9 }, (_, i) => 62 + i);
+  // Disabled benefits make every path identical. A manual household benefit
+  // is authoritative only at its selected claim age; without spouse/statement
+  // detail, inventing nine differently adjusted benefits would be misleading.
+  const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
+    ? Array.from({ length: 9 }, (_, i) => 62 + i)
+    : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
     scenario: {
       id: `ss-${claimAge}`,
       plan: {
         ...plan,
-        socialSecurity: { ...plan.socialSecurity, enabled: true, claimAge },
+        socialSecurity: { ...plan.socialSecurity, claimAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 1000 + claimAge,
+      // Common random numbers isolate the effect of claim age from MC noise.
+      seed: seed + 1000,
     },
   }));
 }
@@ -74,7 +106,11 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
   // 11 levels centered on desiredSpending, step ≈ 10% rounded to nearest $5k
   const base = plan.profile.desiredSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
-  const levels = Array.from({ length: 11 }, (_, i) => base + step * (i - 5)).filter((s) => s > 0);
+  const levels = [...new Set(
+    Array.from({ length: 11 }, (_, i) => (
+      Math.max(0, Math.min(1_000_000_000, base + step * (i - 5)))
+    )),
+  )];
   return levels.map((annualSpending) => ({
     annualSpending,
     scenario: {
@@ -84,16 +120,31 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
         profile: { ...plan.profile, desiredSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 2000 + annualSpending,
+      seed: seed + 2000,
     },
   }));
 }
 
 function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
-  // ±5 years around the planned retirement age, clamped to a sane window.
+  // For an already-retired plan, changing a historical retirement age cannot
+  // affect future cash flows, so avoid spending compute on duplicate paths.
   const center = plan.profile.retirementAge;
-  const min = Math.max(plan.profile.age + 1, Math.min(center - 5, 70), MIN_RETIREMENT_AGE);
-  const max = Math.min(75, Math.max(center + 5, min));
+  if (center <= plan.profile.age) {
+    return [{
+      retirementAge: center,
+      scenario: {
+        id: `retirementAge-${center}`,
+        plan,
+        paths: SWEEP_PATHS,
+        seed: seed + 3000,
+      },
+    }];
+  }
+
+  // ±5 years around a future retirement date, bounded by the current age and
+  // the modeled lifetime so every generated scenario remains valid.
+  const min = Math.max(plan.profile.age, center - 5, MIN_RETIREMENT_AGE);
+  const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
   const ages: number[] = [];
   for (let a = min; a <= max; a++) ages.push(a);
   return ages.map((retirementAge) => ({
@@ -105,18 +156,22 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         profile: { ...plan.profile, retirementAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 3000 + retirementAge,
+      seed: seed + 3000,
     },
   }));
 }
 
 // --- Engine backends ---
 
-async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise<Map<string, SimulationResult>> {
+async function runOnServer(
+  scenarios: Scenario[],
+  plan: RetirementPlan,
+  signal?: AbortSignal,
+): Promise<Map<string, SimulationResult>> {
   const body = {
     simulations: scenarios.map((s) => ({
       id: s.id,
-      plan: s.plan,
+      plan: toServerPlan(s.plan),
       config: {
         paths: s.paths,
         seed: s.seed,
@@ -130,6 +185,7 @@ async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -145,10 +201,18 @@ async function runOnServer(scenarios: Scenario[], plan: RetirementPlan): Promise
   return map;
 }
 
-async function runOnClient(scenarios: Scenario[]): Promise<Map<string, SimulationResult>> {
+async function runOnClient(
+  scenarios: Scenario[],
+  signal?: AbortSignal,
+): Promise<Map<string, SimulationResult>> {
   const map = new Map<string, SimulationResult>();
   for (const s of scenarios) {
-    const result = await runMonteCarloSimulation(s.plan, { paths: s.paths, seed: s.seed });
+    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
+    const result = await runMonteCarloSimulation(
+      s.plan,
+      { paths: s.paths, seed: s.seed },
+      signal,
+    );
     map.set(s.id, { ...result, source: 'client' });
   }
   return map;
@@ -162,19 +226,25 @@ async function runScenarios(
   scenarios: Scenario[],
   plan: RetirementPlan,
   useServerSide: boolean,
+  signal?: AbortSignal,
 ): Promise<Map<string, SimulationResult>> {
   if (useServerSide) {
     try {
-      return await runOnServer(scenarios, plan);
+      return await runOnServer(scenarios, plan, signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       console.warn('Server-side simulation failed, falling back to client engine:', error);
     }
   }
-  return runOnClient(scenarios);
+  return runOnClient(scenarios, signal);
 }
 
 class SimulationServiceImpl implements SimulationService {
-  async runMainSimulation(plan: RetirementPlan, useServerSide = true): Promise<SimulationResult> {
+  async runMainSimulation(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SimulationResult> {
     const seed = baseSeed(plan);
 
     if (useServerSide) {
@@ -182,8 +252,9 @@ class SimulationServiceImpl implements SimulationService {
         const response = await fetch('/api/simulation/monte-carlo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal,
           body: JSON.stringify({
-            plan,
+            plan: toServerPlan(plan),
             config: {
               paths: MAIN_PATHS,
               seed,
@@ -199,18 +270,23 @@ class SimulationServiceImpl implements SimulationService {
         const result: SimulationResult = await response.json();
         return { ...result, source: 'server' };
       } catch (error) {
+        if (signal?.aborted) throw error;
         console.warn('Server-side simulation failed, falling back to client engine:', error);
       }
     }
 
-    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed });
+    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed }, signal);
     return { ...result, source: 'client' };
   }
 
-  async runSocialSecurityAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SSAnalysisResult[]> {
+  async runSocialSecurityAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SSAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = ssScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ claimAge, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for SS age ${claimAge}`);
@@ -218,10 +294,14 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  async runSpendingAnalysis(plan: RetirementPlan, useServerSide = true): Promise<SpendingAnalysisResult[]> {
+  async runSpendingAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SpendingAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = spendingScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ annualSpending, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for spending level ${annualSpending}`);
@@ -229,15 +309,55 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  async runRetirementAgeAnalysis(plan: RetirementPlan, useServerSide = true): Promise<RetirementAgeAnalysisResult[]> {
+  async runRetirementAgeAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<RetirementAgeAnalysisResult[]> {
     const seed = baseSeed(plan);
     const entries = retirementAgeScenarios(plan, seed);
-    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
     return entries.map(({ retirementAge, scenario }) => {
       const result = results.get(scenario.id);
       if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
       return { retirementAge, result };
     });
+  }
+
+  /** Run all Overview sensitivity curves in one bounded server batch. */
+  async runSensitivityAnalyses(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<SensitivityAnalysisResults> {
+    const seed = baseSeed(plan);
+    const socialSecurityEntries = ssScenarios(plan, seed);
+    const spendingEntries = spendingScenarios(plan, seed);
+    const retirementAgeEntries = retirementAgeScenarios(plan, seed);
+    const allScenarios = [
+      ...socialSecurityEntries.map((entry) => entry.scenario),
+      ...spendingEntries.map((entry) => entry.scenario),
+      ...retirementAgeEntries.map((entry) => entry.scenario),
+    ];
+    const results = await runScenarios(allScenarios, plan, useServerSide, signal);
+
+    return {
+      socialSecurity: socialSecurityEntries.map(({ claimAge, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for SS age ${claimAge}`);
+        return { claimAge, result };
+      }),
+      spending: spendingEntries.map(({ annualSpending, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for spending level ${annualSpending}`);
+        return { annualSpending, result };
+      }),
+      retirementAge: retirementAgeEntries.map(({ retirementAge, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
+        return { retirementAge, result };
+      }),
+    };
   }
 }
 

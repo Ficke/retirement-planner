@@ -15,6 +15,11 @@ describe('State Management - Simple Invalidation Logic', () => {
   beforeEach(() => {
     // Reset the result slices touched by these tests
     usePlan.setState({
+      authUser: null,
+      cloudAccountReady: false,
+      cloudAvailable: false,
+      cloudSyncEnabled: true,
+      error: null,
       simulationResult: null,
       ssAnalysisResult: null,
       spendingAnalysisResult: null,
@@ -51,7 +56,25 @@ describe('State Management - Simple Invalidation Logic', () => {
 
   it('should clear all analysis results when assumptions change', () => {
     seedMockResults();
-    usePlan.getState().updatePlan({ assumptions: { useBackdoorRoth: false } });
+    usePlan.getState().updatePlan({ assumptions: { randomSeed: 123 } });
     expectAllCleared();
+  });
+
+  it('enters cloud mode only after both identity setup and cloud reads succeed', () => {
+    usePlan.setState({ authUser: { id: 'user-1' }, cloudAccountReady: true });
+    expect(usePlan.getState().dataMode()).toBe('local');
+
+    usePlan.setState({ cloudAvailable: true });
+    expect(usePlan.getState().dataMode()).toBe('cloud');
+
+    usePlan.setState({ cloudAccountReady: false });
+    expect(usePlan.getState().dataMode()).toBe('local');
+  });
+
+  it('rejects invalid plan transitions before persistence or simulation', () => {
+    const previousPlan = usePlan.getState().plan;
+    usePlan.getState().updatePlan({ profile: { lifeExpectancy: 10 } });
+    expect(usePlan.getState().plan).toBe(previousPlan);
+    expect(usePlan.getState().error).toContain('Plan change was not applied');
   });
 });

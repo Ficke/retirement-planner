@@ -119,7 +119,7 @@ function YearlyTable({ data }: { data: Row[] }) {
       },
       {
         accessorKey: "portfolioValue",
-        header: () => <span className="block text-right">Portfolio</span>,
+        header: () => <span className="block text-right">Median portfolio</span>,
         cell: ({ getValue }) => (
           <span className="block text-right font-mono font-semibold">
             {fmtCurrency(getValue<number>(), true)}
@@ -230,7 +230,8 @@ export function PageProjections() {
         : yearly;
     return filtered.map((p) => ({
       ...p,
-      externalIncome: p.income + p.socialSecurityBenefit,
+      // `income` already includes Social Security in retirement projections.
+      externalIncome: p.income,
     }));
   }, [yearly, yearFilter]);
 
@@ -321,6 +322,7 @@ export function PageProjections() {
 
       <DashboardCard
         title="Year-by-Year"
+        description="Cash-flow columns follow one internally consistent median-terminal-wealth path. Portfolio and Range are point-in-time Monte Carlo percentiles across all paths."
         actions={
           <SegmentedTabs<YearFilter>
             value={yearFilter}

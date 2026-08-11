@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { fetchRustService } from '@/lib/rust-service-client';
-import { batchRequestSchema, SIMULATION_RATE_LIMIT } from '@/lib/simulation-request';
+import {
+  batchRequestSchema,
+  SIMULATION_PATH_RATE_LIMIT,
+  SIMULATION_RATE_LIMIT,
+} from '@/lib/simulation-request';
+import { readLimitedJson } from '@/lib/validation';
 
 /**
  * Proxies batch Monte Carlo requests (sensitivity sweeps) to the Rust service.
@@ -21,7 +26,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request, 256 * 1024);
     const validation = batchRequestSchema.safeParse(body);
     if (!validation.success) {
       return NextResponse.json(
@@ -29,11 +34,26 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    const totalPaths = validation.data.simulations.reduce(
+      (sum, simulation) => sum + simulation.config.paths,
+      0,
+    );
+    const pathLimit = await rateLimit(
+      `simulate-paths:${ip}`,
+      SIMULATION_PATH_RATE_LIMIT,
+      totalPaths,
+    );
+    if (!pathLimit.success) {
+      return NextResponse.json(
+        { error: 'Simulation compute quota exceeded — retry shortly' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((pathLimit.reset - Date.now()) / 1000)) } },
+      );
+    }
 
     const rustResponse = await fetchRustService('/api/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(validation.data),
       signal: AbortSignal.timeout(60000),
     });
 
@@ -52,6 +72,12 @@ export async function POST(request: NextRequest) {
     console.error('Batch simulation proxy error:', error);
 
     if (error instanceof Error) {
+      if (error instanceof RangeError) {
+        return NextResponse.json({ error: error.message }, { status: 413 });
+      }
+      if (error instanceof SyntaxError) {
+        return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+      }
       if (error.name === 'AbortError' || error.message.includes('timeout')) {
         return NextResponse.json(
           { error: 'Batch simulation timeout', details: 'Request took too long' },

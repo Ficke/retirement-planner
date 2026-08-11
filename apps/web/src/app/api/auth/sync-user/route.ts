@@ -20,21 +20,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { firebaseUid, email, name } = body;
-
-    if (!firebaseUid || !email) {
+    if (!decodedToken.email) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Authenticated account has no email claim' },
         { status: 400 }
-      );
-    }
-
-    // Verify the token matches the user being synced
-    if (decodedToken.uid !== firebaseUid) {
-      return NextResponse.json(
-        { error: 'Token mismatch' },
-        { status: 403 }
       );
     }
 
@@ -47,12 +36,12 @@ export async function POST(request: NextRequest) {
        VALUES ($1, $2, $3)
        ON CONFLICT (id) DO UPDATE SET
          email = $2, name = $3, updated_at = NOW()`,
-      [firebaseUid, email, name || null]
+      [decodedToken.uid, decodedToken.email, decodedToken.name || null]
     );
 
     return NextResponse.json({
       success: true,
-      userId: firebaseUid,
+      userId: decodedToken.uid,
     });
   } catch (error) {
     console.error('Sync user error:', error);

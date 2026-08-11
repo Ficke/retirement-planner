@@ -12,6 +12,7 @@ describe('HSA Withdrawal Logic Fix', () => {
       retirementAge: 65, // Already retired
       currentSalary: 0, // Retired
       salaryGrowthRate: 0,
+      currentSpending: 120000,
       desiredSpending: 120000, // High spending to force withdrawals
       spendingGrowthRate: 0,
       lifeExpectancy: 90,
@@ -74,7 +75,8 @@ describe('HSA Withdrawal Logic Fix', () => {
     },
     assumptions: {
       simulationModel: 'historical',
-      useBackdoorRoth: false,
+      taxableGainRatio: 0.5,
+      contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
     },
   });
 

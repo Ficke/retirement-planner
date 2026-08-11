@@ -6,6 +6,7 @@ import { LogIn, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { usePlan } from "@/state/usePlan";
+import { useAuth } from "@/lib/firebase";
 import type { SimulationModel } from "@/domain/types";
 import {
   US_STOCK_REAL_RETURNS,
@@ -48,9 +49,12 @@ export function PageSettings() {
     useServerSideCalculations,
     setUseServerSideCalculations,
     cloudSyncEnabled,
+    cloudAvailable,
     setCloudSyncEnabled,
     authUser,
+    bootstrap,
   } = usePlan();
+  const { user, cloudReady } = useAuth();
   const router = useRouter();
   const updateAssumptions = (
     assumptions: Parameters<typeof updatePlan>[0]["assumptions"],
@@ -58,8 +62,8 @@ export function PageSettings() {
   const a = plan.assumptions;
 
   const seedMode = a.randomSeed != null ? "fixed" : "random";
-  const signedIn = authUser != null;
-  const dataMode = signedIn && cloudSyncEnabled ? "cloud" : "local";
+  const signedIn = user != null && authUser != null;
+  const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
   const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
 
   return (
@@ -77,7 +81,9 @@ export function PageSettings() {
             label="Storage"
             helper={
               signedIn
-                ? "Cloud: your profile and accounts sync to your account across devices. This browser only: nothing is written to the cloud; data lives in this browser and is lost if you clear it."
+                ? cloudReady
+                  ? "Cloud syncs across devices. Browser-only mode copies the current plan but never uploads later edits; switching back reloads the cloud copy. Browser-only data is lost if you clear this browser."
+                  : "Your identity is signed in, but its cloud data record is unavailable. This account remains isolated in browser-only storage until cloud setup succeeds."
                 : "You're not signed in, so your profile and accounts exist only in this browser — nothing is stored in the cloud. Sign in to keep your plan and use it across devices."
             }
             badge={
@@ -97,6 +103,7 @@ export function PageSettings() {
                 }}
                 variant="outline"
                 size="sm"
+                disabled={!cloudReady}
               >
                 <ToggleGroupItem value="cloud">Cloud (synced)</ToggleGroupItem>
                 <ToggleGroupItem value="local">This browser only</ToggleGroupItem>
@@ -108,6 +115,22 @@ export function PageSettings() {
               </Button>
             )}
           </Setting>
+          {signedIn && cloudReady && cloudSyncEnabled && !cloudAvailable && (
+            <div className="border-border mt-4 flex items-center justify-between gap-4 border-t pt-4">
+              <p className="text-muted-foreground text-sm">
+                Cloud reads did not complete. Browser edits remain local; retrying reloads the
+                cloud copy.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void bootstrap(authUser, true)}
+              >
+                <RefreshCw className="size-4" />
+                Retry cloud
+              </Button>
+            </div>
+          )}
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -116,7 +139,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Where simulations run"
-            helper="Cloud engine: each run sends your plan — including account balances — to our server, computes in memory, and returns the result; nothing is stored. Local engine: calculations never leave this device (slower on large sweeps)."
+            helper="Cloud engine: each run sends model inputs, balances, and allocations to our server, but strips account names, institutions, owner IDs, and timestamps. It computes in memory and stores nothing. Local engine: calculations never leave this device (slower on large sweeps)."
             badge={
               <Badge
                 variant="secondary"
@@ -204,8 +227,10 @@ export function PageSettings() {
                 label="Tax brackets"
                 value={
                   plan.profile.state === "CA"
-                    ? "Federal 2025 + CA 2025"
-                    : "Federal 2025"
+                    ? "Federal + CA 2025 estimate"
+                    : plan.profile.state === "TX" || plan.profile.state === "FL"
+                      ? "Federal 2025; no state income tax"
+                      : "Federal 2025; state/local excluded"
                 }
                 source={`IRS${plan.profile.state === "CA" ? " / FTB" : ""}`}
               />
@@ -215,8 +240,50 @@ export function PageSettings() {
                 source="IRS Pub. 590-B"
               />
               <ReferenceRow label="Contribution limits" value="2025" source="IRS" />
+              <ReferenceRow
+                label="Taxable withdrawal gain share"
+                value={`${(a.taxableGainRatio * 100).toFixed(0)}%`}
+                source="Your modeling assumption"
+              />
             </TableBody>
           </Table>
+        </DashboardCard>
+
+        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
+          Tax model
+        </h2>
+        <DashboardCard>
+          <p className="text-muted-foreground mb-5 text-sm leading-relaxed">
+            Tax rules and limits use 2025 law held constant in real dollars. Estimates use standard
+            deductions and omit itemized deductions, tax credits, AMT, local taxes, and income
+            categories the profile does not collect. Age-based deductions and contribution limits
+            apply to the primary person; married plans do not infer a spouse&apos;s age, earnings,
+            contributions, or Social Security benefit. Married filing separately assumes the filer
+            lived with their spouse during the year for Social Security taxation. Recurring cash
+            flows, including RMDs, are prorated from the as-of date in the first modeled year because
+            the plan does not collect year-to-date amounts.
+          </p>
+          <Setting
+            label="Taxable withdrawal gain share"
+            helper="The portion of each taxable-brokerage withdrawal treated as long-term capital gain; the remainder is return of cost basis. Use 0% for all basis and 100% for all gain. HSA withdrawals are assumed to pay qualified medical expenses and remain tax-free."
+          >
+            <div className="flex max-w-40 items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Number((a.taxableGainRatio * 100).toFixed(1))}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) {
+                    updateAssumptions({ taxableGainRatio: Math.max(0, Math.min(100, value)) / 100 });
+                  }
+                }}
+              />
+              <span className="text-muted-foreground text-sm">%</span>
+            </div>
+          </Setting>
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -251,29 +318,6 @@ export function PageSettings() {
           </div>
         </DashboardCard>
 
-        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Strategy
-        </h2>
-        <DashboardCard>
-          <Setting
-            label="Backdoor Roth"
-            helper="Convert post-tax dollars into Roth annually when income exceeds direct-Roth limits."
-          >
-            <ToggleGroup
-              type="single"
-              value={a.useBackdoorRoth ? "on" : "off"}
-              onValueChange={(v) => {
-                if (!v) return;
-                updateAssumptions({ useBackdoorRoth: v === "on" });
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="on">On</ToggleGroupItem>
-              <ToggleGroupItem value="off">Off</ToggleGroupItem>
-            </ToggleGroup>
-          </Setting>
-        </DashboardCard>
       </PageShell>
   );
 }

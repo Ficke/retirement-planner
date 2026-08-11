@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { calculateSSABenefit, calculateAIME, calculatePIA, getClaimAgeAdjustment } from '@/engine/ssa';
+import {
+  calculateSSABenefit,
+  calculateAIME,
+  calculatePIA,
+  getClaimAgeAdjustment,
+  getFullRetirementAgeMonths,
+} from '@/engine/ssa';
+import { estimateSalaryHistory } from '@/engine/projection';
 
 describe('Social Security Administration', () => {
   const testSalaryHistory = Array(35).fill(80000); // 35 years at $80k
@@ -7,7 +14,7 @@ describe('Social Security Administration', () => {
   describe('Claim Age Adjustments', () => {
     it('should apply early claiming penalty at age 62 (FRA 67 → 30% reduction)', () => {
       const adjustment = getClaimAgeAdjustment(62);
-      expect(adjustment).toBe(0.70);
+      expect(adjustment).toBeCloseTo(0.70, 12);
     });
 
     it('should give full benefit at full retirement age 67', () => {
@@ -18,6 +25,12 @@ describe('Social Security Administration', () => {
     it('should apply delayed retirement credit at age 70', () => {
       const adjustment = getClaimAgeAdjustment(70);
       expect(adjustment).toBe(1.24);
+    });
+
+    it('uses the birth-year-specific full retirement age', () => {
+      expect(getFullRetirementAgeMonths(1956)).toBe(66 * 12 + 4);
+      expect(getClaimAgeAdjustment(67, 1956)).toBeCloseTo(1.0533333333, 8);
+      expect(getClaimAgeAdjustment(62, 1959)).toBeCloseTo(0.7083333333, 8);
     });
   });
   
@@ -32,7 +45,7 @@ describe('Social Security Administration', () => {
       expect(benefit67.annualBenefit).toBeLessThan(benefit70.annualBenefit);
       
       // Verify claim adjustments are applied correctly
-      expect(benefit62.claimAdjustment).toBe(0.70);
+      expect(benefit62.claimAdjustment).toBeCloseTo(0.70, 12);
       expect(benefit67.claimAdjustment).toBe(1.0);
       expect(benefit70.claimAdjustment).toBe(1.24);
       
@@ -48,6 +61,22 @@ describe('Social Security Administration', () => {
       expect(aime).toBeCloseTo(6667, -2); // Within $100/month
       expect(aime).toBeGreaterThan(6000);
       expect(aime).toBeLessThan(8000);
+    });
+
+    it('uses zero-earning years when fewer than 35 years are supplied', () => {
+      const aime = calculateAIME(Array(20).fill(60000));
+      expect(aime).toBe(Math.floor((20 * 60000) / 420));
+    });
+
+    it('caps annual earnings at the 2025 Social Security wage base', () => {
+      expect(calculateAIME(Array(35).fill(1_000_000))).toBe(14_675);
+    });
+
+    it('anchors estimated earnings at current age', () => {
+      const history = estimateSalaryHistory(100000, 0.02, 40, 42);
+      expect(history).toHaveLength(20);
+      expect(history[18]).toBeCloseTo(100000, 6);
+      expect(history[19]).toBeCloseTo(102000, 6);
     });
     
     it('should calculate reasonable PIA using bend points', () => {
@@ -82,7 +111,7 @@ describe('Social Security Administration', () => {
         { threshold: 7391, rate: 0.32 },
         { threshold: null, rate: 0.15 },
       ]);
-      expect(pia).toBeCloseTo(2311.08, 1);
+      expect(pia).toBe(2311.0);
     });
   });
 });

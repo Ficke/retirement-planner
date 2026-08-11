@@ -16,12 +16,12 @@ export class AccountsClient {
     this.baseUrl = baseUrl;
   }
 
-  async createAccount(data: CreateAccountData): Promise<Account> {
+  async createAccount(data: CreateAccountData, expectedUserId?: string): Promise<Account> {
     const response = await authenticatedFetch(`${this.baseUrl}/accounts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    });
+    }, expectedUserId);
 
     if (!response.ok) {
       throw new Error(`Failed to create account: ${response.statusText}`);
@@ -30,8 +30,8 @@ export class AccountsClient {
     return response.json();
   }
 
-  async getAccounts(): Promise<Account[]> {
-    const response = await authenticatedFetch(`${this.baseUrl}/accounts`);
+  async getAccounts(expectedUserId?: string): Promise<Account[]> {
+    const response = await authenticatedFetch(`${this.baseUrl}/accounts`, {}, expectedUserId);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch accounts: ${response.statusText}`);
@@ -40,8 +40,8 @@ export class AccountsClient {
     return response.json();
   }
 
-  async getAccount(id: string): Promise<Account | null> {
-    const response = await authenticatedFetch(`${this.baseUrl}/accounts/${id}`);
+  async getAccount(id: string, expectedUserId?: string): Promise<Account | null> {
+    const response = await authenticatedFetch(`${this.baseUrl}/accounts/${id}`, {}, expectedUserId);
 
     if (response.status === 404) {
       return null;
@@ -56,13 +56,14 @@ export class AccountsClient {
 
   async updateAccount(
     id: string,
-    updates: Partial<Omit<Account, 'id' | 'createdAt'>>
+    updates: Partial<Omit<Account, 'id' | 'createdAt'>>,
+    expectedUserId?: string,
   ): Promise<Account> {
     const response = await authenticatedFetch(`${this.baseUrl}/accounts/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
-    });
+    }, expectedUserId);
 
     if (!response.ok) {
       throw new Error(`Failed to update account: ${response.statusText}`);
@@ -71,10 +72,10 @@ export class AccountsClient {
     return response.json();
   }
 
-  async deleteAccount(id: string): Promise<void> {
+  async deleteAccount(id: string, expectedUserId?: string): Promise<void> {
     const response = await authenticatedFetch(`${this.baseUrl}/accounts/${id}`, {
       method: 'DELETE',
-    });
+    }, expectedUserId);
 
     if (!response.ok) {
       throw new Error(`Failed to delete account: ${response.statusText}`);

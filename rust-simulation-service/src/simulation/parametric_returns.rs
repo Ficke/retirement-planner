@@ -50,7 +50,9 @@ fn std_dev(xs: &[f64]) -> f64 {
 ///   exp(mu_log + sigma_log * Z) - 1
 /// has the given arithmetic mean and volatility for Z ~ N(0, 1).
 fn to_log_params(stats: MarketStats) -> (f64, f64) {
-    let sigma_log = (1.0 + (stats.volatility / (1.0 + stats.mean)).powi(2)).ln().sqrt();
+    let sigma_log = (1.0 + (stats.volatility / (1.0 + stats.mean)).powi(2))
+        .ln()
+        .sqrt();
     let mu_log = (1.0 + stats.mean).ln() - 0.5 * sigma_log * sigma_log;
     (mu_log, sigma_log)
 }
@@ -65,8 +67,14 @@ static STATS: LazyLock<DerivedStats> = LazyLock::new(|| {
         .map(|r| (1.0 + r.bond_return) / (1.0 + r.inflation_rate) - 1.0)
         .collect();
 
-    let stock = MarketStats { mean: mean(&real_stock), volatility: std_dev(&real_stock) };
-    let bond = MarketStats { mean: mean(&real_bond), volatility: std_dev(&real_bond) };
+    let stock = MarketStats {
+        mean: mean(&real_stock),
+        volatility: std_dev(&real_stock),
+    };
+    let bond = MarketStats {
+        mean: mean(&real_bond),
+        volatility: std_dev(&real_bond),
+    };
 
     let cov = real_stock
         .iter()
@@ -91,7 +99,13 @@ pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns>
     let student_t = StudentT::new(6.0)?;
     let normal = Normal::new(0.0, 1.0)?;
 
-    let stock_shock = student_t.sample(rng);
+    let degrees_of_freedom: f64 = 6.0;
+    // Match the browser engine's numerical guard. An unbounded Student-t draw
+    // passed through exp() can overflow an entire path; ±10 retains very heavy
+    // tails while keeping both engines finite and semantically aligned.
+    let raw_stock_shock: f64 = student_t.sample(rng);
+    let stock_shock = raw_stock_shock.clamp(-10.0, 10.0)
+        / (degrees_of_freedom / (degrees_of_freedom - 2.0)).sqrt();
     let bond_shock = normal.sample(rng);
 
     // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]
@@ -121,9 +135,17 @@ mod tests {
         // Real US stock/bond history: broad sanity bands, not exact pins,
         // so dataset updates don't break the test.
         assert!(s.mean > 0.05 && s.mean < 0.12, "stock mean {}", s.mean);
-        assert!(s.volatility > 0.15 && s.volatility < 0.25, "stock vol {}", s.volatility);
+        assert!(
+            s.volatility > 0.15 && s.volatility < 0.25,
+            "stock vol {}",
+            s.volatility
+        );
         assert!(b.mean > -0.01 && b.mean < 0.05, "bond mean {}", b.mean);
-        assert!(b.volatility > 0.05 && b.volatility < 0.12, "bond vol {}", b.volatility);
+        assert!(
+            b.volatility > 0.05 && b.volatility < 0.12,
+            "bond vol {}",
+            b.volatility
+        );
     }
 
     #[test]
@@ -139,8 +161,8 @@ mod tests {
         }
 
         // Bounded below by -1 by construction
-        assert!(stock_returns.iter().all(|&r| r > -1.0));
-        assert!(bond_returns.iter().all(|&r| r > -1.0));
+        assert!(stock_returns.iter().all(|&r| r.is_finite() && r > -1.0));
+        assert!(bond_returns.iter().all(|&r| r.is_finite() && r > -1.0));
 
         let stock_mean = mean(&stock_returns);
         let bond_mean = mean(&bond_returns);

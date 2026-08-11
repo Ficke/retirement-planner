@@ -10,6 +10,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import type { Account, CreateAccountData } from '@/domain/types';
+import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
 
 export interface DatabaseMigration {
   version: number;
@@ -22,14 +23,14 @@ export interface UnifiedDatabaseService {
   close(): Promise<void>;
   query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 
-  getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> } | null>;
-  saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }): Promise<void>;
+  getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number } | null>;
+  saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }, expectedRevision: number | null): Promise<number>;
 
   createAccount(data: CreateAccountData): Promise<Account>;
-  getAccount(id: string): Promise<Account | null>;
+  getAccount(id: string, userId: string): Promise<Account | null>;
   getAccountsForUser(userId: string): Promise<Account[]>;
-  updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account>;
-  deleteAccount(id: string): Promise<void>;
+  updateAccount(id: string, userId: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account | null>;
+  deleteAccount(id: string, userId: string): Promise<boolean>;
 }
 
 export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
@@ -83,36 +84,87 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
       `DROP TABLE IF EXISTS verification_tokens CASCADE`,
     ],
   },
+  {
+    version: 12,
+    name: 'Use financial precision and enforce account invariants',
+    up: [
+      `ALTER TABLE accounts
+         ALTER COLUMN balance TYPE NUMERIC(18, 2) USING ROUND(balance::numeric, 2),
+         ALTER COLUMN balance SET DEFAULT 0,
+         ALTER COLUMN stocks_pct TYPE NUMERIC(8, 7) USING stocks_pct::numeric,
+         ALTER COLUMN bonds_pct TYPE NUMERIC(8, 7) USING bonds_pct::numeric`,
+      `ALTER TABLE accounts
+         ADD CONSTRAINT accounts_balance_nonnegative CHECK (balance >= 0) NOT VALID`,
+      `ALTER TABLE accounts
+         ADD CONSTRAINT accounts_allocations_valid CHECK (
+           stocks_pct BETWEEN 0 AND 1
+           AND bonds_pct BETWEEN 0 AND 1
+           AND ABS(stocks_pct + bonds_pct - 1) <= 0.000001
+         ) NOT VALID`,
+      `ALTER TABLE accounts
+         ADD CONSTRAINT accounts_user_required CHECK (user_id IS NOT NULL) NOT VALID`,
+    ],
+  },
+  {
+    version: 13,
+    name: 'Add optimistic revision to cloud profiles',
+    up: [
+      `ALTER TABLE user_profiles
+         ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0`,
+    ],
+  },
 ];
+
+export class ProfileRevisionConflictError extends Error {
+  constructor() {
+    super('Cloud profile changed since it was loaded');
+    this.name = 'ProfileRevisionConflictError';
+  }
+}
+
+export class AccountLimitError extends Error {
+  constructor() {
+    super(`A plan may contain at most ${MAX_PLAN_ACCOUNTS} accounts`);
+    this.name = 'AccountLimitError';
+  }
+}
+
+class PostgreSQLTransaction {
+  constructor(private readonly client: PoolClient) {}
+
+  async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
+    const result = await this.client.query(sql, params);
+    return result.rows as T[];
+  }
+
+  async queryOne<T = unknown>(sql: string, params: unknown[] = []): Promise<T | null> {
+    const rows = await this.query<T>(sql, params);
+    return rows[0] ?? null;
+  }
+
+  async execute(sql: string, params: unknown[] = []): Promise<void> {
+    await this.client.query(sql, params);
+  }
+}
 
 class PostgreSQLConnection {
   private pool: Pool;
-  private transactionClient: PoolClient | null = null;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
-      max: 10,
+      max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000, // Neon wakeup can be slow
+      query_timeout: 20_000,
+      statement_timeout: 15_000,
+      application_name: 'retirement-planner-web',
     });
   }
 
-  private async getClient(): Promise<{ client: PoolClient; release: boolean }> {
-    if (this.transactionClient) {
-      return { client: this.transactionClient, release: false };
-    }
-    return { client: await this.pool.connect(), release: true };
-  }
-
   async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const { client, release } = await this.getClient();
-    try {
-      const result = await client.query(sql, params);
-      return result.rows as T[];
-    } finally {
-      if (release) client.release();
-    }
+    const result = await this.pool.query(sql, params);
+    return result.rows as T[];
   }
 
   async queryOne<T = unknown>(sql: string, params: unknown[] = []): Promise<T | null> {
@@ -124,19 +176,17 @@ class PostgreSQLConnection {
     await this.query(sql, params);
   }
 
-  async transaction<T>(callback: () => Promise<T>): Promise<T> {
+  async transaction<T>(callback: (transaction: PostgreSQLTransaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      this.transactionClient = client;
-      const result = await callback();
+      const result = await callback(new PostgreSQLTransaction(client));
       await client.query('COMMIT');
       return result;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally {
-      this.transactionClient = null;
       client.release();
     }
   }
@@ -162,6 +212,7 @@ interface AccountRow {
 
 class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
   private connection: PostgreSQLConnection | null = null;
+  private initializationPromise: Promise<void> | null = null;
   private readonly connectionString: string;
 
   constructor() {
@@ -176,10 +227,26 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
   async initialize(): Promise<void> {
     if (this.connection) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
-    this.connection = new PostgreSQLConnection(this.connectionString);
-    await this.connection.query('SELECT 1');
-    await this.migrate();
+    this.initializationPromise = this.initializeConnection();
+    try {
+      await this.initializationPromise;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async initializeConnection(): Promise<void> {
+    const connection = new PostgreSQLConnection(this.connectionString);
+    try {
+      await connection.query('SELECT 1');
+      await this.migrate(connection);
+      this.connection = connection;
+    } catch (error) {
+      await connection.close();
+      throw error;
+    }
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -188,35 +255,40 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     }
   }
 
-  private async migrate(): Promise<void> {
-    await this.connection!.execute(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
+  private async migrate(connection: PostgreSQLConnection): Promise<void> {
+    await connection.transaction(async (transaction) => {
+      // Transaction-scoped lock serializes cold starts without relying on
+      // session state, which is unsafe with Neon's transaction-mode pooler.
+      await transaction.execute(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        'retirement-planner-schema-migrations',
+      ]);
+      await transaction.execute(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
 
-    const versionResult = await this.connection!.queryOne<{ version: number }>(`
-      SELECT MAX(version) as version FROM schema_migrations
-    `);
-    let currentVersion = versionResult?.version || 0;
+      const versionResult = await transaction.queryOne<{ version: number }>(`
+        SELECT MAX(version) as version FROM schema_migrations
+      `);
+      let currentVersion = versionResult?.version || 0;
 
-    for (const migration of DATABASE_MIGRATIONS) {
-      if (migration.version > currentVersion) {
-        console.log(`Applying migration ${migration.version}: ${migration.name}`);
-        await this.connection!.transaction(async () => {
+      for (const migration of DATABASE_MIGRATIONS) {
+        if (migration.version > currentVersion) {
+          console.log(`Applying migration ${migration.version}: ${migration.name}`);
           for (const sql of migration.up) {
-            await this.connection!.execute(sql);
+            await transaction.execute(sql);
           }
-          await this.connection!.execute(
+          await transaction.execute(
             `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`,
             [migration.version, migration.name],
           );
-        });
-        currentVersion = migration.version;
+          currentVersion = migration.version;
+        }
       }
-    }
+    });
   }
 
   async close(): Promise<void> {
@@ -236,24 +308,38 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
   async createAccount(data: CreateAccountData): Promise<Account> {
     await this.ensureInitialized();
+    if (!data.userId) throw new Error('Account owner is required');
+    const stocksPct = data.stocksPct ?? 0.6;
+    const bondsPct = data.bondsPct ?? 1 - stocksPct;
 
-    const result = await this.connection!.queryOne<{ id: string }>(`
-      INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id
-    `, [data.name, data.institution, data.type, data.balance ?? 0, data.stocksPct ?? 0, data.bondsPct ?? 0, data.userId ?? null]);
+    const row = await this.connection!.transaction(async (transaction) => {
+      // Serialize creates for one owner so concurrent requests cannot race
+      // past the product/resource limit.
+      await transaction.execute('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `retirement-plan-accounts:${data.userId}`,
+      ]);
+      const count = await transaction.queryOne<{ count: string }>(
+        'SELECT COUNT(*)::text AS count FROM accounts WHERE user_id = $1',
+        [data.userId],
+      );
+      if (Number(count?.count ?? 0) >= MAX_PLAN_ACCOUNTS) {
+        throw new AccountLimitError();
+      }
+      return transaction.queryOne<AccountRow>(`
+        INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `, [data.name, data.institution, data.type, data.balance ?? 0, stocksPct, bondsPct, data.userId]);
+    });
 
-    if (!result?.id) throw new Error('Failed to create account');
-
-    const account = await this.getAccount(result.id);
-    if (!account) throw new Error('Failed to create account');
-    return account;
+    if (!row) throw new Error('Failed to create account');
+    return mapRowToAccount(row);
   }
 
-  async getAccount(id: string): Promise<Account | null> {
+  async getAccount(id: string, userId: string): Promise<Account | null> {
     await this.ensureInitialized();
     const row = await this.connection!.queryOne<AccountRow>(
-      `SELECT * FROM accounts WHERE id = $1`, [id],
+      `SELECT * FROM accounts WHERE id = $1 AND user_id = $2`, [id, userId],
     );
     return row ? mapRowToAccount(row) : null;
   }
@@ -266,7 +352,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     return rows.map(mapRowToAccount);
   }
 
-  async updateAccount(id: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account> {
+  async updateAccount(id: string, userId: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account | null> {
     await this.ensureInitialized();
 
     const updateFields: string[] = [];
@@ -301,41 +387,44 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     }
 
     if (updateFields.length === 0) {
-      const account = await this.getAccount(id);
-      if (!account) throw new Error('Account not found');
-      return account;
+      return this.getAccount(id, userId);
     }
 
     updateFields.push(`updated_at = NOW()`);
     updateValues.push(id);
+    updateValues.push(userId);
 
-    await this.connection!.execute(`
+    const row = await this.connection!.queryOne<AccountRow>(`
       UPDATE accounts
       SET ${updateFields.join(', ')}
-      WHERE id = $${paramIndex}
+      WHERE id = $${paramIndex++} AND user_id = $${paramIndex}
+      RETURNING *
     `, updateValues);
-
-    const account = await this.getAccount(id);
-    if (!account) throw new Error('Account not found after update');
-    return account;
+    return row ? mapRowToAccount(row) : null;
   }
 
-  async deleteAccount(id: string): Promise<void> {
+  async deleteAccount(id: string, userId: string): Promise<boolean> {
     await this.ensureInitialized();
-    await this.connection!.execute(`DELETE FROM accounts WHERE id = $1`, [id]);
+    const row = await this.connection!.queryOne<{ id: string }>(
+      `DELETE FROM accounts WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [id, userId],
+    );
+    return row !== null;
   }
 
   // === USER PROFILES ===
 
-  async getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> } | null> {
+  async getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number } | null> {
     await this.ensureInitialized();
 
     const row = await this.connection!.queryOne<{
       profile: Record<string, unknown>;
       social_security: Record<string, unknown>;
       assumptions: Record<string, unknown>;
+      revision: string | number;
     }>(`
-      SELECT profile, social_security, assumptions FROM user_profiles WHERE user_id = $1
+      SELECT profile, social_security, assumptions, revision
+      FROM user_profiles WHERE user_id = $1
     `, [userId]);
 
     if (!row) return null;
@@ -344,35 +433,63 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       profile: row.profile,
       socialSecurity: row.social_security,
       assumptions: row.assumptions,
+      revision: Number(row.revision),
     };
   }
 
-  async saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }): Promise<void> {
+  async saveUserProfile(
+    userId: string,
+    data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> },
+    expectedRevision: number | null,
+  ): Promise<number> {
     await this.ensureInitialized();
 
-    await this.connection!.execute(`
-      INSERT INTO user_profiles (user_id, profile, social_security, assumptions)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (user_id) DO UPDATE SET
-        profile = $2,
-        social_security = $3,
-        assumptions = $4,
-        updated_at = NOW()
-    `, [userId, JSON.stringify(data.profile), JSON.stringify(data.socialSecurity), JSON.stringify(data.assumptions)]);
+    const values = [
+      userId,
+      JSON.stringify(data.profile),
+      JSON.stringify(data.socialSecurity),
+      JSON.stringify(data.assumptions),
+    ];
+    const row = expectedRevision === null
+      ? await this.connection!.queryOne<{ revision: string | number }>(`
+          INSERT INTO user_profiles (user_id, profile, social_security, assumptions)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (user_id) DO NOTHING
+          RETURNING revision
+        `, values)
+      : await this.connection!.queryOne<{ revision: string | number }>(`
+          UPDATE user_profiles
+          SET profile = $2,
+              social_security = $3,
+              assumptions = $4,
+              revision = revision + 1,
+              updated_at = NOW()
+          WHERE user_id = $1 AND revision = $5
+          RETURNING revision
+        `, [...values, expectedRevision]);
+
+    if (!row) throw new ProfileRevisionConflictError();
+    return Number(row.revision);
   }
 }
 
 function mapRowToAccount(row: AccountRow): Account {
+  const balance = Number(row.balance);
+  const stocks = Number(row.stocks_pct);
+  const bonds = Number(row.bonds_pct);
+  if (![balance, stocks, bonds].every(Number.isFinite)) {
+    throw new Error(`Invalid numeric account data for account ${row.id}`);
+  }
   return {
     id: row.id,
     name: row.name,
     institution: row.institution,
     type: row.account_type,
     user_id: row.user_id ?? undefined,
-    balance: Number(row.balance) || 0,
+    balance,
     assetWeights: {
-      stocks: Number(row.stocks_pct),
-      bonds: Number(row.bonds_pct),
+      stocks,
+      bonds,
     },
     balanceAsOf: row.balance_as_of ?? undefined,
     taxable: row.account_type === 'Taxable',

@@ -8,10 +8,28 @@ import type { NextConfig } from "next";
  * no per-request JS, and unlike the old middleware matcher they also cover
  * /api/* — which is where the simulation endpoints are.
  *
- * No CSP yet: Next.js injects inline bootstrap scripts, so a useful policy needs
- * nonce plumbing rather than a header constant.
+ * Next.js emits inline bootstrap code, so script-src currently permits inline
+ * scripts. The remaining directives still close object, framing, base-URI,
+ * mixed-content, and unexpected network exfiltration surfaces.
  */
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "worker-src 'self' blob:",
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com",
+  "frame-src 'self' https://*.firebaseapp.com",
+  "upgrade-insecure-requests",
+].join("; ");
+
 const securityHeaders = [
+  { key: "Content-Security-Policy", value: contentSecurityPolicy },
   // HTTPS only. Cloud Run terminates TLS and never serves plain HTTP, so this
   // is safe to set unconditionally.
   { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
@@ -25,9 +43,6 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   output: 'standalone',
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

@@ -8,7 +8,7 @@ describe('Bug Fixes', () => {
     
     it('should apply early claiming penalty at age 62 (FRA 67 → 30% reduction)', () => {
       const result = calculateSSABenefit(testSalaryHistory, 62);
-      expect(result.claimAdjustment).toBe(0.70);
+      expect(result.claimAdjustment).toBeCloseTo(0.70, 12);
       expect(result.annualBenefit).toBeGreaterThan(0);
     });
     
@@ -76,7 +76,7 @@ describe('Bug Fixes', () => {
       expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.ficaTax).toBe(0); // No FICA in retirement
       expect(taxResult.k401Contribution).toBe(0); // No contributions in retirement
-      expect(taxResult.backdoorRothContribution).toBe(0); // No contributions in retirement
+      expect(taxResult.hsaContribution).toBe(0); // No contributions in retirement
     });
     
     it('should apply senior standard deduction for 65+ taxpayers', () => {

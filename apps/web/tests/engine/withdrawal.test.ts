@@ -4,7 +4,7 @@ import type { Account, FilingStatus } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
 
 // Import the function we want to test by temporarily exposing it
-// Since executeOptimalWithdrawals is currently private, we'll need to test it through the public API
+// Since executeOrderedWithdrawals is private, test it through the public projection API.
 // For now, let's create a simple test that can verify the behavior through projectScenario
 
 describe('Withdrawal Logic', () => {
@@ -39,7 +39,7 @@ describe('Withdrawal Logic', () => {
 
     const targetAfterTaxAmount = 50000; // Target $50k for spending
 
-    // We'll need to create a minimal version of executeOptimalWithdrawals for testing
+    // We'll need to create a minimal version of executeOrderedWithdrawals for testing
     // or modify the main function to be exportable. For now, let's create a test version:
     
     const testAccounts = accounts.map(acc => ({ ...acc }));
@@ -160,9 +160,8 @@ describe('Withdrawal Logic', () => {
 
   it('should calculate correct tax amounts that match CLAUDE.md expectations', () => {
     // Test the real scenario from CLAUDE.md bug report:
-    // ~$80k LTCG withdrawals should generate ~$8,411 total tax (10.5% effective)
-    // - Federal LTCG: $4,733 (15% on amount above $48,450 threshold)  
-    // - CA State: $3,678 (CA taxes LTCG as ordinary income)
+    // Taxable withdrawals use the explicit gain-share assumption. Here, 50%
+    // is capital gain and 50% is untaxed return of basis.
     
     const accounts: Account[] = [
       createTestAccount({
@@ -184,6 +183,7 @@ describe('Withdrawal Logic', () => {
         lifeExpectancy: 95,
         currentSalary: 0,
         salaryGrowthRate: 0,
+        currentSpending: 80000,
         desiredSpending: 80000,
         spendingGrowthRate: 0,
         filingStatus: 'Single' as FilingStatus,
@@ -198,7 +198,8 @@ describe('Withdrawal Logic', () => {
       },
       assumptions: {
         simulationModel: 'historical' as const,
-    useBackdoorRoth: false
+        taxableGainRatio: 0.5,
+        contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
       }
     };
 
@@ -210,9 +211,16 @@ describe('Withdrawal Logic', () => {
     const result = projectScenario(plan, config);
     const firstYear = result.projections[0];
 
-    // Verify the bug is fixed: taxes should be ~$8,411, not $792
-    expect(firstYear.taxes).toBeGreaterThan(8000);
-    expect(firstYear.taxes).toBeLessThan(12000);
+    // With a 50% gain share, return of basis is not taxed. This case remains
+    // inside the federal 0% LTCG band; California still taxes the gain.
+    expect(firstYear.taxes).toBeGreaterThan(500);
+    expect(firstYear.taxes).toBeLessThan(2000);
+
+    const allGain = projectScenario({
+      ...plan,
+      assumptions: { ...plan.assumptions, taxableGainRatio: 1 },
+    }, config).projections[0];
+    expect(allGain.taxes).toBeGreaterThan(firstYear.taxes);
     
     // Total withdrawn should be more than spending to cover taxes
     const totalWithdrawn = firstYear.withdrawalTaxable + firstYear.withdrawalTraditional + firstYear.withdrawalRoth;

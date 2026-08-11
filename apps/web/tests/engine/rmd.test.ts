@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { createTestAccount } from '../test-helpers';
 import { calculateRmd } from '@/engine/rmd';
+import { getRmdStartAge } from '@/data/rmd-tables';
 import { projectScenario } from '@/engine/projection';
 import type { RetirementPlan } from '@/domain/types';
 
 describe('RMD Calculation', () => {
   describe('calculateRmd', () => {
+    it('uses the SECURE 2.0 age-75 cohort starting with birth year 1960', () => {
+      expect(getRmdStartAge(1959)).toBe(73);
+      expect(getRmdStartAge(1960)).toBe(75);
+    });
     it('should return 0 for age 72 (before RMD age)', () => {
       const result = calculateRmd(1000000, 72);
       expect(result).toBe(0);
@@ -44,6 +49,7 @@ describe('RMD Calculation', () => {
         currentSalary: 0, // Retired
         retirementAge: age - 1, // Already retired
         lifeExpectancy: age + 20,
+        currentSpending: desiredSpending,
         desiredSpending: desiredSpending, // Now using actual dollars
         salaryGrowthRate: 0,
         spendingGrowthRate: 0,
@@ -75,7 +81,8 @@ describe('RMD Calculation', () => {
       },
       assumptions: {
         simulationModel: 'historical',
-    useBackdoorRoth: false
+        taxableGainRatio: 0.5,
+        contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
       }
     });
 
@@ -141,8 +148,8 @@ describe('RMD Calculation', () => {
       expect(firstYear.depositTaxable).toBe(0);
     });
 
-    it('should correctly calculate marginal taxes on excess RMD', () => {
-      // Simple scenario to test marginal tax calculation
+    it('should preserve excess RMD after taxes and spending', () => {
+      // Simple scenario to test the reconciled RMD cash flow
       const plan = createTestPlan(73, 500000, 10000); // Low spending, moderate RMD
       const config = { paths: 1, seed: 42 };
       
@@ -195,6 +202,21 @@ describe('RMD Calculation', () => {
           expect(year.withdrawalTraditional).toBeGreaterThanOrEqual(year.rmdAmount - 0.001); // Account for rounding
         }
       }
+    });
+
+    it('takes an RMD even when manual Social Security covers all spending', () => {
+      const plan = createTestPlan(75, 1_000_000, 20_000);
+      plan.socialSecurity = {
+        enabled: true,
+        claimAge: 67,
+        manualOverride: true,
+        estimatedBenefit: 50_000,
+      };
+
+      const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+      expect(firstYear.socialSecurityBenefit).toBe(50_000);
+      expect(firstYear.withdrawalTraditional).toBeCloseTo(1_000_000 / 24.6, -2);
+      expect(firstYear.depositTaxable).toBeGreaterThan(0);
     });
   });
 });

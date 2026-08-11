@@ -1,7 +1,99 @@
 import { describe, it, expect } from 'vitest';
-import { calculateRetirementTax } from '@/engine/tax';
+import {
+  calculateRetirementTax,
+  calculateTaxableSocialSecurity,
+  calculateWorkingCashFlow,
+} from '@/engine/tax';
 
 describe('Retirement Tax Calculation', () => {
+  it('taxes working-year RMD income without applying payroll tax to it', () => {
+    const targets = { hsa: 0, traditional: 0, roth: 0, taxable: 0 };
+    const wagesOnly = calculateWorkingCashFlow(
+      100_000,
+      60_000,
+      75,
+      'Single',
+      'TX',
+      targets,
+    );
+    const withRmd = calculateWorkingCashFlow(
+      100_000,
+      60_000,
+      75,
+      'Single',
+      'TX',
+      targets,
+      40_000,
+    );
+
+    expect(withRmd.tax.ficaTax).toBe(wagesOnly.tax.ficaTax);
+    expect(withRmd.tax.totalTax).toBeGreaterThan(wagesOnly.tax.totalTax);
+    expect(withRmd.unallocatedCash).toBeGreaterThan(wagesOnly.unallocatedCash);
+  });
+
+  describe('Working-year cash flow', () => {
+    it('uses explicit targets and preserves the cash-flow identity', () => {
+      const result = calculateWorkingCashFlow(
+        100_000,
+        50_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 4_300, traditional: 10_000, roth: 7_000, taxable: 5_000 },
+      );
+
+      expect(result.contributions).toEqual({
+        hsa: 4_300,
+        traditional: 10_000,
+        roth: 7_000,
+        taxable: 5_000,
+      });
+      expect(
+        result.tax.totalTax
+          + 50_000
+          + result.totalContributions
+          + result.unallocatedCash,
+      ).toBeCloseTo(100_000, 6);
+    });
+
+    it('does not infer contributions and caps explicit targets', () => {
+      const none = calculateWorkingCashFlow(
+        100_000,
+        40_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      );
+      expect(none.totalContributions).toBe(0);
+
+      const capped = calculateWorkingCashFlow(
+        500_000,
+        40_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 99_000, traditional: 99_000, roth: 99_000, taxable: 0 },
+      );
+      expect(capped.contributions.hsa).toBe(4_300);
+      expect(capped.contributions.traditional).toBe(23_500);
+      expect(capped.contributions.roth).toBe(7_000);
+    });
+
+    it('reports salary-only working-year funding gaps', () => {
+      const result = calculateWorkingCashFlow(
+        50_000,
+        60_000,
+        40,
+        'Single',
+        'TX',
+        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      );
+      expect(result.fundingGap).toBeGreaterThan(10_000);
+      expect(result.unallocatedCash).toBe(0);
+    });
+  });
+
   describe('Bug Fix Verification', () => {
     it('should calculate realistic taxes on Traditional withdrawals', () => {
       // Test case from bug report: $91.4K withdrawal should yield much more than $2.1K taxes
@@ -27,7 +119,7 @@ describe('Retirement Tax Calculation', () => {
       
       // No retirement contributions
       expect(taxResult.k401Contribution).toBe(0);
-      expect(taxResult.backdoorRothContribution).toBe(0);
+      expect(taxResult.hsaContribution).toBe(0);
     });
     
     it('should handle mixed withdrawal sources correctly', () => {
@@ -53,6 +145,20 @@ describe('Retirement Tax Calculation', () => {
       // Over 65 should pay less tax due to higher standard deduction
       expect(over65Tax.totalTax).toBeLessThan(under65Tax.totalTax);
     });
+
+    it('applies the 2025 enhanced senior deduction and phaseout', () => {
+      const eligible = calculateRetirementTax(50_000, 0, 0, 65, 'Single', 'TX');
+      expect(eligible.federalTax).toBeCloseTo(2_911.5, 2);
+
+      const phasedOut = calculateRetirementTax(175_000, 0, 0, 65, 'Single', 'TX');
+      const under65 = calculateRetirementTax(175_000, 0, 0, 64, 'Single', 'TX');
+      expect(phasedOut.federalTax).toBe(under65.federalTax - 2_000 * 0.24);
+    });
+
+    it('uses final 2025 California brackets and standard deduction', () => {
+      const result = calculateRetirementTax(100_000, 0, 0, 64, 'Single', 'CA');
+      expect(result.stateTax).toBeCloseTo(5_207.98, 2);
+    });
     
     it('should handle LTCG stacking correctly', () => {
       // Test LTCG preferential rates
@@ -66,9 +172,34 @@ describe('Retirement Tax Calculation', () => {
       const ltcgTaxAmount = withLTCGTax.totalTax - noLTCGTax.totalTax;
       expect(ltcgTaxAmount).toBeLessThan(20000 * 0.25); // Should be less than ordinary income rate
     });
+
+    it('applies the Net Investment Income Tax above the filing threshold', () => {
+      const result = calculateRetirementTax(0, 0, 250_000, 64, 'Single', 'TX');
+      // $234,250 after the standard deduction: $185,800 at 15%, plus
+      // 3.8% NIIT on the $50,000 of MAGI above $200,000.
+      expect(result.federalTax).toBeCloseTo(29_770, 2);
+    });
   });
 
   describe('Social Security Taxation', () => {
+    it('applies the IRS 50% formula in the first taxable tier', () => {
+      expect(calculateTaxableSocialSecurity(20_000, 20_000, 0, 'Single')).toBe(2_500);
+    });
+
+    it('caps the upper tier at 85% of benefits', () => {
+      expect(calculateTaxableSocialSecurity(40_000, 20_000, 0, 'Single')).toBe(17_000);
+    });
+
+    it('excludes Social Security from California taxable income', () => {
+      const withoutBenefits = calculateRetirementTax(20_000, 0, 0, 67, 'Single', 'CA');
+      const withBenefits = calculateRetirementTax(20_000, 50_000, 0, 67, 'Single', 'CA');
+      expect(withBenefits.stateTax).toBeCloseTo(withoutBenefits.stateTax, 8);
+    });
+
+    it('applies unused standard deduction to capital gains', () => {
+      const result = calculateRetirementTax(0, 0, 10_000, 67, 'Single', 'TX');
+      expect(result.federalTax).toBe(0);
+    });
     it('should not tax SS when combined income is below threshold', () => {
       // Low income scenario - no SS should be taxable
       const taxResult = calculateRetirementTax(
@@ -98,7 +229,7 @@ describe('Retirement Tax Calculation', () => {
       
       // Combined income = 20k + 0 + (20k * 0.5) = 30k (between 25k and 34k)
       // Some SS should be taxable but not all
-      expect(taxResult.totalTax).toBeGreaterThan(1000);
+      expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.totalTax).toBeLessThan(8000);
     });
     
@@ -115,7 +246,7 @@ describe('Retirement Tax Calculation', () => {
       
       // Combined income = 60k + 10k + (30k * 0.5) = 85k > 34k threshold
       // Up to 85% of SS should be taxable
-      expect(taxResult.totalTax).toBeGreaterThan(14000); // Should be substantial
+      expect(taxResult.totalTax).toBeCloseTo(12797.17, 2);
     });
     
     it('should handle married filing jointly thresholds correctly', () => {
@@ -169,8 +300,8 @@ describe('Retirement Tax Calculation', () => {
       );
       
       // Should be much higher tax rate
-      expect(highTraditionalTax.totalTax).toBeGreaterThan(12000);
-      expect(highTraditionalTax.effectiveRate).toBeGreaterThan(0.15); // Over 15%
+      expect(highTraditionalTax.totalTax).toBeCloseTo(11206.48, 2);
+      expect(highTraditionalTax.effectiveRate).toBeGreaterThan(0.13);
     });
   });
 });
