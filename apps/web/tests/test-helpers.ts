@@ -14,9 +14,6 @@ export function createTestAccount(partial: Partial<Account> & { type: Account['t
     type: partial.type,
     balance: partial.balance,
     assetWeights: partial.assetWeights || { stocks: 0.6, bonds: 0.4 },
-    taxable: partial.taxable !== undefined ? partial.taxable : (partial.type === 'Taxable'),
-    createdAt: partial.createdAt || '2024-01-01T00:00:00.000Z',
-    updatedAt: partial.updatedAt || '2024-01-01T00:00:00.000Z',
   };
 }
 

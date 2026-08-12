@@ -121,6 +121,7 @@ function LeverCard({
 export function PageOverview() {
   const plan = usePlan((s) => s.plan);
   const liveResult = usePlan((s) => s.simulationResult);
+  const simulationError = usePlan((s) => s.simulationError);
   const isSimulating = usePlan((s) => s.isSimulatingMain);
   const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
   const updatePlan = usePlan((s) => s.updatePlan);
@@ -159,7 +160,7 @@ export function PageOverview() {
     if (liveResult) lastResultRef.current = liveResult;
   }, [liveResult]);
   const result = liveResult ?? lastResultRef.current;
-  const isUpdating = isSimulating || !liveResult;
+  const isUpdating = isSimulating || (!liveResult && !simulationError);
   const hasEverComputed = result !== null;
 
   const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
@@ -186,11 +187,7 @@ export function PageOverview() {
     color: KIND_COLOR[k]?.color ?? "var(--color-muted-foreground)",
   }));
 
-  const monthlySpend = plan.profile.desiredSpending / 12;
-  const spendOfSalary =
-    plan.profile.currentSalary > 0
-      ? plan.profile.desiredSpending / plan.profile.currentSalary
-      : 0;
+  const monthlyRetirementSpend = plan.profile.retirementSpending / 12;
 
   const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
   const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
@@ -230,6 +227,8 @@ export function PageOverview() {
               </span>
             ) : hasEverComputed ? (
               `${(successProb * 100).toFixed(0)}%`
+            ) : simulationError ? (
+              <span className="text-muted-foreground">Unavailable</span>
             ) : (
               <span className="text-muted-foreground">—</span>
             )
@@ -240,6 +239,8 @@ export function PageOverview() {
                 <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
                 Updating projection…
               </span>
+            ) : simulationError ? (
+              "Projection could not be updated"
             ) : (
               `${successLabel} · simulated paths fully fund the plan`
             )
@@ -255,9 +256,9 @@ export function PageOverview() {
             : `Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
         />
         <Stat
-          label="Monthly Spending"
-          value={fmtCurrency(monthlySpend, false).replace(".00", "")}
-          trend={`${fmtPercent(spendOfSalary, 0)} of gross salary today`}
+          label="Retirement Spending"
+          value={`${fmtCurrency(monthlyRetirementSpend, false).replace(".00", "")}/mo`}
+          trend={`First-year target · ${fmtPercent(plan.profile.retirementSpendingGrowthRate, 1)} annual real growth after`}
         />
       </KPIGrid>
 
@@ -279,13 +280,13 @@ export function PageOverview() {
             xFormat={(v) => `Age ${v}`}
           />
           <LeverCard
-            label="Annual spending"
-            value={plan.profile.desiredSpending}
-            display={fmtCurrency(plan.profile.desiredSpending)}
+            label="First-year retirement spending"
+            value={plan.profile.retirementSpending}
+            display={fmtCurrency(plan.profile.retirementSpending)}
             min={20000}
             max={200000}
             step={1000}
-            onChange={(v) => updatePlan({ profile: { desiredSpending: v } })}
+            onChange={(v) => updatePlan({ profile: { retirementSpending: v } })}
             points={spendPts}
             xFormat={(v) => fmtCurrency(v, true)}
           />
@@ -319,8 +320,12 @@ export function PageOverview() {
             </div>
           ) : (
             <div className="text-muted-foreground flex h-[260px] items-center justify-center gap-2 text-sm">
-              <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
-              Running simulation…
+              {simulationError ? simulationError : (
+                <>
+                  <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
+                  Running simulation…
+                </>
+              )}
             </div>
           )}
         </DashboardCard>

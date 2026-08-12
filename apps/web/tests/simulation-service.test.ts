@@ -38,8 +38,9 @@ const mockPlan: RetirementPlan = {
     currentSalary: 75000,
     salaryGrowthRate: 0.03,
     currentSpending: 50000,
-    desiredSpending: 50000,
-    spendingGrowthRate: 0.02,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 50000,
+    retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 90,
     asOfDate: '2024-01-01',
   },
@@ -136,9 +137,6 @@ describe('SimulationService (Pure)', () => {
           type: 'Taxable',
           balance: 100000,
           assetWeights: { stocks: 0.6, bonds: 0.4 },
-          taxable: true,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
         },
       ],
     };
@@ -170,19 +168,13 @@ describe('SimulationService (Pure)', () => {
 
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
     const wireAccount = (requestBody as {
-      simulations: Array<{ plan: RetirementPlan }>;
+      simulations: Array<{ plan: { accounts: Array<Record<string, unknown>> } }>;
     }).simulations[0].plan.accounts[0];
-    expect(wireAccount).toMatchObject({
-      id: 'account-1',
-      name: 'Account 1',
-      institution: '',
-      user_id: null,
+    expect(wireAccount).toEqual({
+      type: 'Taxable',
       balance: 100000,
+      assetWeights: { stocks: 0.6, bonds: 0.4 },
     });
-    expect(wireAccount.name).not.toBe(plan.accounts[0].name);
-    expect(wireAccount.id).not.toBe(plan.accounts[0].id);
-    expect(wireAccount.institution).not.toBe(plan.accounts[0].institution);
-    expect(wireAccount.balanceAsOf).toBeUndefined();
   });
 
   it('should handle concurrent simulations independently', async () => {

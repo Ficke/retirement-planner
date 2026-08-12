@@ -27,7 +27,7 @@ import {
   PageHeader,
   PageShell,
 } from "@/components/retire/ui";
-import { fmtCurrency, fmtPercent } from "../format";
+import { fmtCurrency, fmtPercent, fmtSigned } from "../format";
 import { cn } from "@/lib/utils";
 
 const STATE_OPTIONS: [State, string][] = [
@@ -102,12 +102,22 @@ export function PagePlan() {
   const availableRate = p.currentSalary > 0 ? available / p.currentSalary : 0;
   const spendOfGross = p.currentSalary > 0 ? p.currentSpending / p.currentSalary : 0;
   const takeHomeRate = p.currentSalary > 0 ? takeHome / p.currentSalary : 0;
+  const workingYears = Math.max(0, p.retirementAge - p.age);
+  const finalWorkingSpending = workingYears > 0
+    ? p.currentSpending * (1 + p.workingSpendingGrowthRate) ** Math.max(0, workingYears - 1)
+    : null;
+  const retirementTransition = finalWorkingSpending == null
+    ? null
+    : p.retirementSpending - finalWorkingSpending;
+  const retirementTransitionRate = finalWorkingSpending && retirementTransition != null
+    ? retirementTransition / finalWorkingSpending
+    : null;
 
   return (
     <PageShell>
       <PageHeader
         title="Profile"
-        description="Facts about you. Auto-saves on change."
+        description="Personal details and planning assumptions. Auto-saves on change."
       />
 
       <DashboardCard>
@@ -152,22 +162,108 @@ export function PagePlan() {
             value={p.currentSalary}
             onChange={(v) => updateProfile({ currentSalary: v })}
           />
-          <CurrencyField
-            label="Current spending (annual, real)"
-            value={p.currentSpending}
-            onChange={(v) => updateProfile({ currentSpending: v })}
-          />
-          <CurrencyField
-            label="Retirement spending target (annual, real)"
-            value={p.desiredSpending}
-            onChange={(v) => updateProfile({ desiredSpending: v })}
-          />
           <NumberField
             label="Salary growth (real %)"
             value={Number((p.salaryGrowthRate * 100).toFixed(1))}
             step={0.1}
+            min={-10}
+            max={20}
             onChange={(v) => updateProfile({ salaryGrowthRate: v / 100 })}
           />
+        </div>
+      </DashboardCard>
+
+      <DashboardCard
+        title="Spending plan"
+        description="Set working and retirement spending together. Amounts are annual and shown in today's dollars; growth rates are real changes above or below inflation."
+      >
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="border-border rounded-lg border p-4">
+            <div className="mb-4">
+              <h3 className="font-medium">Working years</h3>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Current spending is the annual rate at the as-of date. Growth applies once per
+                subsequent working year.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <CurrencyField
+                label="Current annual spending"
+                value={p.currentSpending}
+                onChange={(v) => updateProfile({ currentSpending: v })}
+              />
+              <NumberField
+                label="Annual real growth (%)"
+                value={Number((p.workingSpendingGrowthRate * 100).toFixed(1))}
+                step={0.1}
+                min={-10}
+                max={10}
+                onChange={(v) => updateProfile({ workingSpendingGrowthRate: v / 100 })}
+              />
+            </div>
+          </div>
+
+          <div className="border-border rounded-lg border p-4">
+            <div className="mb-4">
+              <h3 className="font-medium">Retirement</h3>
+              <p className="text-muted-foreground mt-1 text-sm">
+                The target is independent of working-year spending. Growth applies after the first
+                modeled year of retirement.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <CurrencyField
+                label="First-year annual target"
+                value={p.retirementSpending}
+                onChange={(v) => updateProfile({ retirementSpending: v })}
+              />
+              <NumberField
+                label="Annual real growth (%)"
+                value={Number((p.retirementSpendingGrowthRate * 100).toFixed(1))}
+                step={0.1}
+                min={-10}
+                max={10}
+                onChange={(v) => updateProfile({ retirementSpendingGrowthRate: v / 100 })}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-muted/40 border-border mt-4 rounded-lg border p-4">
+          {finalWorkingSpending == null ? (
+            <div>
+              <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Retirement spending now
+              </div>
+              <div className="mt-1 font-mono text-lg font-semibold">
+                {fmtCurrency(p.retirementSpending)}
+              </div>
+              <p className="text-muted-foreground mt-1 text-sm">
+                This plan is already retired, so the target starts in the as-of year with no
+                elapsed-retirement growth applied.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <SpendingPreview
+                label={`Current · age ${p.age}`}
+                value={p.currentSpending}
+              />
+              <SpendingPreview
+                label={`Final working year · age ${p.retirementAge - 1}`}
+                value={finalWorkingSpending}
+              />
+              <SpendingPreview
+                label={`First retirement year · age ${p.retirementAge}`}
+                value={p.retirementSpending}
+                detail={retirementTransition == null
+                  ? undefined
+                  : `${fmtSigned(retirementTransition)}${retirementTransitionRate == null
+                    ? ""
+                    : ` (${fmtPercent(retirementTransitionRate, 1)})`} transition`}
+              />
+            </div>
+          )}
         </div>
       </DashboardCard>
 
@@ -337,15 +433,39 @@ function Wrap({
   );
 }
 
+function SpendingPreview({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: number;
+  detail?: string;
+}) {
+  return (
+    <div>
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+        {label}
+      </div>
+      <div className="mt-1 font-mono text-lg font-semibold">{fmtCurrency(value)}</div>
+      {detail && <div className="text-muted-foreground mt-1 text-xs">{detail}</div>}
+    </div>
+  );
+}
+
 function NumberField({
   label,
   value,
   step,
+  min,
+  max,
   onChange,
 }: {
   label: string;
   value: number;
   step?: number;
+  min?: number;
+  max?: number;
   onChange: (v: number) => void;
 }) {
   const id = useId();
@@ -355,6 +475,8 @@ function NumberField({
         id={id}
         type="number"
         step={step}
+        min={min}
+        max={max}
         value={value}
         onChange={(e) => {
           const n = Number(e.target.value);

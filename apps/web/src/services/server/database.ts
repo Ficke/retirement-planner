@@ -9,8 +9,8 @@
  */
 
 import { Pool, PoolClient } from 'pg';
-import type { Account, CreateAccountData } from '@/domain/types';
-import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
+import type { Account, CreateAccountData, UpdateAccountData } from '@/domain/types';
+import { MAX_PLAN_ACCOUNTS, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 export interface DatabaseMigration {
   version: number;
@@ -23,13 +23,13 @@ export interface UnifiedDatabaseService {
   close(): Promise<void>;
   query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 
-  getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number } | null>;
+  getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number; schemaVersion: number } | null>;
   saveUserProfile(userId: string, data: { profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown> }, expectedRevision: number | null): Promise<number>;
 
-  createAccount(data: CreateAccountData): Promise<Account>;
+  createAccount(data: CreateAccountData, userId: string): Promise<Account>;
   getAccount(id: string, userId: string): Promise<Account | null>;
   getAccountsForUser(userId: string): Promise<Account[]>;
-  updateAccount(id: string, userId: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account | null>;
+  updateAccount(id: string, userId: string, updates: UpdateAccountData): Promise<Account | null>;
   deleteAccount(id: string, userId: string): Promise<boolean>;
 }
 
@@ -111,6 +111,16 @@ export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
     up: [
       `ALTER TABLE user_profiles
          ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0`,
+    ],
+  },
+  {
+    version: 14,
+    name: 'Version persisted cloud profiles',
+    up: [
+      `ALTER TABLE user_profiles
+         ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE user_profiles
+         ALTER COLUMN schema_version SET DEFAULT ${PLAN_SCHEMA_VERSION}`,
     ],
   },
 ];
@@ -198,16 +208,12 @@ class PostgreSQLConnection {
 
 interface AccountRow {
   id: string;
-  user_id: string | null;
   name: string;
   institution: string;
   account_type: Account['type'];
   balance: string | number;
   stocks_pct: string | number;
   bonds_pct: string | number;
-  balance_as_of: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
@@ -306,9 +312,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
   // === ACCOUNTS ===
 
-  async createAccount(data: CreateAccountData): Promise<Account> {
+  async createAccount(data: CreateAccountData, userId: string): Promise<Account> {
     await this.ensureInitialized();
-    if (!data.userId) throw new Error('Account owner is required');
     const stocksPct = data.stocksPct ?? 0.6;
     const bondsPct = data.bondsPct ?? 1 - stocksPct;
 
@@ -316,11 +321,11 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       // Serialize creates for one owner so concurrent requests cannot race
       // past the product/resource limit.
       await transaction.execute('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `retirement-plan-accounts:${data.userId}`,
+        `retirement-plan-accounts:${userId}`,
       ]);
       const count = await transaction.queryOne<{ count: string }>(
         'SELECT COUNT(*)::text AS count FROM accounts WHERE user_id = $1',
-        [data.userId],
+        [userId],
       );
       if (Number(count?.count ?? 0) >= MAX_PLAN_ACCOUNTS) {
         throw new AccountLimitError();
@@ -329,7 +334,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
         INSERT INTO accounts (name, institution, account_type, balance, stocks_pct, bonds_pct, user_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
-      `, [data.name, data.institution, data.type, data.balance ?? 0, stocksPct, bondsPct, data.userId]);
+      `, [data.name, data.institution, data.type, data.balance ?? 0, stocksPct, bondsPct, userId]);
     });
 
     if (!row) throw new Error('Failed to create account');
@@ -352,7 +357,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     return rows.map(mapRowToAccount);
   }
 
-  async updateAccount(id: string, userId: string, updates: Partial<Omit<Account, 'id' | 'createdAt' | 'updatedAt' | 'taxable'>>): Promise<Account | null> {
+  async updateAccount(id: string, userId: string, updates: UpdateAccountData): Promise<Account | null> {
     await this.ensureInitialized();
 
     const updateFields: string[] = [];
@@ -381,11 +386,6 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       updateFields.push(`bonds_pct = $${paramIndex++}`);
       updateValues.push(updates.assetWeights.bonds);
     }
-    if (updates.balanceAsOf !== undefined) {
-      updateFields.push(`balance_as_of = $${paramIndex++}`);
-      updateValues.push(updates.balanceAsOf);
-    }
-
     if (updateFields.length === 0) {
       return this.getAccount(id, userId);
     }
@@ -414,7 +414,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
 
   // === USER PROFILES ===
 
-  async getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number } | null> {
+  async getUserProfile(userId: string): Promise<{ profile: Record<string, unknown>; socialSecurity: Record<string, unknown>; assumptions: Record<string, unknown>; revision: number; schemaVersion: number } | null> {
     await this.ensureInitialized();
 
     const row = await this.connection!.queryOne<{
@@ -422,8 +422,9 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       social_security: Record<string, unknown>;
       assumptions: Record<string, unknown>;
       revision: string | number;
+      schema_version: string | number;
     }>(`
-      SELECT profile, social_security, assumptions, revision
+      SELECT profile, social_security, assumptions, revision, schema_version
       FROM user_profiles WHERE user_id = $1
     `, [userId]);
 
@@ -434,6 +435,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
       socialSecurity: row.social_security,
       assumptions: row.assumptions,
       revision: Number(row.revision),
+      schemaVersion: Number(row.schema_version),
     };
   }
 
@@ -452,8 +454,8 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
     ];
     const row = expectedRevision === null
       ? await this.connection!.queryOne<{ revision: string | number }>(`
-          INSERT INTO user_profiles (user_id, profile, social_security, assumptions)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO user_profiles (user_id, profile, social_security, assumptions, schema_version)
+          VALUES ($1, $2, $3, $4, ${PLAN_SCHEMA_VERSION})
           ON CONFLICT (user_id) DO NOTHING
           RETURNING revision
         `, values)
@@ -462,6 +464,7 @@ class PostgreSQLUnifiedDatabaseService implements UnifiedDatabaseService {
           SET profile = $2,
               social_security = $3,
               assumptions = $4,
+              schema_version = ${PLAN_SCHEMA_VERSION},
               revision = revision + 1,
               updated_at = NOW()
           WHERE user_id = $1 AND revision = $5
@@ -485,16 +488,11 @@ function mapRowToAccount(row: AccountRow): Account {
     name: row.name,
     institution: row.institution,
     type: row.account_type,
-    user_id: row.user_id ?? undefined,
     balance,
     assetWeights: {
       stocks,
       bonds,
     },
-    balanceAsOf: row.balance_as_of ?? undefined,
-    taxable: row.account_type === 'Taxable',
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
   };
 }
 

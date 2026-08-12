@@ -13,10 +13,9 @@ use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{calculate_retirement_tax, calculate_working_cash_flow};
 
-const SIMULATION_SURPLUS_CASH_ID: &str = "__simulation_surplus_cash__";
 use crate::types::{
     Account, AccountType, AnnualContributions, FilingStatus, PathProjection, PathResult,
-    RetirementPlan, State,
+    RetirementPlan, State, PLAN_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone)]
@@ -185,7 +184,14 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             // WORKING PHASE
             let annual_salary =
                 profile.current_salary * (1.0 + profile.salary_growth_rate).powi(year as i32);
-            let annual_working_spending = profile.current_spending;
+            let annual_working_spending = if plan.schema_version >= PLAN_SCHEMA_VERSION {
+                profile.current_spending
+                    * (1.0 + profile.working_spending_growth_rate).powi(year as i32)
+            } else {
+                // Compatibility for requests from web revisions deployed
+                // before the phase-based spending model.
+                profile.current_spending
+            };
             let has_hsa = accounts
                 .iter()
                 .any(|account| matches!(account.account_type, AccountType::Hsa));
@@ -363,8 +369,17 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             } else {
                 1.0
             };
-            let target_spending = profile.desired_spending
-                * (1.0 + profile.spending_growth_rate).powi(year as i32)
+            let spending_growth_exponent = if plan.schema_version >= PLAN_SCHEMA_VERSION {
+                let retirement_start_year = profile.retirement_age.saturating_sub(profile.age);
+                year - retirement_start_year
+            } else {
+                // Legacy requests compounded the retirement rate from the
+                // as-of year, including working years.
+                year
+            };
+            let target_spending = profile.retirement_spending
+                * (1.0 + profile.retirement_spending_growth_rate)
+                    .powi(spending_growth_exponent as i32)
                 * retirement_period_fraction;
 
             // Calculate Social Security
@@ -544,19 +559,13 @@ fn deposit_taxable_cash(accounts: &mut Vec<Account>, amount: f64) {
     // it prevents after-tax RMD or income surpluses from disappearing when the
     // input plan has no brokerage account.
     accounts.push(Account {
-        id: SIMULATION_SURPLUS_CASH_ID.into(),
-        name: "Surplus cash".into(),
-        institution: String::new(),
         account_type: AccountType::Taxable,
-        user_id: None,
         balance: amount,
         asset_weights: crate::types::AssetWeights {
             stocks: 0.0,
             bonds: 0.0,
         },
-        taxable: true,
-        created_at: "1970-01-01T00:00:00.000Z".into(),
-        updated_at: "1970-01-01T00:00:00.000Z".into(),
+        is_surplus_cash: true,
     });
 }
 
@@ -663,7 +672,7 @@ fn evaluate_ordered_withdrawals(
             let withdrawal = remaining.min(balances[index]);
             balances[index] -= withdrawal;
             withdrawal_taxable += withdrawal;
-            if account.id != SIMULATION_SURPLUS_CASH_ID {
+            if !account.is_surplus_cash {
                 qualified_income += withdrawal * context.taxable_gain_ratio;
             }
             remaining -= withdrawal;
@@ -788,6 +797,7 @@ mod tests {
 
     fn test_plan() -> RetirementPlan {
         RetirementPlan {
+            schema_version: PLAN_SCHEMA_VERSION,
             profile: UserProfile {
                 age: 64,
                 birth_year: 1962,
@@ -797,41 +807,30 @@ mod tests {
                 current_salary: 100_000.0,
                 salary_growth_rate: 0.03,
                 current_spending: 60_000.0,
-                desired_spending: 60_000.0,
-                spending_growth_rate: 0.025,
+                working_spending_growth_rate: 0.0,
+                retirement_spending: 60_000.0,
+                retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
                 as_of_date: "2026-01-01".to_string(),
             },
             accounts: vec![
                 Account {
-                    id: "a1".into(),
-                    name: "Brokerage".into(),
-                    institution: "Test".into(),
                     account_type: AccountType::Taxable,
-                    user_id: None,
                     balance: 500_000.0,
                     asset_weights: AssetWeights {
                         stocks: 0.6,
                         bonds: 0.4,
                     },
-                    taxable: true,
-                    created_at: "2026-01-01".into(),
-                    updated_at: "2026-01-01".into(),
+                    is_surplus_cash: false,
                 },
                 Account {
-                    id: "a2".into(),
-                    name: "401k".into(),
-                    institution: "Test".into(),
                     account_type: AccountType::Traditional,
-                    user_id: None,
                     balance: 500_000.0,
                     asset_weights: AssetWeights {
                         stocks: 0.6,
                         bonds: 0.4,
                     },
-                    taxable: false,
-                    created_at: "2026-01-01".into(),
-                    updated_at: "2026-01-01".into(),
+                    is_surplus_cash: false,
                 },
             ],
             social_security: SocialSecuritySettings {
@@ -902,14 +901,97 @@ mod tests {
     }
 
     #[test]
+    fn phase_based_spending_uses_separate_growth_clocks() {
+        let mut plan = test_plan();
+        plan.profile.age = 60;
+        plan.profile.birth_year = 1965;
+        plan.profile.retirement_age = 62;
+        plan.profile.life_expectancy = 63;
+        plan.profile.current_spending = 40_000.0;
+        plan.profile.working_spending_growth_rate = 0.1;
+        plan.profile.retirement_spending = 70_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.05;
+        plan.profile.as_of_date = "2025-01-01".into();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        let expected = [40_000.0, 44_000.0, 70_000.0, 73_500.0];
+        for (year, expected_spending) in result.projections.iter().zip(expected) {
+            assert!((year.spending - expected_spending).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn already_retired_plan_starts_retirement_growth_at_zero() {
+        let mut plan = test_plan();
+        plan.profile.age = 68;
+        plan.profile.birth_year = 1957;
+        plan.profile.retirement_age = 65;
+        plan.profile.life_expectancy = 69;
+        plan.profile.retirement_spending = 50_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.1;
+        plan.profile.as_of_date = "2025-01-01".into();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        assert!((result.projections[0].spending - 50_000.0).abs() < 1e-6);
+        assert!((result.projections[1].spending - 55_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn legacy_schema_preserves_original_spending_math() {
+        let mut plan = test_plan();
+        plan.schema_version = 0;
+        plan.profile.age = 60;
+        plan.profile.birth_year = 1965;
+        plan.profile.retirement_age = 62;
+        plan.profile.life_expectancy = 62;
+        plan.profile.current_spending = 40_000.0;
+        plan.profile.working_spending_growth_rate = 0.1;
+        plan.profile.retirement_spending = 70_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.1;
+        plan.profile.as_of_date = "2025-01-01".into();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        assert!((result.projections[0].spending - 40_000.0).abs() < 1e-6);
+        assert!((result.projections[1].spending - 40_000.0).abs() < 1e-6);
+        assert!((result.projections[2].spending - 84_700.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn current_year_retirement_cash_flows_are_prorated() {
         let mut plan = test_plan();
         plan.profile.age = 67;
         plan.profile.birth_year = 1958;
         plan.profile.retirement_age = 67;
         plan.profile.life_expectancy = 68;
-        plan.profile.desired_spending = 60_000.0;
-        plan.profile.spending_growth_rate = 0.0;
+        plan.profile.retirement_spending = 60_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.1;
         plan.profile.as_of_date = "2025-07-02".into();
         plan.accounts.truncate(1);
         plan.social_security.manual_override = true;
@@ -929,6 +1011,7 @@ mod tests {
         let remaining_fraction = 183.0 / 365.0;
         assert!((first_year.spending - 60_000.0 * remaining_fraction).abs() < 1e-6);
         assert!((first_year.social_security_benefit - 20_000.0 * remaining_fraction).abs() < 1e-6);
+        assert!((result.projections[1].spending - 66_000.0).abs() < 1e-6);
     }
 
     #[test]
@@ -939,23 +1022,17 @@ mod tests {
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 74;
         plan.profile.current_salary = 0.0;
-        plan.profile.desired_spending = 30_000.0;
-        plan.profile.spending_growth_rate = 0.0;
+        plan.profile.retirement_spending = 30_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
         plan.profile.as_of_date = "2025-01-01".into();
         plan.accounts = vec![Account {
-            id: "traditional-only".into(),
-            name: "401k".into(),
-            institution: "Test".into(),
             account_type: AccountType::Traditional,
-            user_id: None,
             balance: 1_000_000.0,
             asset_weights: AssetWeights {
                 stocks: 0.6,
                 bonds: 0.4,
             },
-            taxable: false,
-            created_at: "2025-01-01".into(),
-            updated_at: "2025-01-01".into(),
+            is_surplus_cash: false,
         }];
         plan.social_security.enabled = false;
 
@@ -1002,19 +1079,13 @@ mod tests {
         plan.profile.as_of_date = "2025-01-01".into();
         plan.profile.state = State::TX;
         plan.accounts = vec![Account {
-            id: "traditional-only".into(),
-            name: "401k".into(),
-            institution: "Test".into(),
             account_type: AccountType::Traditional,
-            user_id: None,
             balance: 1_000_000.0,
             asset_weights: AssetWeights {
                 stocks: 0.0,
                 bonds: 1.0,
             },
-            taxable: false,
-            created_at: "2025-01-01".into(),
-            updated_at: "2025-01-01".into(),
+            is_surplus_cash: false,
         }];
 
         let result = project_scenario(
@@ -1041,8 +1112,8 @@ mod tests {
         plan.profile.birth_year = 1958;
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
-        plan.profile.desired_spending = 50_000.0;
-        plan.profile.spending_growth_rate = 0.0;
+        plan.profile.retirement_spending = 50_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
         plan.profile.as_of_date = "2025-01-01".into();
         plan.accounts.clear();
         plan.social_security.enabled = true;
@@ -1079,24 +1150,18 @@ mod tests {
         plan.profile.birth_year = 1958;
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
-        plan.profile.desired_spending = 1_000_000_000.0;
-        plan.profile.spending_growth_rate = 0.0;
+        plan.profile.retirement_spending = 1_000_000_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
         plan.profile.as_of_date = "2025-01-01".into();
         plan.profile.state = State::CA;
         plan.accounts = vec![Account {
-            id: "large-traditional".into(),
-            name: "401k".into(),
-            institution: "Test".into(),
             account_type: AccountType::Traditional,
-            user_id: None,
             balance: 10_000_000_000.0,
             asset_weights: AssetWeights {
                 stocks: 0.0,
                 bonds: 1.0,
             },
-            taxable: false,
-            created_at: "2025-01-01".into(),
-            updated_at: "2025-01-01".into(),
+            is_surplus_cash: false,
         }];
         plan.social_security.enabled = false;
 

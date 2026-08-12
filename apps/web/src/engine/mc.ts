@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
-import type { RetirementPlan, SimulationResult } from '@/domain/types';
+import type { SimulationPlan, SimulationResult } from '@/domain/types';
 import type { WorkerAPI } from '@/workers/mc.worker';
-import { retirementPlanSchema } from '@/domain/schemas';
+import { simulationPlanSchema } from '@/domain/schemas';
 
 /**
  * Monte Carlo simulation client wrapper.
@@ -51,7 +51,7 @@ export function cancelMonteCarloSimulation(): void {
  * @returns Promise resolving to simulation results
  */
 export async function runMonteCarloSimulation(
-  plan: RetirementPlan,
+  plan: SimulationPlan,
   config: MCConfig = { paths: 5000, seed: 42 },
   signal?: AbortSignal,
 ): Promise<SimulationResult> {
@@ -79,8 +79,8 @@ export async function runMonteCarloSimulation(
  * @param plan - Retirement plan to validate
  * @returns Array of validation errors (empty if valid)
  */
-export function validateSimulationInputs(plan: RetirementPlan): string[] {
-  const validation = retirementPlanSchema.safeParse(plan);
+export function validateSimulationInputs(plan: SimulationPlan): string[] {
+  const validation = simulationPlanSchema.safeParse(plan);
   return validation.success
     ? []
     : validation.error.issues.map((issue) => issue.message);

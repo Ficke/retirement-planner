@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { projectScenario, createRNG, getBootstrapMarketReturns, BlockBootstrapGenerator, createMarketReturnsGenerator } from '@/engine/projection';
-import type { RetirementPlan } from '@/domain/types';
+import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
-const testPlan: RetirementPlan = {
+const testPlan: SimulationPlan = {
+  schemaVersion: 2,
   profile: {
     age: 35,
     state: 'CA',
@@ -12,8 +13,9 @@ const testPlan: RetirementPlan = {
     currentSalary: 100000,
     salaryGrowthRate: 0.03,
     currentSpending: 50000,
-    desiredSpending: 80000,
-    spendingGrowthRate: 0.02,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 80000,
+    retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
     asOfDate: '2025-01-01',
   },
@@ -24,7 +26,6 @@ const testPlan: RetirementPlan = {
       type: 'Taxable',
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
-      taxable: true,
     }),
     createTestAccount({
       id: 'traditional-1',
@@ -32,7 +33,6 @@ const testPlan: RetirementPlan = {
       type: 'Traditional',
       balance: 200000,
       assetWeights: { stocks: 0.8, bonds: 0.2 },
-      taxable: false,
     }),
     createTestAccount({
       id: 'roth-1',
@@ -40,7 +40,6 @@ const testPlan: RetirementPlan = {
       type: 'Roth',
       balance: 50000,
       assetWeights: { stocks: 0.9, bonds: 0.1 },
-      taxable: false,
     }),
     createTestAccount({
       id: 'hsa-1',
@@ -48,7 +47,6 @@ const testPlan: RetirementPlan = {
       type: 'HSA',
       balance: 25000,
       assetWeights: { stocks: 0.7, bonds: 0.3 },
-      taxable: false,
     }),
   ],
   socialSecurity: {
@@ -73,6 +71,54 @@ describe('Projection Engine', () => {
     expect(result1.projections.length).toBe(result2.projections.length);
     expect(result1.projections[0].year).toBe(2025);
     expect(result1.projections[0].age).toBe(35);
+  });
+
+  it('uses separate growth clocks for working and retirement spending', () => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 60,
+        retirementAge: 62,
+        lifeExpectancy: 63,
+        currentSpending: 40_000,
+        workingSpendingGrowthRate: 0.1,
+        retirementSpending: 70_000,
+        retirementSpendingGrowthRate: 0.05,
+        asOfDate: '2025-01-01',
+      },
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings(),
+    };
+
+    const spending = projectScenario(plan, { paths: 1, seed: 42 })
+      .projections.map((year) => year.spending);
+
+    [40_000, 44_000, 70_000, 73_500].forEach((expected, index) => {
+      expect(spending[index]).toBeCloseTo(expected, 6);
+    });
+  });
+
+  it('starts an already-retired plan at the retirement target with exponent zero', () => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 68,
+        retirementAge: 65,
+        lifeExpectancy: 69,
+        retirementSpending: 50_000,
+        retirementSpendingGrowthRate: 0.1,
+        asOfDate: '2025-01-01',
+      },
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+    };
+
+    const spending = projectScenario(plan, { paths: 1, seed: 42 })
+      .projections.map((year) => year.spending);
+
+    expect(spending[0]).toBeCloseTo(50_000, 6);
+    expect(spending[1]).toBeCloseTo(55_000, 6);
   });
 
   it('should show portfolio growth during working years', () => {
@@ -122,14 +168,14 @@ describe('Projection Engine', () => {
     // Test that accounts with different allocations can produce different results
     // Run the same scenario with two different seeds to verify account-specific logic works
     
-    const createAllocationTestPlan = (): RetirementPlan => ({
+    const createAllocationTestPlan = (): SimulationPlan => ({
       ...testPlan,
       profile: {
         ...testPlan.profile,
         age: 60,  // Closer to retirement to reduce complexity
         retirementAge: 65,
         lifeExpectancy: 75,  // Shorter lifespan for simpler test
-        desiredSpending: 40000,  // Lower spending
+        retirementSpending: 40000,  // Lower spending
       },
       accounts: [
         createTestAccount({
@@ -138,7 +184,6 @@ describe('Projection Engine', () => {
           type: 'Taxable',
           balance: 100000,
           assetWeights: { stocks: 1.0, bonds: 0.0 }, // 100% stocks
-          taxable: true,
         }),
         createTestAccount({
           id: 'bonds-only',
@@ -146,7 +191,6 @@ describe('Projection Engine', () => {
           type: 'Traditional',
           balance: 100000,
           assetWeights: { stocks: 0.0, bonds: 1.0 }, // 100% bonds
-          taxable: false,
         })
       ]
     });
@@ -209,7 +253,7 @@ describe('Projection Engine', () => {
   });
 
   it('prorates current-year retirement spending and Social Security from the as-of date', () => {
-    const plan: RetirementPlan = {
+    const plan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,
@@ -217,8 +261,8 @@ describe('Projection Engine', () => {
         birthYear: 1958,
         retirementAge: 67,
         lifeExpectancy: 68,
-        desiredSpending: 60_000,
-        spendingGrowthRate: 0,
+        retirementSpending: 60_000,
+        retirementSpendingGrowthRate: 0.1,
         asOfDate: '2025-07-02',
         state: 'TX',
       },
@@ -235,10 +279,12 @@ describe('Projection Engine', () => {
     const firstYear = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
     expect(firstYear.spending).toBeCloseTo(60_000 * (183 / 365), 0);
     expect(firstYear.socialSecurityBenefit).toBeCloseTo(20_000 * (183 / 365), 0);
+    expect(projectScenario(plan, { paths: 1, seed: 42 }).projections[1].spending)
+      .toBeCloseTo(66_000, 0);
   });
 
   it('reinvests only after-tax RMD excess and reconciles spendable cash', () => {
-    const plan: RetirementPlan = {
+    const plan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,
@@ -248,8 +294,9 @@ describe('Projection Engine', () => {
         lifeExpectancy: 74,
         currentSalary: 0,
         currentSpending: 30_000,
-        desiredSpending: 30_000,
-        spendingGrowthRate: 0,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 30_000,
+        retirementSpendingGrowthRate: 0,
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -278,7 +325,7 @@ describe('Projection Engine', () => {
   });
 
   it('withdraws, taxes, and preserves RMDs while still working', () => {
-    const plan: RetirementPlan = {
+    const plan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,
@@ -308,7 +355,7 @@ describe('Projection Engine', () => {
   });
 
   it('taxes and preserves Social Security income above the spending target', () => {
-    const plan: RetirementPlan = {
+    const plan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,
@@ -316,8 +363,8 @@ describe('Projection Engine', () => {
         birthYear: 1958,
         retirementAge: 65,
         lifeExpectancy: 68,
-        desiredSpending: 50_000,
-        spendingGrowthRate: 0,
+        retirementSpending: 50_000,
+        retirementSpendingGrowthRate: 0,
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -346,7 +393,7 @@ describe('Projection Engine', () => {
   });
 
   it('fully funds a high-tax retirement year when sufficient assets exist', () => {
-    const plan: RetirementPlan = {
+    const plan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,
@@ -354,8 +401,8 @@ describe('Projection Engine', () => {
         birthYear: 1958,
         retirementAge: 65,
         lifeExpectancy: 68,
-        desiredSpending: 1_000_000_000,
-        spendingGrowthRate: 0,
+        retirementSpending: 1_000_000_000,
+        retirementSpendingGrowthRate: 0,
         asOfDate: '2025-01-01',
         state: 'CA',
       },

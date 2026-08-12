@@ -124,7 +124,6 @@ export function PageAccounts() {
         type: draft.type,
         balance,
         assetWeights: { stocks, bonds },
-        balanceAsOf: new Date().toISOString().split("T")[0],
       });
     }
     closeEditor();

@@ -1,4 +1,10 @@
-import type { RetirementPlan, PathResult, PathProjection, Account, FilingStatus } from '@/domain/types';
+import type {
+  SimulationPlan,
+  SimulationAccount,
+  PathResult,
+  PathProjection,
+  FilingStatus,
+} from '@/domain/types';
 import { calculateWorkingCashFlow, calculateRetirementTax } from './tax';
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
@@ -7,7 +13,7 @@ import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
 import seedrandom from 'seedrandom';
 
-const SIMULATION_SURPLUS_CASH_ID = '__simulation_surplus_cash__';
+type ProjectionAccount = SimulationAccount & { isSurplusCash: boolean };
 
 export interface ProjectionConfig {
   paths: number;
@@ -31,7 +37,7 @@ export interface MarketReturnsGenerator {
  * @returns Single path result with yearly projections (no percentiles)
  */
 export function projectScenario(
-  plan: RetirementPlan,
+  plan: SimulationPlan,
   config: ProjectionConfig
 ): PathResult {
   const { profile, accounts, socialSecurity } = plan;
@@ -58,7 +64,11 @@ export function projectScenario(
   const yearlyProjections: PathProjection[] = [];
 
   // Use single source of truth for account balances (deep copy to avoid mutation)
-  const accountBalances = accounts.map(acc => ({ ...acc }));
+  const accountBalances: ProjectionAccount[] = accounts.map((account) => ({
+    ...account,
+    assetWeights: { ...account.assetWeights },
+    isSurplusCash: false,
+  }));
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
   
   // Track previous year's traditional account balance for RMD calculations
@@ -110,7 +120,8 @@ export function projectScenario(
       // Working phase uses explicit contribution targets. Targets are only
       // eligible when a matching account exists, and are reduced in the clear
       // priority HSA → Traditional → Roth → Taxable when cash is insufficient.
-      const annualWorkingSpending = profile.currentSpending;
+      const annualWorkingSpending = profile.currentSpending
+        * Math.pow(1 + profile.workingSpendingGrowthRate, year);
       // Keep direct engine callers resilient to plans saved before explicit
       // contribution targets existed. Persistence migrates these plans, while
       // the projection boundary treats missing targets as an intentional zero.
@@ -264,8 +275,13 @@ export function projectScenario(
     } else {
       // Retirement phase: withdrawals, SS benefits, taxes on withdrawals
       const retirementPeriodFraction = year === 0 ? remainingYearFraction : 1;
-      const targetSpending = profile.desiredSpending
-        * Math.pow(1 + profile.spendingGrowthRate, year)
+      // The retirement target is the first modeled retirement year's real
+      // spending. Growth begins only in the following modeled retirement year.
+      // Already-retired plans also start at exponent zero on their as-of date.
+      const retirementStartYear = Math.max(0, profile.retirementAge - profile.age);
+      const yearsRetired = year - retirementStartYear;
+      const targetSpending = profile.retirementSpending
+        * Math.pow(1 + profile.retirementSpendingGrowthRate, yearsRetired)
         * retirementPeriodFraction;
 
       if (socialSecurity.enabled && currentAge >= socialSecurity.claimAge) {
@@ -604,7 +620,7 @@ export class ParametricReturnsGenerator implements MarketReturnsGenerator {
 /**
  * Create market returns generator based on configuration.
  */
-export function createMarketReturnsGenerator(plan: RetirementPlan, rng: SeededRNG): MarketReturnsGenerator {
+export function createMarketReturnsGenerator(plan: SimulationPlan, rng: SeededRNG): MarketReturnsGenerator {
   if (plan.assumptions.simulationModel === 'parametric') {
     return new ParametricReturnsGenerator(rng);
   } else if (MONTE_CARLO_DEFAULTS.use_historical_bootstrap) {
@@ -654,7 +670,7 @@ export function estimateSalaryHistory(
 }
 
 /** Preserve forced cash surpluses even when no brokerage account exists. */
-function depositTaxableCash(accounts: Account[], amount: number): void {
+function depositTaxableCash(accounts: ProjectionAccount[], amount: number): void {
   if (amount <= 0) return;
   const taxableAccount = accounts.find((account) => account.type === 'Taxable');
   if (taxableAccount) {
@@ -665,16 +681,10 @@ function depositTaxableCash(accounts: Account[], amount: number): void {
   // Internal zero-real-return cash account. It is never persisted or returned
   // to the user; it prevents after-tax RMD or income surpluses from disappearing.
   accounts.push({
-    id: SIMULATION_SURPLUS_CASH_ID,
-    name: 'Surplus cash',
-    institution: '',
     type: 'Taxable',
-    user_id: null,
     balance: amount,
     assetWeights: { stocks: 0, bonds: 0 },
-    taxable: true,
-    createdAt: '1970-01-01T00:00:00.000Z',
-    updatedAt: '1970-01-01T00:00:00.000Z',
+    isSurplusCash: true,
   });
 }
 
@@ -692,7 +702,7 @@ function depositTaxableCash(accounts: Account[], amount: number): void {
  */
 function executeOrderedWithdrawals(
   targetSpending: number,
-  accountBalances: Account[],
+  accountBalances: ProjectionAccount[],
   profile: { age: number; filingStatus: FilingStatus; state: string },
   socialSecurityBenefit: number,
   rmdAmount: number,
@@ -707,16 +717,9 @@ function executeOrderedWithdrawals(
   insufficientFunds: boolean;
   depositTaxable: number;
 } {
-  // Validate accounts have required fields
-  for (const account of accountBalances) {
-    if (!account.type) {
-      throw new Error(`Account "${account.name}" (${account.id}) is missing required 'type' field. Cannot perform withdrawals without knowing account type.`);
-    }
-    if (account.taxable === undefined) {
-      throw new Error(`Account "${account.name}" (${account.id}) is missing required 'taxable' field. Cannot determine withdrawal tax treatment.`);
-    }
+  for (const [index, account] of accountBalances.entries()) {
     if (account.balance === undefined || isNaN(account.balance) || !isFinite(account.balance)) {
-      throw new Error(`Account "${account.name}" (${account.id}) has invalid balance: ${account.balance}`);
+      throw new Error(`Account ${index + 1} has invalid balance: ${account.balance}`);
     }
     // Clamp negative balances to 0 (can happen from extreme market downturns)
     if (account.balance < 0) {
@@ -727,7 +730,7 @@ function executeOrderedWithdrawals(
   const tolerance = 1;
 
   type Evaluation = {
-    balances: Account[];
+    balances: ProjectionAccount[];
     withdrawalTaxable: number;
     withdrawalTraditional: number;
     withdrawalRoth: number;
@@ -763,7 +766,7 @@ function executeOrderedWithdrawals(
         const withdrawal = Math.min(remaining, account.balance);
         account.balance -= withdrawal;
         withdrawalTaxable += withdrawal;
-        if (account.id !== SIMULATION_SURPLUS_CASH_ID) {
+        if (!account.isSurplusCash) {
           qualifiedIncome += withdrawal * taxableGainRatio;
         }
         remaining -= withdrawal;

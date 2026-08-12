@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     const db = getUnifiedDatabaseService();
     await db.initialize();
 
-    const account = await db.createAccount({ ...data, userId: user.id });
+    const account = await db.createAccount(data, user.id);
 
     return NextResponse.json(account, { status: 201 });
   } catch (error) {

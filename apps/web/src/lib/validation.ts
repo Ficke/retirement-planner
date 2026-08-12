@@ -4,10 +4,10 @@
 
 import { z } from 'zod';
 import {
+  legacyUserProfileSchema,
   projectionSettingsSchema,
   socialSecuritySettingsSchema,
   userProfileSchema,
-  isoDateSchema,
 } from '@/domain/schemas';
 
 // Account validation
@@ -39,14 +39,13 @@ export const UpdateAccountSchema = z.object({
   type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA']).optional(),
   balance: z.number().min(0).max(1_000_000_000_000_000).optional(),
   assetWeights: updateAssetWeightsSchema.optional(),
-  balanceAsOf: isoDateSchema.optional(),
 }).strict();
 
 export const AccountIdSchema = z.string().uuid();
 
 // Profile validation
 export const SaveProfileSchema = z.object({
-  profile: userProfileSchema,
+  profile: z.union([userProfileSchema, legacyUserProfileSchema]),
   socialSecurity: socialSecuritySettingsSchema,
   assumptions: projectionSettingsSchema,
   revision: z.number().int().min(0).nullable(),

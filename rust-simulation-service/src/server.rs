@@ -4,6 +4,7 @@ use warp::{Filter, Reply};
 use crate::simulation::monte_carlo;
 use crate::types::{
     BatchRequest, BatchResponse, BatchSimulationResponse, RetirementPlan, SimulationRequest,
+    PLAN_SCHEMA_VERSION,
 };
 
 const MAX_PATHS: u32 = 5_000;
@@ -163,6 +164,12 @@ fn validate_simulation_request(request: &SimulationRequest) -> Result<(), String
 }
 
 fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
+    if plan.schema_version > PLAN_SCHEMA_VERSION {
+        return Err(format!(
+            "schemaVersion {} is newer than supported version {PLAN_SCHEMA_VERSION}",
+            plan.schema_version
+        ));
+    }
     let profile = &plan.profile;
     if profile.age < 18 || profile.age > 100 {
         return Err("age must be between 18 and 100".into());
@@ -193,18 +200,20 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
         profile.current_salary,
         profile.salary_growth_rate,
         profile.current_spending,
-        profile.desired_spending,
-        profile.spending_growth_rate,
+        profile.working_spending_growth_rate,
+        profile.retirement_spending,
+        profile.retirement_spending_growth_rate,
     ];
     if !finite_profile_values.iter().all(|value| value.is_finite())
         || profile.current_salary < 0.0
         || profile.current_salary > 1_000_000_000.0
         || profile.current_spending < 0.0
         || profile.current_spending > 1_000_000_000.0
-        || profile.desired_spending < 0.0
-        || profile.desired_spending > 1_000_000_000.0
+        || profile.retirement_spending < 0.0
+        || profile.retirement_spending > 1_000_000_000.0
         || !(-0.1..=0.2).contains(&profile.salary_growth_rate)
-        || !(-0.1..=0.1).contains(&profile.spending_growth_rate)
+        || !(-0.1..=0.1).contains(&profile.working_spending_growth_rate)
+        || !(-0.1..=0.1).contains(&profile.retirement_spending_growth_rate)
     {
         return Err(
             "profile amounts and rates must be finite and nonnegative where applicable".into(),
@@ -239,12 +248,9 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     {
         return Err("contribution targets must be finite and between 0 and 1000000".into());
     }
-    for account in &plan.accounts {
+    for (index, account) in plan.accounts.iter().enumerate() {
         let weights = &account.asset_weights;
-        let taxable_matches_type =
-            account.taxable == matches!(account.account_type, crate::types::AccountType::Taxable);
-        if !taxable_matches_type
-            || !account.balance.is_finite()
+        if !account.balance.is_finite()
             || account.balance < 0.0
             || account.balance > 1_000_000_000_000_000.0
             || !weights.stocks.is_finite()
@@ -254,8 +260,8 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
             || (weights.stocks + weights.bonds - 1.0).abs() > 0.001
         {
             return Err(format!(
-                "account '{}' has invalid balance or allocation",
-                account.id
+                "account {} has invalid balance or allocation",
+                index + 1
             ));
         }
     }
@@ -304,6 +310,20 @@ mod tests {
         }))
         .expect("test plan should deserialize");
 
+        assert_eq!(plan.schema_version, 0);
+        assert_eq!(plan.profile.working_spending_growth_rate, 0.0);
+        assert_eq!(plan.profile.retirement_spending, 50_000.0);
+        assert_eq!(plan.profile.retirement_spending_growth_rate, 0.02);
         assert_eq!(validate_plan(&plan), Ok(()));
+
+        let mut current = plan.clone();
+        current.schema_version = PLAN_SCHEMA_VERSION;
+        current.profile.working_spending_growth_rate = 0.01;
+        assert_eq!(validate_plan(&current), Ok(()));
+
+        current.schema_version = PLAN_SCHEMA_VERSION + 1;
+        assert!(validate_plan(&current)
+            .unwrap_err()
+            .contains("newer than supported"));
     }
 }
