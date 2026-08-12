@@ -1,6 +1,12 @@
 import { accountSchema, isoDateSchema, retirementPlanSchema } from '@/domain/schemas';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
-import { AccountIdSchema, CreateAccountSchema, UpdateAccountSchema } from '@/lib/validation';
+import {
+  AccountIdSchema,
+  CreateAccountSchema,
+  SaveProfileSchema,
+  UpdateAccountSchema,
+} from '@/lib/validation';
+import { loadLocalAccounts, saveLocalAccounts } from '@/lib/persistence';
 
 describe('Domain Schemas', () => {
   it('rejects impossible calendar dates and numerically unsafe balances', () => {
@@ -11,13 +17,49 @@ describe('Domain Schemas', () => {
     })).success).toBe(false);
   });
 
-  it('normalizes the redundant taxable flag from account type', () => {
-    const parsed = accountSchema.parse(createTestAccount({
+  it('strips retired account persistence and balance-history fields', () => {
+    const parsed = accountSchema.parse({
+      ...createTestAccount({ type: 'Roth', balance: 10_000 }),
+      taxable: true,
+      balanceAsOf: '2026-05-16T07:00:00.000Z',
+      user_id: 'owner-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(parsed).toEqual(createTestAccount({
+      id: parsed.id,
       type: 'Roth',
       balance: 10_000,
-      taxable: true,
     }));
-    expect(parsed.taxable).toBe(false);
+  });
+
+  it('migrates legacy browser accounts into the versioned canonical shape', () => {
+    const values = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: (key) => values.get(key) ?? null,
+      key: (index) => [...values.keys()][index] ?? null,
+      removeItem: (key) => { values.delete(key); },
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: storage });
+    const account = createTestAccount({ type: 'Taxable', balance: 25_000 });
+    window.localStorage.setItem('retireplan:accounts:anonymous', JSON.stringify([{
+      ...account,
+      taxable: true,
+      balanceAsOf: '2026-05-16T07:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }]));
+
+    const migrated = loadLocalAccounts(null);
+    expect(migrated).toEqual([account]);
+    saveLocalAccounts(migrated!, null);
+    expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
+      schemaVersion: 2,
+      accounts: [account],
+    });
   });
 
   it('enforces account API invariants and rejects ignored fields', () => {
@@ -38,6 +80,36 @@ describe('Domain Schemas', () => {
     expect(AccountIdSchema.safeParse('550e8400-e29b-41d4-a716-446655440000').success).toBe(true);
   });
 
+  it('normalizes a legacy profile save before it is persisted as schema v2', () => {
+    const saved = SaveProfileSchema.parse({
+      profile: {
+        age: 40,
+        birthYear: 1986,
+        state: 'CA',
+        filingStatus: 'Single',
+        retirementAge: 65,
+        currentSalary: 100_000,
+        salaryGrowthRate: 0.02,
+        currentSpending: 48_000,
+        desiredSpending: 60_000,
+        spendingGrowthRate: 0.01,
+        lifeExpectancy: 90,
+        asOfDate: '2026-01-01',
+      },
+      socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings(),
+      revision: 0,
+    });
+
+    expect(saved.profile).toMatchObject({
+      currentSpending: 48_000,
+      workingSpendingGrowthRate: 0,
+      retirementSpending: 60_000,
+      retirementSpendingGrowthRate: 0.01,
+    });
+    expect(saved.profile).not.toHaveProperty('desiredSpending');
+  });
+
   it('should accept valid default retirement plan', () => {
     const defaultPlan = {
       profile: {
@@ -48,8 +120,9 @@ describe('Domain Schemas', () => {
         currentSalary: 100000,
         salaryGrowthRate: 0.03,
         currentSpending: 80000,
-        desiredSpending: 80000,
-        spendingGrowthRate: 0.02,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 80000,
+        retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         asOfDate: '2025-01-01',
       },
@@ -63,7 +136,6 @@ describe('Domain Schemas', () => {
             stocks: 0.7,
             bonds: 0.3,
           },
-          taxable: true,
         }),
       ],
       socialSecurity: {
@@ -91,8 +163,9 @@ describe('Domain Schemas', () => {
         currentSalary: 0,
         salaryGrowthRate: 0,
         currentSpending: 40_000,
-        desiredSpending: 40_000,
-        spendingGrowthRate: 0,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 40_000,
+        retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-01-01',
       },
@@ -114,8 +187,9 @@ describe('Domain Schemas', () => {
         currentSalary: 0,
         salaryGrowthRate: 0,
         currentSpending: 50_000,
-        desiredSpending: 50_000,
-        spendingGrowthRate: 0,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 50_000,
+        retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-06-30',
       },
@@ -137,8 +211,9 @@ describe('Domain Schemas', () => {
         currentSalary: 0,
         salaryGrowthRate: 0,
         currentSpending: 50_000,
-        desiredSpending: 50_000,
-        spendingGrowthRate: 0,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 50_000,
+        retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-06-30',
       },
@@ -163,8 +238,9 @@ describe('Domain Schemas', () => {
         currentSalary: 100000,
         salaryGrowthRate: 0.03,
         currentSpending: 80000,
-        desiredSpending: 80000,
-        spendingGrowthRate: 0.02,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 80000,
+        retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         asOfDate: '2025-01-01',
       },
@@ -178,7 +254,6 @@ describe('Domain Schemas', () => {
             stocks: 0.6,
             bonds: 0.5, // Sum = 1.1, should fail
           },
-          taxable: true,
         }),
       ],
       socialSecurity: {

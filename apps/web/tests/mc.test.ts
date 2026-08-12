@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { createTestAccount } from './test-helpers';
 import { validateSimulationInputs } from '@/engine/mc';
-import type { RetirementPlan } from '@/domain/types';
+import type { SimulationPlan } from '@/domain/types';
 
-const testPlan: RetirementPlan = {
+const testPlan: SimulationPlan = {
+  schemaVersion: 2,
   profile: {
     age: 35,
     state: 'CA', 
@@ -12,8 +13,9 @@ const testPlan: RetirementPlan = {
     currentSalary: 100000,
     salaryGrowthRate: 0.03,
     currentSpending: 60000,
-    desiredSpending: 60000,
-    spendingGrowthRate: 0.02,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 60000,
+    retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
     asOfDate: '2025-01-01',
   },
@@ -24,7 +26,6 @@ const testPlan: RetirementPlan = {
       type: 'Taxable',
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
-      taxable: true,
     }),
   ],
   socialSecurity: {
@@ -60,7 +61,7 @@ describe('Monte Carlo Simulation', () => {
   });
 
   it('accepts already-retired and Social-Security-only plans', () => {
-    const retiredPlan: RetirementPlan = {
+    const retiredPlan: SimulationPlan = {
       ...testPlan,
       profile: {
         ...testPlan.profile,

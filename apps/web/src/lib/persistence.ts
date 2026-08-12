@@ -5,7 +5,17 @@
  * CLOUD mode it acts as a write-through cache (crash safety + offline edits).
  */
 
-import type { RetirementPlan, UserProfile, SocialSecuritySettings, AssumptionSettings } from '@/domain/types';
+import type {
+  Account,
+  RetirementPlan,
+  UserProfile,
+  SocialSecuritySettings,
+  AssumptionSettings,
+} from '@/domain/types';
+import { accountSchema } from '@/domain/schemas';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+
+const LOCAL_DATA_SCHEMA_VERSION = PLAN_SCHEMA_VERSION;
 
 const STORAGE_KEYS = {
   USER_PREFERENCES: 'retirement-planner:preferences',
@@ -69,6 +79,7 @@ export function saveUserPreferences(preferences: UserPreferences): void {
 // --- Profile ---
 
 export interface LocalProfileData {
+  schemaVersion?: number;
   profile?: Partial<UserProfile>;
   socialSecurity?: Partial<SocialSecuritySettings>;
   assumptions?: Partial<AssumptionSettings>;
@@ -79,9 +90,18 @@ export function loadLocalProfile(ownerId: string | null): LocalProfileData | nul
   if (!storage) return null;
   try {
     const raw = storage.getItem(ownerKey(STORAGE_KEYS.LOCAL_PROFILE, ownerId));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Profile has an invalid shape');
+    }
+    const parsed = value as LocalProfileData;
+    if (parsed.schemaVersion && parsed.schemaVersion > LOCAL_DATA_SCHEMA_VERSION) {
+      throw new Error('Browser profile data was saved by a newer app version');
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error('Browser profile data could not be loaded', { cause: error });
   }
 }
 
@@ -90,6 +110,7 @@ export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): 
   if (!storage) return;
   try {
     const data: LocalProfileData = {
+      schemaVersion: LOCAL_DATA_SCHEMA_VERSION,
       profile: plan.profile,
       socialSecurity: plan.socialSecurity,
       assumptions: plan.assumptions,
@@ -102,24 +123,53 @@ export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): 
 
 // --- Accounts (local mode) ---
 
-export function loadLocalAccounts<T = unknown>(ownerId: string | null): T[] | null {
+interface StoredAccounts {
+  schemaVersion: number;
+  accounts: unknown[];
+}
+
+export function loadLocalAccounts(ownerId: string | null): Account[] | null {
   const storage = browserStorage();
   if (!storage) return null;
   try {
     const saved = storage.getItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId));
     if (!saved) return null;
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
+    const parsed: unknown = JSON.parse(saved);
+    const payload = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object' && Array.isArray((parsed as StoredAccounts).accounts)
+        ? (parsed as StoredAccounts).accounts
+        : null;
+    if (!payload) throw new Error('Account collection has an invalid shape');
+    if (
+      !Array.isArray(parsed)
+      && (parsed as StoredAccounts).schemaVersion > LOCAL_DATA_SCHEMA_VERSION
+    ) {
+      throw new Error('Browser account data was saved by a newer app version');
+    }
+    return payload.map((account, index) => {
+      const result = accountSchema.safeParse(account);
+      if (!result.success) {
+        throw new Error(`Account ${index + 1} is invalid: ${result.error.issues[0]?.message}`);
+      }
+      // Parsing is also the migration boundary: legacy ownership, timestamps,
+      // taxability, and per-account valuation dates are intentionally stripped.
+      return result.data;
+    });
+  } catch (error) {
+    throw new Error('Browser account data could not be loaded', { cause: error });
   }
 }
 
-export function saveLocalAccounts<T = unknown>(accounts: T[], ownerId: string | null): void {
+export function saveLocalAccounts(accounts: Account[], ownerId: string | null): void {
   const storage = browserStorage();
   if (!storage) return;
   try {
-    storage.setItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId), JSON.stringify(accounts));
+    const data: StoredAccounts = {
+      schemaVersion: LOCAL_DATA_SCHEMA_VERSION,
+      accounts,
+    };
+    storage.setItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId), JSON.stringify(data));
   } catch (error) {
     console.error('Failed to save local accounts:', error);
   }

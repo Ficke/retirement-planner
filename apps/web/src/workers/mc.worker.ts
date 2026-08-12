@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import type { RetirementPlan, SimulationResult, YearlyProjection, IncomeSourcesRow } from '@/domain/types';
+import type { SimulationPlan, SimulationResult, YearlyProjection, IncomeSourcesRow } from '@/domain/types';
 import { projectScenario } from '@/engine/projection';
 
 /**
@@ -14,7 +14,7 @@ export interface WorkerMCConfig {
 }
 
 async function runSimulation(
-  plan: RetirementPlan,
+  plan: SimulationPlan,
   config: WorkerMCConfig
 ): Promise<SimulationResult> {
   const { paths, seed } = config;

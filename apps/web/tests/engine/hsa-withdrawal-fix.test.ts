@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { projectScenario } from '@/engine/projection';
-import type { RetirementPlan } from '@/domain/types';
+import type { SimulationPlan } from '@/domain/types';
 
 describe('HSA Withdrawal Logic Fix', () => {
   // Create a test plan with high spending that should trigger withdrawal priority issues
-  const createTestPlan = (): RetirementPlan => ({
+  const createTestPlan = (): SimulationPlan => ({
+    schemaVersion: 2,
     profile: {
       age: 75, // Start well after RMD age
       state: 'CA',
@@ -13,59 +14,36 @@ describe('HSA Withdrawal Logic Fix', () => {
       currentSalary: 0, // Retired
       salaryGrowthRate: 0,
       currentSpending: 120000,
-      desiredSpending: 120000, // High spending to force withdrawals
-      spendingGrowthRate: 0,
+      workingSpendingGrowthRate: 0,
+      retirementSpending: 120000, // High spending to force withdrawals
+      retirementSpendingGrowthRate: 0,
       lifeExpectancy: 90,
       asOfDate: '2024-01-01',
     },
     accounts: [
       // Large Traditional account (will have RMDs)
       {
-        id: 'traditional-1',
-        name: '401(k)',
-        institution: 'Test Brokerage',
         type: 'Traditional',
         balance: 1000000,
         assetWeights: { stocks: 0.6, bonds: 0.4 },
-        taxable: false,
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
       },
       // Moderate Roth account
       {
-        id: 'roth-1',
-        name: 'Roth IRA',
-        institution: 'Test Brokerage',
         type: 'Roth',
         balance: 300000,
         assetWeights: { stocks: 0.6, bonds: 0.4 },
-        taxable: false,
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
       },
       // Small HSA that should NOT be hit hard early
       {
-        id: 'hsa-1',
-        name: 'HSA',
-        institution: 'Test Brokerage',
         type: 'HSA',
         balance: 50000,
         assetWeights: { stocks: 0.6, bonds: 0.4 },
-        taxable: false,
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
       },
       // Small taxable account
       {
-        id: 'taxable-1',
-        name: 'Taxable',
-        institution: 'Test Brokerage',
         type: 'Taxable',
         balance: 100000,
         assetWeights: { stocks: 0.6, bonds: 0.4 },
-        taxable: true,
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
       },
     ],
     socialSecurity: {

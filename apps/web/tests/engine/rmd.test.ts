@@ -3,7 +3,7 @@ import { createTestAccount } from '../test-helpers';
 import { calculateRmd } from '@/engine/rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { projectScenario } from '@/engine/projection';
-import type { RetirementPlan } from '@/domain/types';
+import type { SimulationPlan } from '@/domain/types';
 
 describe('RMD Calculation', () => {
   describe('calculateRmd', () => {
@@ -42,17 +42,19 @@ describe('RMD Calculation', () => {
   });
 
   describe('RMD Integration Tests', () => {
-    const createTestPlan = (age: number, traditionalBalance: number, desiredSpending: number): RetirementPlan => ({
+    const createTestPlan = (age: number, traditionalBalance: number, retirementSpending: number): SimulationPlan => ({
+      schemaVersion: 2,
       profile: {
         age: age,
         asOfDate: '2025-01-01',
         currentSalary: 0, // Retired
         retirementAge: age - 1, // Already retired
         lifeExpectancy: age + 20,
-        currentSpending: desiredSpending,
-        desiredSpending: desiredSpending, // Now using actual dollars
+        currentSpending: retirementSpending,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: retirementSpending, // Now using actual dollars
         salaryGrowthRate: 0,
-        spendingGrowthRate: 0,
+        retirementSpendingGrowthRate: 0,
         filingStatus: 'Single',
         state: 'CA'
       },
@@ -63,7 +65,6 @@ describe('RMD Calculation', () => {
           type: 'Traditional',
           balance: traditionalBalance, // Now using actual dollars
           assetWeights: { stocks: 0.6, bonds: 0.4 },
-          taxable: false
         }),
         createTestAccount({
           id: '2',
@@ -71,7 +72,6 @@ describe('RMD Calculation', () => {
           type: 'Taxable',
           balance: 100000, // $100k in taxable for reinvestment
           assetWeights: { stocks: 0.7, bonds: 0.3 },
-          taxable: true
         })
       ],
       socialSecurity: {

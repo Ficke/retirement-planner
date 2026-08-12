@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { usePlan } from '@/state/usePlan';
+import { hydratePlan, usePlan } from '@/state/usePlan';
 import type {
   RetirementAgeAnalysisResult,
   SpendingAnalysisResult,
@@ -76,5 +76,25 @@ describe('State Management - Simple Invalidation Logic', () => {
     usePlan.getState().updatePlan({ profile: { lifeExpectancy: 10 } });
     expect(usePlan.getState().plan).toBe(previousPlan);
     expect(usePlan.getState().error).toContain('Plan change was not applied');
+  });
+
+  it('migrates legacy spending fields into explicit working and retirement phases', () => {
+    const migrated = hydratePlan({
+      age: 40,
+      birthYear: 1986,
+      asOfDate: '2026-01-01',
+      currentSpending: 48_000,
+      desiredSpending: 60_000,
+      spendingGrowthRate: 0.02,
+    }, null, null, []);
+
+    expect(migrated.profile).toMatchObject({
+      currentSpending: 48_000,
+      workingSpendingGrowthRate: 0,
+      retirementSpending: 60_000,
+      retirementSpendingGrowthRate: 0.02,
+    });
+    expect(migrated.profile).not.toHaveProperty('desiredSpending');
+    expect(migrated.profile).not.toHaveProperty('spendingGrowthRate');
   });
 });

@@ -5,9 +5,10 @@ export interface ProfileSettings {
   socialSecurity: Record<string, unknown>;
   assumptions: Record<string, unknown>;
   revision: number;
+  schemaVersion: number;
 }
 
-export type ProfileSaveData = Omit<ProfileSettings, 'revision'>;
+export type ProfileSaveData = Omit<ProfileSettings, 'revision' | 'schemaVersion'>;
 
 export class ProfileConflictError extends Error {
   constructor() {

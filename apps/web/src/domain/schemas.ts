@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MIN_RETIREMENT_AGE } from '@/domain/constants';
+import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const [year, month, day] = value.split('-').map(Number);
@@ -25,19 +25,15 @@ export const accountSchema = z.object({
   name: z.string().min(1, "Account name is required"),
   institution: z.string().max(100),
   type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA'] as const),
-  user_id: z.string().nullable().optional(),
   balance: z.number().min(0, "Balance must be non-negative").max(1_000_000_000_000_000),
   assetWeights: assetWeightsSchema,
-  balanceAsOf: isoDateSchema.optional(),
-  taxable: z.boolean(),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-}).transform((account) => ({
-  ...account,
-  // Account type is authoritative; never trust a redundant wire flag to
-  // change withdrawal order or tax treatment.
-  taxable: account.type === 'Taxable',
-}));
+});
+
+export const simulationAccountSchema = z.object({
+  type: z.enum(['Taxable', 'Traditional', 'Roth', 'HSA'] as const),
+  balance: z.number().min(0, "Balance must be non-negative").max(1_000_000_000_000_000),
+  assetWeights: assetWeightsSchema,
+});
 
 export const userProfileSchema = z.object({
   age: z.number().int().min(18, "Age must be at least 18").max(100, "Age must be reasonable"),
@@ -48,8 +44,9 @@ export const userProfileSchema = z.object({
   currentSalary: z.number().min(0, "Salary must be non-negative").max(1_000_000_000),
   salaryGrowthRate: z.number().min(-0.1, "Salary growth rate must be reasonable").max(0.2, "Salary growth rate must be reasonable"),
   currentSpending: z.number().min(0, "Current spending must be non-negative").max(1_000_000_000),
-  desiredSpending: z.number().min(0, "Desired spending must be non-negative").max(1_000_000_000),
-  spendingGrowthRate: z.number().min(-0.1, "Spending growth rate must be reasonable").max(0.1, "Spending growth rate must be reasonable"),
+  workingSpendingGrowthRate: z.number().min(-0.1, "Working spending growth rate must be reasonable").max(0.1, "Working spending growth rate must be reasonable"),
+  retirementSpending: z.number().min(0, "Retirement spending must be non-negative").max(1_000_000_000),
+  retirementSpendingGrowthRate: z.number().min(-0.1, "Retirement spending growth rate must be reasonable").max(0.1, "Retirement spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),
   asOfDate: isoDateSchema,
 }).refine((profile) => profile.lifeExpectancy > Math.max(profile.age, profile.retirementAge), {
@@ -66,6 +63,21 @@ export const userProfileSchema = z.object({
   ...profile,
   birthYear: profile.birthYear ?? Number(profile.asOfDate.slice(0, 4)) - profile.age,
 }));
+
+/** Normalize profile payloads produced before spending phases were explicit. */
+export const legacyUserProfileSchema = z
+  .object({
+    desiredSpending: z.number(),
+    spendingGrowthRate: z.number(),
+  })
+  .passthrough()
+  .transform(({ desiredSpending, spendingGrowthRate, ...profile }) => ({
+    ...profile,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: desiredSpending,
+    retirementSpendingGrowthRate: spendingGrowthRate,
+  }))
+  .pipe(userProfileSchema);
 
 export const socialSecuritySettingsSchema = z.object({
   enabled: z.boolean(),
@@ -97,6 +109,14 @@ export const retirementPlanSchema = z.object({
   assumptions: assumptionSettingsSchema,
 });
 
+export const simulationPlanSchema = z.object({
+  schemaVersion: z.literal(PLAN_SCHEMA_VERSION),
+  profile: userProfileSchema,
+  accounts: z.array(simulationAccountSchema),
+  socialSecurity: socialSecuritySettingsSchema,
+  assumptions: projectionSettingsSchema,
+});
+
 export type InferredAccount = z.infer<typeof accountSchema>;
 export type InferredUserProfile = z.infer<typeof userProfileSchema>;
 export type InferredSocialSecuritySettings = z.infer<typeof socialSecuritySettingsSchema>;
@@ -104,3 +124,4 @@ export type InferredProjectionSettings = z.infer<typeof projectionSettingsSchema
 /** @deprecated Use InferredProjectionSettings instead */
 export type InferredAssumptionSettings = InferredProjectionSettings;
 export type InferredRetirementPlan = z.infer<typeof retirementPlanSchema>;
+export type InferredSimulationPlan = z.infer<typeof simulationPlanSchema>;

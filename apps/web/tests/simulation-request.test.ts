@@ -9,6 +9,7 @@ import { getClientIp } from '@/lib/rate-limit';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
+  schemaVersion: 2,
   profile: {
     age: 35,
     state: 'CA',
@@ -17,22 +18,17 @@ const validPlan = {
     currentSalary: 100000,
     salaryGrowthRate: 0.01,
     currentSpending: 50000,
-    desiredSpending: 50000,
-    spendingGrowthRate: 0,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 50000,
+    retirementSpendingGrowthRate: 0,
     lifeExpectancy: 90,
     asOfDate: '2026-01-01',
   },
   accounts: [
     {
-      id: 'a1',
-      name: 'Brokerage',
-      institution: 'Test Brokerage',
       type: 'Taxable',
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
-      taxable: true,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z',
     },
   ],
   socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
@@ -43,11 +39,44 @@ const validPlan = {
   },
 };
 
+const legacyPlan = {
+  ...validPlan,
+  schemaVersion: undefined,
+  profile: {
+    ...validPlan.profile,
+    workingSpendingGrowthRate: undefined,
+    retirementSpending: undefined,
+    retirementSpendingGrowthRate: undefined,
+    desiredSpending: 55000,
+    spendingGrowthRate: 0.02,
+  },
+};
+
 const validConfig = { paths: 5000, seed: 42 };
 
 describe('simulation request limits', () => {
   it('accepts a normal request', () => {
     expect(monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig }).success).toBe(true);
+  });
+
+  it('accepts and normalizes a legacy browser request without changing its semantics version', () => {
+    const result = monteCarloRequestSchema.safeParse({ plan: legacyPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.plan.schemaVersion).toBe(0);
+    expect(result.data.plan.profile).toMatchObject({
+      currentSpending: 50000,
+      workingSpendingGrowthRate: 0,
+      retirementSpending: 55000,
+      retirementSpendingGrowthRate: 0.02,
+    });
+  });
+
+  it('rejects a request from a newer unsupported schema', () => {
+    expect(monteCarloRequestSchema.safeParse({
+      plan: { ...validPlan, schemaVersion: 3 },
+      config: validConfig,
+    }).success).toBe(false);
   });
 
   it('rejects inflated path counts', () => {

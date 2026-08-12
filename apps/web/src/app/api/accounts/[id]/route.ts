@@ -7,7 +7,7 @@ import {
   UpdateAccountSchema,
   validateRequest,
 } from '@/lib/validation';
-import type { Account } from '@/domain/types';
+import type { UpdateAccountData } from '@/domain/types';
 
 export async function GET(
   request: NextRequest,
@@ -70,7 +70,7 @@ export async function PATCH(
       );
     }
 
-    const updates = validation.data as Partial<Omit<Account, 'id' | 'createdAt'>>;
+    const updates = validation.data as UpdateAccountData;
     const account = await db.updateAccount(id, user.id, updates);
     if (!account) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });

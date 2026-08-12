@@ -9,7 +9,13 @@
  */
 
 import { z } from 'zod';
-import { retirementPlanSchema } from '@/domain/schemas';
+import {
+  projectionSettingsSchema,
+  legacyUserProfileSchema,
+  simulationAccountSchema,
+  simulationPlanSchema as currentSimulationPlanSchema,
+  socialSecuritySettingsSchema,
+} from '@/domain/schemas';
 import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
 
 /** Hard ceiling on paths per simulation — matches what the UI ever requests. */
@@ -31,10 +37,30 @@ const simulationConfigSchema = z.object({
  * bounds ages, rates, and horizon) plus a cap on account count to bound the
  * per-path work.
  */
-const simulationPlanSchema = retirementPlanSchema.refine(
-  (plan) => plan.accounts.length <= MAX_PLAN_ACCOUNTS,
-  { message: `Too many accounts (max ${MAX_PLAN_ACCOUNTS})` },
-);
+/**
+ * Keep accepting requests from browser bundles that were already open when
+ * schema v2 deployed. They retain schemaVersion 0/1 so Rust can preserve the
+ * original spending semantics during the rolling rollout.
+ */
+const legacySimulationPlanSchema = z
+  .object({
+    schemaVersion: z.number().int().min(0).max(1).optional(),
+    profile: legacyUserProfileSchema,
+    accounts: z.array(simulationAccountSchema),
+    socialSecurity: socialSecuritySettingsSchema,
+    assumptions: projectionSettingsSchema,
+  })
+  .transform((plan) => ({
+    ...plan,
+    schemaVersion: plan.schemaVersion ?? 0,
+  }));
+
+const simulationPlanSchema = z
+  .union([currentSimulationPlanSchema, legacySimulationPlanSchema])
+  .refine(
+    (plan) => plan.accounts.length <= MAX_PLAN_ACCOUNTS,
+    { message: `Too many accounts (max ${MAX_PLAN_ACCOUNTS})` },
+  );
 
 export const monteCarloRequestSchema = z.object({
   plan: simulationPlanSchema,

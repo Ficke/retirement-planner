@@ -32,7 +32,7 @@ function statCard(page: Page, label: string) {
 test('boots into Overview with the KPI row', async ({ page }) => {
   await gotoApp(page);
 
-  for (const label of ['Plan Health', 'Net Worth', 'Retirement Year', 'Monthly Spending']) {
+  for (const label of ['Plan Health', 'Net Worth', 'Retirement Year', 'Retirement Spending']) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
 });

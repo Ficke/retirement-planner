@@ -17,7 +17,6 @@ describe('Withdrawal Logic', () => {
         type: 'Taxable',
         balance: 500000,
         assetWeights: { stocks: 0.8, bonds: 0.2 },
-        taxable: true
       }),
       createTestAccount({
         id: 'traditional-1',
@@ -25,7 +24,6 @@ describe('Withdrawal Logic', () => {
         type: 'Traditional',
         balance: 800000,
         assetWeights: { stocks: 0.7, bonds: 0.3 },
-        taxable: false
       }),
       createTestAccount({
         id: 'roth-1',
@@ -33,7 +31,6 @@ describe('Withdrawal Logic', () => {
         type: 'Roth',
         balance: 300000,
         assetWeights: { stocks: 0.9, bonds: 0.1 },
-        taxable: false
       })
     ];
 
@@ -50,7 +47,7 @@ describe('Withdrawal Logic', () => {
 
     // Withdraw from taxable first
     for (const account of testAccounts) {
-      if (account.taxable && account.balance > 0 && grossWithdrawalNeeded > 0) {
+      if (account.type === 'Taxable' && account.balance > 0 && grossWithdrawalNeeded > 0) {
         const withdrawal = Math.min(grossWithdrawalNeeded, account.balance);
         account.balance -= withdrawal;
         totalWithdrawn += withdrawal;
@@ -88,7 +85,6 @@ describe('Withdrawal Logic', () => {
         type: 'Taxable',
         balance: 30000, // Smaller amount
         assetWeights: { stocks: 0.8, bonds: 0.2 },
-        taxable: true
       }),
       createTestAccount({
         id: 'traditional-1',
@@ -96,7 +92,6 @@ describe('Withdrawal Logic', () => {
         type: 'Traditional',
         balance: 500000,
         assetWeights: { stocks: 0.7, bonds: 0.3 },
-        taxable: false
       }),
       createTestAccount({
         id: 'roth-1',
@@ -104,7 +99,6 @@ describe('Withdrawal Logic', () => {
         type: 'Roth',
         balance: 300000,
         assetWeights: { stocks: 0.9, bonds: 0.1 },
-        taxable: false
       })
     ];
 
@@ -119,7 +113,7 @@ describe('Withdrawal Logic', () => {
 
     // First: Taxable
     for (const account of testAccounts) {
-      if (account.taxable && account.balance > 0 && remainingNeeded > 0) {
+      if (account.type === 'Taxable' && account.balance > 0 && remainingNeeded > 0) {
         const withdrawal = Math.min(remainingNeeded, account.balance);
         account.balance -= withdrawal;
         taxableWithdrawn += withdrawal;
@@ -170,13 +164,13 @@ describe('Withdrawal Logic', () => {
         type: 'Taxable',
         balance: 500000, // Plenty of taxable balance
         assetWeights: { stocks: 0.8, bonds: 0.2 },
-        taxable: true
       })
     ];
 
     // Use the imported projectScenario function
     
     const plan = {
+      schemaVersion: 2 as const,
       profile: {
         age: 67,
         retirementAge: 67,
@@ -184,8 +178,9 @@ describe('Withdrawal Logic', () => {
         currentSalary: 0,
         salaryGrowthRate: 0,
         currentSpending: 80000,
-        desiredSpending: 80000,
-        spendingGrowthRate: 0,
+        workingSpendingGrowthRate: 0,
+        retirementSpending: 80000,
+        retirementSpendingGrowthRate: 0,
         filingStatus: 'Single' as FilingStatus,
         state: 'CA' as const,
         asOfDate: '2025-01-01'

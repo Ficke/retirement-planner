@@ -8,10 +8,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { projectScenario } from '@/engine/projection';
-import type { RetirementPlan } from '@/domain/types';
+import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
 
-const plan: RetirementPlan = {
+const plan: SimulationPlan = {
+  schemaVersion: 2,
   profile: {
     age: 45,
     state: 'TX',
@@ -20,8 +21,9 @@ const plan: RetirementPlan = {
     currentSalary: 120_000,
     salaryGrowthRate: 0.03,
     currentSpending: 60_000,
-    desiredSpending: 60_000,
-    spendingGrowthRate: 0.025,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 60_000,
+    retirementSpendingGrowthRate: 0.025,
     lifeExpectancy: 90,
     asOfDate: '2026-01-01',
   },

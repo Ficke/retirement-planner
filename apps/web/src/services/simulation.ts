@@ -9,9 +9,10 @@
 
 import { runMonteCarloSimulation } from '@/engine/mc';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
-import { MIN_RETIREMENT_AGE } from '@/domain/constants';
+import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
   RetirementPlan,
+  SimulationPlan,
   SimulationResult,
   SSAnalysisResult,
   SpendingAnalysisResult,
@@ -47,21 +48,15 @@ interface BatchSimulationResponse {
   result: SimulationResult;
 }
 
-/** Strip account ownership and display metadata before transient cloud compute. */
-function toServerPlan(plan: RetirementPlan): RetirementPlan {
+/** Build the minimal transient plan shared by both compute engines. */
+function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
   return {
     ...plan,
-    accounts: plan.accounts.map((account, index) => ({
-      id: `account-${index + 1}`,
-      name: `Account ${index + 1}`,
-      institution: '',
+    schemaVersion: PLAN_SCHEMA_VERSION,
+    accounts: plan.accounts.map((account) => ({
       type: account.type,
-      user_id: null,
       balance: account.balance,
       assetWeights: { ...account.assetWeights },
-      taxable: account.type === 'Taxable',
-      createdAt: '1970-01-01T00:00:00.000Z',
-      updatedAt: '1970-01-01T00:00:00.000Z',
     })),
   };
 }
@@ -103,8 +98,8 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // 11 levels centered on desiredSpending, step ≈ 10% rounded to nearest $5k
-  const base = plan.profile.desiredSpending;
+  // 11 levels centered on first-year retirement spending, step ≈ 10% rounded to nearest $5k
+  const base = plan.profile.retirementSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
   const levels = [...new Set(
     Array.from({ length: 11 }, (_, i) => (
@@ -117,7 +112,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
       id: `spending-${annualSpending}`,
       plan: {
         ...plan,
-        profile: { ...plan.profile, desiredSpending: annualSpending },
+        profile: { ...plan.profile, retirementSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
       seed: seed + 2000,
@@ -171,7 +166,7 @@ async function runOnServer(
   const body = {
     simulations: scenarios.map((s) => ({
       id: s.id,
-      plan: toServerPlan(s.plan),
+      plan: toSimulationPlan(s.plan),
       config: {
         paths: s.paths,
         seed: s.seed,
@@ -209,7 +204,7 @@ async function runOnClient(
   for (const s of scenarios) {
     if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
     const result = await runMonteCarloSimulation(
-      s.plan,
+      toSimulationPlan(s.plan),
       { paths: s.paths, seed: s.seed },
       signal,
     );
@@ -254,7 +249,7 @@ class SimulationServiceImpl implements SimulationService {
           headers: { 'Content-Type': 'application/json' },
           signal,
           body: JSON.stringify({
-            plan: toServerPlan(plan),
+            plan: toSimulationPlan(plan),
             config: {
               paths: MAIN_PATHS,
               seed,
@@ -275,7 +270,11 @@ class SimulationServiceImpl implements SimulationService {
       }
     }
 
-    const result = await runMonteCarloSimulation(plan, { paths: MAIN_PATHS, seed }, signal);
+    const result = await runMonteCarloSimulation(
+      toSimulationPlan(plan),
+      { paths: MAIN_PATHS, seed },
+      signal,
+    );
     return { ...result, source: 'client' };
   }
 

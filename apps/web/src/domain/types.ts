@@ -9,22 +9,14 @@ export interface AssetWeights {
   bonds: number;
 }
 
-// Unified Account type - clean architecture without legacy compatibility
+/** Account state owned by the plan and edited by the user. */
 export interface Account {
   id: string;
   name: string;
   institution: string;
   type: AccountType; // HSA | Traditional | Roth | Taxable
-  user_id?: string | null; // Owner of this account (for multi-user support)
-
   balance: number;
   assetWeights: AssetWeights;
-  balanceAsOf?: string; // ISO date string
-  taxable: boolean; // computed from type
-
-  // Metadata
-  createdAt: string; // ISO date string
-  updatedAt: string; // ISO date string
 }
 
 export interface CreateAccountData {
@@ -34,8 +26,12 @@ export interface CreateAccountData {
   balance?: number;
   stocksPct?: number;
   bondsPct?: number;
-  userId?: string;
 }
+
+export type UpdateAccountData = Partial<Pick<
+  Account,
+  'name' | 'institution' | 'type' | 'balance' | 'assetWeights'
+>>;
 
 export interface UserProfile {
   age: number;
@@ -48,9 +44,12 @@ export interface UserProfile {
   salaryGrowthRate: number;
   /** Current annual spending in real dollars during working years. */
   currentSpending: number;
-  /** Target annual retirement spending in real dollars. */
-  desiredSpending: number;
-  spendingGrowthRate: number;
+  /** Annual real change in working-year spending. */
+  workingSpendingGrowthRate: number;
+  /** First modeled retirement year's spending target in real dollars. */
+  retirementSpending: number;
+  /** Annual real change after the first modeled retirement year. */
+  retirementSpendingGrowthRate: number;
   lifeExpectancy: number;
   asOfDate: string; // ISO date string for when salary/projections are calculated from
 }
@@ -101,6 +100,18 @@ export interface RetirementPlan {
   accounts: Account[];
   socialSecurity: SocialSecuritySettings;
   assumptions: ProjectionSettings;
+}
+
+/** Minimal transient contract shared by the browser and Rust engines. */
+export interface SimulationAccount {
+  type: AccountType;
+  balance: number;
+  assetWeights: AssetWeights;
+}
+
+export interface SimulationPlan extends Omit<RetirementPlan, 'accounts'> {
+  schemaVersion: 2;
+  accounts: SimulationAccount[];
 }
 
 export interface SimulationResult {

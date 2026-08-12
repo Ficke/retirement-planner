@@ -6,8 +6,18 @@
 import type {
   Account,
   CreateAccountData,
+  UpdateAccountData,
 } from '@/domain/types';
+import { accountSchema } from '@/domain/schemas';
 import { authenticatedFetch } from '@/lib/firebase/api-client';
+
+function parseAccount(value: unknown): Account {
+  const result = accountSchema.safeParse(value);
+  if (!result.success) {
+    throw new Error(`Cloud account data is invalid: ${result.error.issues[0]?.message}`);
+  }
+  return result.data;
+}
 
 export class AccountsClient {
   private readonly baseUrl: string;
@@ -27,7 +37,7 @@ export class AccountsClient {
       throw new Error(`Failed to create account: ${response.statusText}`);
     }
 
-    return response.json();
+    return parseAccount(await response.json());
   }
 
   async getAccounts(expectedUserId?: string): Promise<Account[]> {
@@ -37,7 +47,9 @@ export class AccountsClient {
       throw new Error(`Failed to fetch accounts: ${response.statusText}`);
     }
 
-    return response.json();
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) throw new Error('Cloud account collection is invalid');
+    return body.map(parseAccount);
   }
 
   async getAccount(id: string, expectedUserId?: string): Promise<Account | null> {
@@ -51,12 +63,12 @@ export class AccountsClient {
       throw new Error(`Failed to fetch account: ${response.statusText}`);
     }
 
-    return response.json();
+    return parseAccount(await response.json());
   }
 
   async updateAccount(
     id: string,
-    updates: Partial<Omit<Account, 'id' | 'createdAt'>>,
+    updates: UpdateAccountData,
     expectedUserId?: string,
   ): Promise<Account> {
     const response = await authenticatedFetch(`${this.baseUrl}/accounts/${id}`, {
@@ -69,7 +81,7 @@ export class AccountsClient {
       throw new Error(`Failed to update account: ${response.statusText}`);
     }
 
-    return response.json();
+    return parseAccount(await response.json());
   }
 
   async deleteAccount(id: string, expectedUserId?: string): Promise<void> {
