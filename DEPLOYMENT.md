@@ -107,16 +107,22 @@ call the Rust service, and the Cloud Build trigger.
 ### 4. Verify
 
 ```bash
-gcloud run services describe retire-plan --region us-central1 --format 'value(status.url)'
-curl -f https://<url>/                 # → 200
+scripts/smoke-check.sh "$(gcloud run services describe retire-plan \
+  --region us-central1 --format 'value(status.url)')"
 ```
 
-Check `/`, not `/healthz`. Google Front End reserves the exact path `/healthz`
-on `*.run.app` and returns its own 404 before the request reaches the
-container, so an external probe there always fails even on a healthy service.
-`/healthz` still works where Cloud Run uses it — the liveness probes hit the
-container directly and never pass through GFE — and it works locally against
-the container port.
+This is the same check Cloud Build runs. It posts a real simulation, so a pass
+means ingress, the Next.js server, the API route, the web service's IAM token,
+the hop to the Rust service, and the wire contract between the two engines all
+work. Failures are distinguishable: `400` wire-contract mismatch, `502` Rust
+error, `503` cannot reach Rust, `504` timeout.
+
+Two paths not to check. `/` is a client-rendered shell that returns 200 whether
+or not the app can compute anything. `/healthz` cannot be probed through the
+public URL at all — Google Front End reserves that exact path on `*.run.app`
+and answers it with its own 404 before the request reaches the container. It
+still works where Cloud Run uses it, since liveness probes hit the container
+directly, and it works locally against the container port.
 
 ---
 
@@ -128,7 +134,7 @@ Push to `main`. The Cloud Build trigger runs `cloudbuild.yaml`:
 2. Deploy the Rust service (image only)
 3. Point the web service's `RUST_SERVICE_URL` at it
 4. Deploy the web service (image only)
-5. `curl /` on the web service, with retries
+5. `scripts/smoke-check.sh` — runs a real simulation end to end
 
 Steps 2 and 4 pass `--image` and identity flags but **no sizing flags**.
 `gcloud run deploy` preserves settings it is not told about, which is what keeps

@@ -136,25 +136,7 @@ steps:
         SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
           --region ${_REGION} \
           --format 'value(status.url)')
-
-        # Checks '/', not '/healthz'. Google Front End reserves the exact path
-        # /healthz on *.run.app and answers it with its own 404 before the
-        # request reaches the container, so an external probe there can never
-        # pass. /healthz still backs the Cloud Run liveness probes, which hit
-        # the container directly and never traverse GFE.
-        #
-        # Hitting a real route is also the only thing this step can verify that
-        # the liveness probe cannot: that traffic survives the ingress path.
-        for attempt in 1 2 3 4 5; do
-          STATUS=$$(curl -f -s -o /dev/null -w "%{http_code}" "$$SERVICE_URL/") && break
-          echo "Attempt $$attempt failed; retrying in 5s"
-          sleep 5
-        done
-        if [ "$$STATUS" != "200" ]; then
-          echo "Service did not serve / after deploy (last status: $${STATUS:-none})"
-          exit 1
-        fi
-        echo "Deployment successful! Service is serving traffic."
+        ./scripts/smoke-check.sh "$$SERVICE_URL"
 
 # Note: No 'images' section needed - Kaniko pushes images directly via --destination flags
 # Both Rust and Next.js images are built and pushed by Kaniko in one step
