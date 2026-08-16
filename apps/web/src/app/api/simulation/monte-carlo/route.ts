@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { SimulationResult } from '@/domain/types';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { fetchRustService } from '@/lib/rust-service-client';
 import {
@@ -63,8 +62,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result: SimulationResult = await rustResponse.json();
-    return NextResponse.json(result);
+    return new NextResponse(rustResponse.body, {
+      status: rustResponse.status,
+      headers: { 'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json' },
+    });
   } catch (error) {
     console.error('Simulation proxy error:', error);
 

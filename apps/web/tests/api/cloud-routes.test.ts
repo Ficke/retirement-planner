@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => {
     db,
     getAuthUser: vi.fn(),
     getUnifiedDatabaseService: vi.fn(() => db),
+    getClientIp: vi.fn(() => '127.0.0.1'),
+    rateLimit: vi.fn(),
+    fetchRustService: vi.fn(),
   };
 });
 
@@ -29,10 +32,19 @@ vi.mock('@/services/server/database', () => ({
   ProfileRevisionConflictError: mocks.ProfileRevisionConflictError,
   getUnifiedDatabaseService: mocks.getUnifiedDatabaseService,
 }));
+vi.mock('@/lib/rate-limit', () => ({
+  getClientIp: mocks.getClientIp,
+  rateLimit: mocks.rateLimit,
+}));
+vi.mock('@/lib/rust-service-client', () => ({
+  fetchRustService: mocks.fetchRustService,
+}));
 
 import { GET as getAccounts, POST as createAccount } from '@/app/api/accounts/route';
 import { GET as getAccount } from '@/app/api/accounts/[id]/route';
 import { PUT as saveProfile } from '@/app/api/profile/route';
+import { POST as runBatch } from '@/app/api/simulation/batch/route';
+import { POST as runMonteCarlo } from '@/app/api/simulation/monte-carlo/route';
 
 const owner = { id: 'firebase-owner', email: 'owner@example.test', name: null };
 const accountId = '8dc6c282-ffae-4b80-874d-4ee26ecf6604';
@@ -62,10 +74,28 @@ const profile = {
   asOfDate: '2026-01-01',
 };
 
+async function beforeStreamClose<T>(operation: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Operation waited for the upstream stream to close')),
+          250,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.db.initialize.mockResolvedValue(undefined);
   mocks.getUnifiedDatabaseService.mockReturnValue(mocks.db);
+  mocks.rateLimit.mockResolvedValue({ success: true, remaining: 99, reset: Date.now() + 60_000 });
 });
 
 describe('cloud API authorization boundaries', () => {
@@ -190,5 +220,135 @@ describe('cloud API authorization boundaries', () => {
     });
 
     expect((await saveProfile(request)).status).toBe(409);
+  });
+});
+
+describe('simulation proxy response streaming', () => {
+  const simulationPlan = {
+    schemaVersion: 2,
+    profile,
+    accounts: [{
+      type: 'Taxable',
+      balance: 100_000,
+      assetWeights: { stocks: 0.6, bonds: 0.4 },
+    }],
+    socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
+    assumptions: {
+      simulationModel: 'historical',
+      randomSeed: 42,
+      taxableGainRatio: 0.5,
+      contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+    },
+  };
+
+  it('passes the successful headline response body through without parsing it', async () => {
+    const firstChunk = new TextEncoder().encode('{"successProbability":0.75');
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const upstream = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+        controller.enqueue(firstChunk);
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+    const jsonSpy = vi.spyOn(upstream, 'json');
+    mocks.fetchRustService.mockResolvedValue(upstream);
+    const request = new NextRequest('http://localhost/api/simulation/monte-carlo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: simulationPlan, config: { paths: 20, seed: 42 } }),
+    });
+
+    try {
+      const response = await beforeStreamClose(runMonteCarlo(request));
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(jsonSpy).not.toHaveBeenCalled();
+
+      const reader = response.body!.getReader();
+      const firstRead = await beforeStreamClose(reader.read());
+      expect(firstRead.done).toBe(false);
+      expect(firstRead.value).toEqual(firstChunk);
+      reader.releaseLock();
+    } finally {
+      streamController.close();
+    }
+  });
+
+  it('streams the primary compact batch summary before the upstream body closes', async () => {
+    const firstChunk = new TextEncoder().encode(
+      '{"results":[{"id":"summary","successProbability":0.8}]}',
+    );
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const upstream = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+        controller.enqueue(firstChunk);
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    mocks.fetchRustService.mockResolvedValue(upstream);
+    const request = new NextRequest('http://localhost/api/simulation/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        responseMode: 'summary',
+        simulations: [{
+          id: 'summary',
+          plan: simulationPlan,
+          config: { paths: 20, seed: 42 },
+        }],
+      }),
+    });
+
+    try {
+      const response = await beforeStreamClose(runBatch(request));
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      const firstRead = await beforeStreamClose(reader.read());
+      expect(firstRead.done).toBe(false);
+      expect(firstRead.value).toEqual(firstChunk);
+      reader.releaseLock();
+
+      const forwarded = JSON.parse(mocks.fetchRustService.mock.calls[0][1].body as string);
+      expect(forwarded.responseMode).toBe('summary');
+    } finally {
+      streamController.close();
+    }
+  });
+
+  it('streams the legacy full batch shape and forwards the normalized default mode', async () => {
+    const payload = {
+      results: [{
+        id: 'legacy',
+        result: { successProbability: 0.75, yearlyProjections: [] },
+      }],
+    };
+    const upstream = new Response(JSON.stringify(payload), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const jsonSpy = vi.spyOn(upstream, 'json');
+    mocks.fetchRustService.mockResolvedValue(upstream);
+    const request = new NextRequest('http://localhost/api/simulation/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        simulations: [{
+          id: 'legacy',
+          plan: simulationPlan,
+          config: { paths: 20, seed: 42 },
+        }],
+      }),
+    });
+
+    const response = await runBatch(request);
+
+    expect(response.status).toBe(200);
+    expect(jsonSpy).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual(payload);
+    const forwarded = JSON.parse(mocks.fetchRustService.mock.calls[0][1].body as string);
+    expect(forwarded.responseMode).toBe('full');
   });
 });

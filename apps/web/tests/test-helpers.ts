@@ -23,7 +23,7 @@ export function createTestAccount(partial: Partial<Account> & { type: Account['t
 export function createTestProjectionSettings(partial?: Partial<ProjectionSettings>): ProjectionSettings {
   return {
     simulationModel: partial?.simulationModel || 'historical',
-    randomSeed: partial?.randomSeed,
+    randomSeed: partial?.randomSeed ?? 42,
     taxableGainRatio: partial?.taxableGainRatio ?? 0.5,
     hsaEligible: partial?.hsaEligible ?? false,
     useBackdoorRoth: partial?.useBackdoorRoth ?? false,

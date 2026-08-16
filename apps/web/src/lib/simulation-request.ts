@@ -70,6 +70,7 @@ export const monteCarloRequestSchema = z.object({
 
 export const batchRequestSchema = z
   .object({
+    responseMode: z.enum(['full', 'summary']).default('full'),
     simulations: z
       .array(
         z.object({

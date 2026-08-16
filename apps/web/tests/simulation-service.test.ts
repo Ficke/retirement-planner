@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getSimulationService } from '@/services/simulation';
-import { runMonteCarloSimulation } from '@/engine/mc';
+import { runMonteCarloSummaries } from '@/engine/mc';
 import type { RetirementPlan } from '@/domain/types';
 import { batchRequestSchema } from '@/lib/simulation-request';
 import { createTestProjectionSettings } from './test-helpers';
@@ -26,7 +26,10 @@ vi.mock('@/engine/mc', () => ({
     wealthAtAge: {},
     wealthThresholds: { below1m: 0.1, below500k: 0.05 },
     yearlyProjections: []
-  })
+  }),
+  runMonteCarloSummaries: vi.fn().mockImplementation(async (
+    scenarios: Array<{ id: string }>,
+  ) => scenarios.map(({ id }) => ({ id, successProbability: 0.95 }))),
 }));
 
 const mockPlan: RetirementPlan = {
@@ -88,8 +91,8 @@ describe('SimulationService (Pure)', () => {
     }, false);
     expect(result).toHaveLength(1);
     expect(result[0].claimAge).toBe(mockPlan.socialSecurity.claimAge);
-    expect(vi.mocked(runMonteCarloSimulation)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(runMonteCarloSimulation).mock.calls[0][0].socialSecurity.enabled).toBe(false);
+    expect(vi.mocked(runMonteCarloSummaries)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(runMonteCarloSummaries).mock.calls[0][0][0].plan.socialSecurity.enabled).toBe(false);
   });
 
   it('does not invent claim-age adjustments for a manual household benefit', async () => {
@@ -104,7 +107,7 @@ describe('SimulationService (Pure)', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].claimAge).toBe(mockPlan.socialSecurity.claimAge);
-    expect(vi.mocked(runMonteCarloSimulation).mock.calls[0][0].socialSecurity).toMatchObject({
+    expect(vi.mocked(runMonteCarloSummaries).mock.calls[0][0][0].plan.socialSecurity).toMatchObject({
       manualOverride: true,
       estimatedBenefit: 50_000,
     });
@@ -170,15 +173,7 @@ describe('SimulationService (Pure)', () => {
         json: async () => ({
           results: simulations.map(({ id }) => ({
             id,
-            result: {
-              successProbability: 0.95,
-              riskOfRuin: 0.05,
-              medianTerminalWealth: 1000000,
-              percentile10TerminalWealth: 500000,
-              wealthAtAge: {},
-              wealthThresholds: { below1m: 0.1, below500k: 0.05 },
-              yearlyProjections: [],
-            },
+            successProbability: 0.95,
           })),
         }),
       } as Response;
@@ -187,6 +182,10 @@ describe('SimulationService (Pure)', () => {
     await service.runRetirementAgeAnalysis(plan, true);
 
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
+    expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
+    expect(new Set((requestBody as {
+      simulations: Array<{ config: { seed: number } }>;
+    }).simulations.map((simulation) => simulation.config.seed))).toEqual(new Set([42]));
     const wireAccount = (requestBody as {
       simulations: Array<{ plan: { accounts: Array<Record<string, unknown>> } }>;
     }).simulations[0].plan.accounts[0];
@@ -195,6 +194,37 @@ describe('SimulationService (Pure)', () => {
       balance: 100000,
       assetWeights: { stocks: 0.6, bonds: 0.4 },
     });
+  });
+
+  it('accepts the legacy full batch response while continuing to request summaries', async () => {
+    let requestBody: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body));
+      const simulations = (requestBody as { simulations: Array<{ id: string }> }).simulations;
+      return {
+        ok: true,
+        json: async () => ({
+          results: simulations.map(({ id }) => ({
+            id,
+            result: {
+              successProbability: 0.8,
+              riskOfRuin: 0.2,
+              yearlyProjections: [{ age: 65 }],
+            },
+          })),
+        }),
+      } as Response;
+    }));
+
+    const results = await service.runSpendingAnalysis(mockPlan, true);
+
+    expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
+    expect(results).toHaveLength(7);
+    expect(results.every(({ result }) => (
+      result.successProbability === 0.8
+      && result.source === 'server'
+      && !('yearlyProjections' in result)
+    ))).toBe(true);
   });
 
   it('should handle concurrent simulations independently', async () => {

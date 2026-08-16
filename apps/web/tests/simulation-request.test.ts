@@ -67,7 +67,9 @@ const validConfig = { paths: 5000, seed: 42 };
 
 describe('simulation request limits', () => {
   it('accepts a normal request', () => {
-    expect(monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig }).success).toBe(true);
+    const result = monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.plan.assumptions.randomSeed).toBe(42);
   });
 
   it('accepts and normalizes a legacy browser request without changing its semantics version', () => {
@@ -135,12 +137,17 @@ describe('simulation request limits', () => {
   });
 
   it('accepts the sweep batches the UI actually sends', () => {
-    const sims = Array.from({ length: 11 }, (_, i) => ({
-      id: `retirementAge-${55 + i}`,
+    const sims = Array.from({ length: 17 }, (_, i) => ({
+      id: `sweep-${i}`,
       plan: validPlan,
-      config: { paths: 1000, seed: 3000 + i },
+      config: { paths: 300, seed: 42 },
     }));
-    expect(batchRequestSchema.safeParse({ simulations: sims }).success).toBe(true);
+    const summary = batchRequestSchema.safeParse({ responseMode: 'summary', simulations: sims });
+    expect(summary.success).toBe(true);
+
+    const legacy = batchRequestSchema.safeParse({ simulations: sims });
+    expect(legacy.success).toBe(true);
+    if (legacy.success) expect(legacy.data.responseMode).toBe('full');
   });
 });
 

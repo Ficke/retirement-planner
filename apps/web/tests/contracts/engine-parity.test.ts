@@ -120,6 +120,34 @@ async function runRust(plan: SimulationPlan, paths = 1): Promise<SimulationResul
   return response.json() as Promise<SimulationResult>;
 }
 
+async function runRustBatch(
+  plan: SimulationPlan,
+  responseMode?: 'full' | 'summary',
+  paths = 20,
+): Promise<unknown> {
+  const response = await fetch(new URL('/api/batch', serviceUrl), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(responseMode && { responseMode }),
+      simulations: [{
+        id: 'contract',
+        plan,
+        config: {
+          paths,
+          seed: 42,
+          useHistoricalBootstrap: false,
+          blockSize: 3,
+        },
+      }],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Rust batch returned ${response.status}: ${await response.text()}`);
+  }
+  return response.json();
+}
+
 function expectCashFlowParity(
   typescript: PathProjection,
   rust: YearlyProjection,
@@ -137,6 +165,23 @@ function expectCashFlowParity(
 }
 
 describe('TypeScript/Rust engine contract', () => {
+  it('keeps summary batches exact and defaults old clients to the full response', async () => {
+    const fullSimulation = await runRust(withdrawalPlan, 20);
+    const summary = await runRustBatch(withdrawalPlan, 'summary') as {
+      results: Array<{ id: string; successProbability: number }>;
+    };
+    expect(summary.results).toEqual([{
+      id: 'contract',
+      successProbability: fullSimulation.successProbability,
+    }]);
+
+    const legacy = await runRustBatch(withdrawalPlan, undefined, 5) as {
+      results: Array<{ id: string; result: SimulationResult }>;
+    };
+    expect(legacy.results[0].id).toBe('contract');
+    expect(legacy.results[0].result.yearlyProjections.length).toBeGreaterThan(0);
+  });
+
   it('matches exact first-year Social Security surplus cash flows', async () => {
     const typescript = projectScenario(socialSecuritySurplusPlan, { paths: 1, seed: 42 });
     const rust = await runRust(socialSecuritySurplusPlan);

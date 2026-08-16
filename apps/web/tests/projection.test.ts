@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { projectScenario, createRNG, getBootstrapMarketReturns, BlockBootstrapGenerator, createMarketReturnsGenerator } from '@/engine/projection';
+import { countSweepSuccesses, projectScenario, projectScenarioSummary, createRNG, getBootstrapMarketReturns, BlockBootstrapGenerator, createMarketReturnsGenerator } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
@@ -63,6 +63,67 @@ const testPlan: SimulationPlan = {
 // Market assumptions no longer needed for bootstrap method
 
 describe('Projection Engine', () => {
+  it('keeps summary success exactly equal to the full projection', () => {
+    const plans: SimulationPlan[] = [
+      testPlan,
+      {
+        ...testPlan,
+        profile: { ...testPlan.profile, retirementSpending: 250_000 },
+      },
+      {
+        ...testPlan,
+        socialSecurity: { ...testPlan.socialSecurity, enabled: false },
+      },
+    ];
+    for (const plan of plans) {
+      for (const seed of [0, 42, 999_999]) {
+        const config = { paths: 1, seed };
+        const full = projectScenario(plan, config);
+        const summary = projectScenarioSummary(plan, config);
+        expect(summary.success).toBe(full.success);
+        expect(summary.terminalWealth).toBe(full.terminalWealth);
+      }
+    }
+  });
+
+  it('counts each shard with the same path seeds and success semantics as full projections', () => {
+    const scenarios = [
+      { plan: testPlan },
+      {
+        plan: {
+          ...testPlan,
+          profile: { ...testPlan.profile, retirementSpending: 250_000 },
+        },
+      },
+    ];
+    const rootSeed = 4_294_967_295;
+    const counts = countSweepSuccesses(scenarios, rootSeed, 3, 11);
+    const expected = scenarios.map(({ plan }) => {
+      let successfulPaths = 0;
+      for (let pathIndex = 3; pathIndex < 11; pathIndex++) {
+        if (projectScenario(plan, { paths: 1, seed: rootSeed + pathIndex }).success) {
+          successfulPaths++;
+        }
+      }
+      return successfulPaths;
+    });
+
+    expect(counts).toEqual(expected);
+  });
+
+  it('validates sweep shard bounds and allows an empty shard as a zero-count identity', () => {
+    expect(countSweepSuccesses([{ plan: testPlan }], 42, 5, 5)).toEqual([0]);
+    expect(() => countSweepSuccesses([{ plan: testPlan }], 42, -1, 1)).toThrow(RangeError);
+    expect(() => countSweepSuccesses([{ plan: testPlan }], 42, 2, 1)).toThrow(RangeError);
+    expect(() => countSweepSuccesses([{ plan: testPlan }], 42, 0.5, 1)).toThrow(RangeError);
+    expect(() => countSweepSuccesses(
+      [{ plan: testPlan }],
+      42,
+      0,
+      Number.MAX_SAFE_INTEGER + 1,
+    )).toThrow(RangeError);
+  });
+
   it('should generate reproducible results with same seed', () => {
     const result1 = projectScenario(testPlan, { paths: 1, seed: 42 });
     const result2 = projectScenario(testPlan, { paths: 1, seed: 42 });

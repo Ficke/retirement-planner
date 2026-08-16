@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 import type { SimulationPlan, SimulationResult, YearlyProjection, IncomeSourcesRow } from '@/domain/types';
-import { projectScenario } from '@/engine/projection';
+import { countSweepSuccesses, projectScenario } from '@/engine/projection';
 
 /**
  * Monte Carlo Web Worker — the client-side simulation engine.
@@ -11,6 +11,20 @@ import { projectScenario } from '@/engine/projection';
 export interface WorkerMCConfig {
   paths: number;
   seed: number;
+}
+
+export interface WorkerSweepScenario {
+  id: string;
+  plan: SimulationPlan;
+}
+
+function runSweepShard(
+  scenarios: WorkerSweepScenario[],
+  seed: number,
+  startPath: number,
+  endPath: number,
+): number[] {
+  return countSweepSuccesses(scenarios, seed, startPath, endPath);
 }
 
 async function runSimulation(
@@ -108,6 +122,7 @@ async function runSimulation(
 
 const workerAPI = {
   runSimulation,
+  runSweepShard,
 };
 
 Comlink.expose(workerAPI);

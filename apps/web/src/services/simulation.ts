@@ -7,7 +7,7 @@
  * engines differ only in where the math runs.
  */
 
-import { runMonteCarloSimulation } from '@/engine/mc';
+import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { ageOn, retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
@@ -15,6 +15,7 @@ import type {
   RetirementPlan,
   SimulationPlan,
   SimulationResult,
+  SimulationSummary,
   SSAnalysisResult,
   SpendingAnalysisResult,
   RetirementAgeAnalysisResult
@@ -56,7 +57,9 @@ interface Scenario {
 
 interface BatchSimulationResponse {
   id: string;
-  result: SimulationResult;
+  successProbability?: number;
+  /** This supports rolling deployments against Rust services that predate summary responses. */
+  result?: Pick<SimulationResult, 'successProbability'>;
 }
 
 /** Build the minimal transient plan shared by both compute engines. */
@@ -75,12 +78,8 @@ function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
   };
 }
 
-/**
- * Base seed for a run. A fixed seed (Settings → Randomness) gives reproducible
- * results; otherwise each run draws a fresh sample.
- */
 function baseSeed(plan: RetirementPlan): number {
-  return plan.assumptions.randomSeed ?? Math.floor(Math.random() * 2 ** 31);
+  return plan.assumptions.randomSeed;
 }
 
 function historicalBootstrapFor(plan: RetirementPlan): boolean {
@@ -103,8 +102,9 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
         socialSecurity: { ...plan.socialSecurity, claimAge },
       },
       paths: SWEEP_PATHS,
-      // Common random numbers isolate the effect of claim age from MC noise.
-      seed: seed + 1000,
+      // Every app simulation uses the same root seed. Path i therefore sees
+      // the same market draws in the headline and at every sweep point.
+      seed,
     },
   }));
 }
@@ -129,7 +129,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
         profile: { ...plan.profile, currentSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 2000,
+      seed,
     },
   }));
 }
@@ -145,7 +145,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         id: `retirementAge-${center}`,
         plan,
         paths: SWEEP_PATHS,
-        seed: seed + 3000,
+        seed,
       },
     }];
   }
@@ -167,7 +167,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         profile: { ...plan.profile, retirementAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 3000,
+      seed,
     },
   }));
 }
@@ -176,8 +176,9 @@ async function runOnServer(
   scenarios: Scenario[],
   plan: RetirementPlan,
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
+): Promise<Map<string, SimulationSummary>> {
   const body = {
+    responseMode: 'summary',
     simulations: scenarios.map((s) => ({
       id: s.id,
       plan: toSimulationPlan(s.plan),
@@ -203,9 +204,13 @@ async function runOnServer(
   }
 
   const data: { results: BatchSimulationResponse[] } = await response.json();
-  const map = new Map<string, SimulationResult>();
+  const map = new Map<string, SimulationSummary>();
   for (const r of data.results) {
-    map.set(r.id, { ...r.result, source: 'server' });
+    const successProbability = r.successProbability ?? r.result?.successProbability;
+    if (successProbability == null) {
+      throw new Error(`Batch simulation omitted success probability for '${r.id}'`);
+    }
+    map.set(r.id, { successProbability, source: 'server' });
   }
   return map;
 }
@@ -213,16 +218,20 @@ async function runOnServer(
 async function runOnClient(
   scenarios: Scenario[],
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
-  const map = new Map<string, SimulationResult>();
-  for (const s of scenarios) {
-    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
-    const result = await runMonteCarloSimulation(
-      toSimulationPlan(s.plan),
-      { paths: s.paths, seed: s.seed },
-      signal,
-    );
-    map.set(s.id, { ...result, source: 'client' });
+): Promise<Map<string, SimulationSummary>> {
+  const paths = scenarios[0]?.paths ?? 0;
+  const seed = scenarios[0]?.seed ?? 0;
+  if (scenarios.some((scenario) => scenario.paths !== paths || scenario.seed !== seed)) {
+    throw new Error('Sensitivity scenarios must share one path count and root seed');
+  }
+  const summaries = await runMonteCarloSummaries(
+    scenarios.map((scenario) => ({ id: scenario.id, plan: toSimulationPlan(scenario.plan) })),
+    { paths, seed },
+    signal,
+  );
+  const map = new Map<string, SimulationSummary>();
+  for (const result of summaries) {
+    map.set(result.id, { successProbability: result.successProbability, source: 'client' });
   }
   return map;
 }
@@ -236,7 +245,7 @@ async function runScenarios(
   plan: RetirementPlan,
   useServerSide: boolean,
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
+): Promise<Map<string, SimulationSummary>> {
   if (useServerSide) {
     try {
       return await runOnServer(scenarios, plan, signal);

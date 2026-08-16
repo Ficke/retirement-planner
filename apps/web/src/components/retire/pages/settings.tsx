@@ -61,7 +61,6 @@ export function PageSettings() {
   ) => updatePlan({ assumptions });
   const a = plan.assumptions;
 
-  const seedMode = a.randomSeed != null ? "fixed" : "random";
   const signedIn = user != null && authUser != null;
   const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
   const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
@@ -138,7 +137,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Where simulations run"
-            helper="Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device, but is slower."
+            helper="Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device."
             badge={
               <Badge
                 variant="secondary"
@@ -281,35 +280,13 @@ export function PageSettings() {
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Randomness
+          Simulation seed
         </h2>
         <DashboardCard>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            <Setting
-              label="Seed mode"
-              helper="Fixed repeats the same results every run. Random draws a fresh sample."
-            >
-              <ToggleGroup
-                type="single"
-                value={seedMode}
-                onValueChange={(v) => {
-                  if (!v) return;
-                  updateAssumptions({
-                    randomSeed: v === "fixed" ? a.randomSeed ?? 42 : undefined,
-                  });
-                }}
-                variant="outline"
-                size="sm"
-              >
-                <ToggleGroupItem value="fixed">Fixed</ToggleGroupItem>
-                <ToggleGroupItem value="random">Random</ToggleGroupItem>
-              </ToggleGroup>
-            </Setting>
-            <SeedValueRow
-              value={a.randomSeed}
-              onChange={(v) => updateAssumptions({ randomSeed: v })}
-            />
-          </div>
+          <SeedValueRow
+            value={a.randomSeed}
+            onChange={(v) => updateAssumptions({ randomSeed: v })}
+          />
         </DashboardCard>
 
       </PageShell>
@@ -363,36 +340,35 @@ function SeedValueRow({
   value,
   onChange,
 }: {
-  value: number | undefined;
-  onChange: (v: number | undefined) => void;
+  value: number;
+  onChange: (v: number) => void;
 }) {
   const id = useId();
-  const disabled = value == null;
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id} className="text-foreground text-sm font-semibold">
         Seed value
       </Label>
       <p className="text-muted-foreground max-w-prose text-xs leading-relaxed">
-        Used when seed mode is fixed.
+        Shared by the headline simulation and every sensitivity curve. The default is 42.
       </p>
       <div className="mt-1 flex gap-2">
         <Input
           id={id}
           type="number"
+          min={0}
+          max={2 ** 32 - 1}
           className="font-mono"
-          value={value ?? ""}
-          disabled={disabled}
+          value={value}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "") return onChange(undefined);
+            if (v === "") return;
             const n = parseInt(v, 10);
-            if (!Number.isNaN(n) && n >= 0) onChange(n);
+            if (!Number.isNaN(n) && n >= 0 && n <= 2 ** 32 - 1) onChange(n);
           }}
         />
         <Button
           variant="outline"
-          disabled={disabled}
           onClick={() => onChange(Math.floor(Math.random() * 1e9))}
         >
           <RefreshCw className="size-4" />

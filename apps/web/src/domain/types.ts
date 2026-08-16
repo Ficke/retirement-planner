@@ -90,7 +90,8 @@ export interface AnnualContributions {
 
 export interface ProjectionSettings {
   simulationModel: SimulationModel;
-  randomSeed?: number;
+  /** The main simulation and every sensitivity scenario share this root seed. */
+  randomSeed: number;
   /** Portion of taxable-account withdrawals treated as long-term capital gain. */
   taxableGainRatio: number;
   /** HDHP coverage. Without it there is no HSA contribution to deduct. */
@@ -148,19 +149,25 @@ export interface SimulationResult {
   source?: 'server' | 'client';
 }
 
+/** Sensitivity sweeps use this minimal result. */
+export interface SimulationSummary {
+  successProbability: number;
+  source?: 'server' | 'client';
+}
+
 export interface SSAnalysisResult {
   claimAge: number;
-  result: SimulationResult;
+  result: SimulationSummary;
 }
 
 export interface SpendingAnalysisResult {
   annualSpending: number;
-  result: SimulationResult;
+  result: SimulationSummary;
 }
 
 export interface RetirementAgeAnalysisResult {
   retirementAge: number;
-  result: SimulationResult;
+  result: SimulationSummary;
 }
 
 /** One modeled year on one path: every cash flow, in real dollars. */
