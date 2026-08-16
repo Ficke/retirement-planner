@@ -422,6 +422,71 @@ describe('Projection Engine', () => {
     ).toBeCloseTo(firstYear.spending, 0);
   });
 
+  it('is unchanged by how a balance is split across accounts of one type', () => {
+    const merged: SimulationPlan = {
+      ...testPlan,
+      accounts: [
+        createTestAccount({
+          type: 'Traditional',
+          balance: 3_000_000,
+          assetWeights: { stocks: 0.7, bonds: 0.3 },
+        }),
+      ],
+      assumptions: createTestProjectionSettings({ randomSeed: 7 }),
+    };
+    // Same money, same balance-weighted 70/30, split across two accounts.
+    const split: SimulationPlan = {
+      ...merged,
+      accounts: [
+        createTestAccount({
+          type: 'Traditional',
+          balance: 1_000_000,
+          assetWeights: { stocks: 0.9, bonds: 0.1 },
+        }),
+        createTestAccount({
+          type: 'Traditional',
+          balance: 2_000_000,
+          assetWeights: { stocks: 0.6, bonds: 0.4 },
+        }),
+      ],
+    };
+
+    const config = { paths: 1, seed: 7 };
+    const mergedWealth = projectScenario(merged, config).terminalWealth;
+    // A depleted plan would make the comparison vacuous.
+    expect(mergedWealth).toBeGreaterThan(0);
+    expect(projectScenario(split, config).terminalWealth).toBeCloseTo(mergedWealth, 6);
+  });
+
+  it('routes deposits to the bucket regardless of account order', () => {
+    const accounts = [
+      createTestAccount({
+        type: 'Traditional',
+        balance: 1_500_000,
+        assetWeights: { stocks: 1, bonds: 0 },
+      }),
+      createTestAccount({
+        type: 'Traditional',
+        balance: 1_500_000,
+        assetWeights: { stocks: 0, bonds: 1 },
+      }),
+    ];
+    const withContributions = createTestProjectionSettings({
+      randomSeed: 11,
+      contributions: { hsa: 0, traditional: 20000, roth: 0, taxable: 0 },
+    });
+    const forward: SimulationPlan = { ...testPlan, accounts, assumptions: withContributions };
+    const reversed: SimulationPlan = {
+      ...forward,
+      accounts: [...accounts].reverse(),
+    };
+
+    const config = { paths: 1, seed: 11 };
+    const forwardWealth = projectScenario(forward, config).terminalWealth;
+    expect(forwardWealth).toBeGreaterThan(0);
+    expect(projectScenario(reversed, config).terminalWealth).toBeCloseTo(forwardWealth, 6);
+  });
+
 });
 
 describe('Random Number Generation', () => {

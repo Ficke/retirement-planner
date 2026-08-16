@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const PLAN_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum AccountType {
     Taxable,

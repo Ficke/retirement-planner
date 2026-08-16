@@ -14,9 +14,57 @@ use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{calculate_retirement_tax, calculate_working_cash_flow};
 
 use crate::types::{
-    Account, AccountType, AnnualContributions, FilingStatus, PathProjection, PathResult,
-    RetirementPlan, State, PLAN_SCHEMA_VERSION,
+    Account, AccountType, AnnualContributions, AssetWeights, FilingStatus, PathProjection,
+    PathResult, RetirementPlan, State, PLAN_SCHEMA_VERSION,
 };
+
+const BUCKET_ORDER: [AccountType; 4] = [
+    AccountType::Taxable,
+    AccountType::Traditional,
+    AccountType::Roth,
+    AccountType::Hsa,
+];
+
+/// Collapse accounts into one bucket per type. Splitting a balance across two
+/// accounts of the same type must not change the projection, so weights blend by
+/// balance; an empty bucket keeps the plain average so later deposits still land
+/// at the intended allocation.
+fn to_buckets(accounts: &[Account]) -> Vec<Account> {
+    let mut buckets = Vec::with_capacity(BUCKET_ORDER.len());
+    for account_type in BUCKET_ORDER {
+        let members: Vec<&Account> = accounts
+            .iter()
+            .filter(|account| account.account_type == account_type)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let balance: f64 = members.iter().map(|account| account.balance).sum();
+        let stocks = if balance > 0.0 {
+            members
+                .iter()
+                .map(|account| account.balance * account.asset_weights.stocks)
+                .sum::<f64>()
+                / balance
+        } else {
+            members
+                .iter()
+                .map(|account| account.asset_weights.stocks)
+                .sum::<f64>()
+                / members.len() as f64
+        };
+        buckets.push(Account {
+            account_type,
+            balance,
+            asset_weights: AssetWeights {
+                stocks,
+                bonds: 1.0 - stocks,
+            },
+            is_surplus_cash: false,
+        });
+    }
+    buckets
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
@@ -115,7 +163,7 @@ impl MarketReturnsGenerator for ParametricReturnsGenerator {
 /// Core retirement projection engine - matches TypeScript projectScenario()
 pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Result<PathResult> {
     let profile = &plan.profile;
-    let mut accounts = plan.accounts.clone();
+    let mut accounts = to_buckets(&plan.accounts);
 
     // Calculate fraction of current year remaining
     let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
@@ -851,6 +899,46 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn splitting_a_balance_across_accounts_does_not_change_the_projection() {
+        let config = ProjectionConfig {
+            seed: 7,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+
+        let traditional = |balance: f64, stocks: f64| Account {
+            account_type: AccountType::Traditional,
+            balance,
+            asset_weights: AssetWeights {
+                stocks,
+                bonds: 1.0 - stocks,
+            },
+            is_surplus_cash: false,
+        };
+
+        let mut merged = test_plan();
+        merged.accounts = vec![traditional(3_000_000.0, 0.7)];
+
+        // Same money, same balance-weighted 70/30, split across two accounts.
+        let mut split = test_plan();
+        split.accounts = vec![traditional(1_000_000.0, 0.9), traditional(2_000_000.0, 0.6)];
+
+        let merged_wealth = project_scenario(&merged, config.clone())
+            .expect("projection should succeed")
+            .terminal_wealth;
+        let split_wealth = project_scenario(&split, config)
+            .expect("projection should succeed")
+            .terminal_wealth;
+
+        // A depleted plan would make the comparison vacuous.
+        assert!(merged_wealth > 0.0, "test plan must stay solvent");
+        assert!(
+            (merged_wealth - split_wealth).abs() < 1e-6,
+            "splitting a balance changed terminal wealth: {merged_wealth} vs {split_wealth}"
+        );
     }
 
     #[test]

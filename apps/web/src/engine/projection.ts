@@ -1,6 +1,7 @@
 import type {
   SimulationPlan,
   SimulationAccount,
+  AccountType,
   PathResult,
   PathProjection,
   FilingStatus,
@@ -14,6 +15,33 @@ import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-h
 import seedrandom from 'seedrandom';
 
 type ProjectionAccount = SimulationAccount & { isSurplusCash: boolean };
+
+const BUCKET_ORDER: AccountType[] = ['Taxable', 'Traditional', 'Roth', 'HSA'];
+
+/**
+ * Collapse accounts into one bucket per type. Splitting a balance across two
+ * accounts of the same type must not change the projection, so weights blend by
+ * balance; an empty bucket keeps the plain average so later deposits still land
+ * at the intended allocation.
+ */
+function toBuckets(accounts: SimulationAccount[]): ProjectionAccount[] {
+  const buckets: ProjectionAccount[] = [];
+  for (const type of BUCKET_ORDER) {
+    const members = accounts.filter((account) => account.type === type);
+    if (members.length === 0) continue;
+    const balance = members.reduce((sum, account) => sum + account.balance, 0);
+    const stocks = balance > 0
+      ? members.reduce((sum, a) => sum + a.balance * a.assetWeights.stocks, 0) / balance
+      : members.reduce((sum, a) => sum + a.assetWeights.stocks, 0) / members.length;
+    buckets.push({
+      type,
+      balance,
+      assetWeights: { stocks, bonds: 1 - stocks },
+      isSurplusCash: false,
+    });
+  }
+  return buckets;
+}
 
 export interface ProjectionConfig {
   paths: number;
@@ -63,12 +91,7 @@ export function projectScenario(
 
   const yearlyProjections: PathProjection[] = [];
 
-  // Use single source of truth for account balances (deep copy to avoid mutation)
-  const accountBalances: ProjectionAccount[] = accounts.map((account) => ({
-    ...account,
-    assetWeights: { ...account.assetWeights },
-    isSurplusCash: false,
-  }));
+  const accountBalances: ProjectionAccount[] = toBuckets(accounts);
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
   
   // Track previous year's traditional account balance for RMD calculations
