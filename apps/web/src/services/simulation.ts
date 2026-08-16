@@ -8,6 +8,7 @@
  */
 
 import { runMonteCarloSimulation } from '@/engine/mc';
+import { ageOn } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
@@ -124,7 +125,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
   // For an already-retired plan, changing a historical retirement age cannot
   // affect future cash flows, so avoid spending compute on duplicate paths.
   const center = plan.profile.retirementAge;
-  if (center <= plan.profile.age) {
+  if (center <= ageOn(plan.profile.birthDate, plan.profile.asOfDate)) {
     return [{
       retirementAge: center,
       scenario: {
@@ -138,7 +139,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
 
   // ±5 years around a future retirement date, bounded by the current age and
   // the modeled lifetime so every generated scenario remains valid.
-  const min = Math.max(plan.profile.age, center - 5, MIN_RETIREMENT_AGE);
+  const min = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), center - 5, MIN_RETIREMENT_AGE);
   const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
   const ages: number[] = [];
   for (let a = min; a <= max; a++) ages.push(a);

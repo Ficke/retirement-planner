@@ -3,6 +3,7 @@
 import { useId, useMemo, useState } from "react";
 
 import { usePlan } from "@/state/usePlan";
+import { ageOn } from "@/domain/age";
 import type { FilingStatus, State } from "@/domain/types";
 import { calculateWorkingCashFlow } from "@/engine/tax";
 import { Input } from "@/components/ui/input";
@@ -56,13 +57,14 @@ export function PagePlan() {
   const p = plan.profile;
   const ss = plan.socialSecurity;
   const { hsaEligible, useBackdoorRoth } = plan.assumptions;
+  const age = ageOn(p.birthDate, p.asOfDate);
 
   const workingCashFlow = useMemo(() => {
     try {
       return calculateWorkingCashFlow(
         p.currentSalary,
         p.currentSpending,
-        p.age,
+        age,
         p.filingStatus,
         p.state,
         { hsaEligible, useBackdoorRoth },
@@ -70,7 +72,7 @@ export function PagePlan() {
     } catch {
       return null;
     }
-  }, [p.currentSalary, p.currentSpending, p.age, p.filingStatus, p.state, hsaEligible, useBackdoorRoth]);
+  }, [p.currentSalary, p.currentSpending, age, p.filingStatus, p.state, hsaEligible, useBackdoorRoth]);
 
   const tax = workingCashFlow?.tax;
   const actualContributions = workingCashFlow?.contributions ?? {
@@ -87,7 +89,7 @@ export function PagePlan() {
   const savedRate = p.currentSalary > 0 ? totalSaved / p.currentSalary : 0;
   const spendOfGross = p.currentSalary > 0 ? p.currentSpending / p.currentSalary : 0;
   const takeHomeRate = p.currentSalary > 0 ? takeHome / p.currentSalary : 0;
-  const workingYears = Math.max(0, p.retirementAge - p.age);
+  const workingYears = Math.max(0, p.retirementAge - age);
   const finalWorkingSpending = workingYears > 0
     ? p.currentSpending * (1 + p.workingSpendingGrowthRate) ** Math.max(0, workingYears - 1)
     : null;
@@ -107,18 +109,10 @@ export function PagePlan() {
 
       <DashboardCard>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <NumberField
-            label="Primary age"
-            value={p.age}
-            onChange={(v) => updateProfile({
-              age: v,
-              birthYear: Number(p.asOfDate.slice(0, 4)) - v,
-            })}
-          />
-          <NumberField
-            label="Birth year (for RMD cohort)"
-            value={p.birthYear ?? Number(p.asOfDate.slice(0, 4)) - p.age}
-            onChange={(v) => updateProfile({ birthYear: v })}
+          <DateField
+            label={`Date of birth · age ${age}`}
+            value={p.birthDate}
+            onChange={(v) => updateProfile({ birthDate: v })}
           />
           <NumberField
             label="Life expectancy"
@@ -231,7 +225,7 @@ export function PagePlan() {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <SpendingPreview
-                label={`Current · age ${p.age}`}
+                label={`Current · age ${age}`}
                 value={p.currentSpending}
               />
               <SpendingPreview

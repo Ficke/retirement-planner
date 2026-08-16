@@ -57,7 +57,7 @@ describe('Domain Schemas', () => {
     expect(migrated).toEqual([account]);
     saveLocalAccounts(migrated!, null);
     expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       accounts: [account],
     });
   });
@@ -83,8 +83,7 @@ describe('Domain Schemas', () => {
   it('normalizes a legacy profile save before it is persisted as schema v2', () => {
     const saved = SaveProfileSchema.parse({
       profile: {
-        age: 40,
-        birthYear: 1986,
+        birthDate: '1986-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -113,7 +112,7 @@ describe('Domain Schemas', () => {
   it('should accept valid default retirement plan', () => {
     const defaultPlan = {
       profile: {
-        age: 35,
+        birthDate: '1990-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -155,8 +154,7 @@ describe('Domain Schemas', () => {
   it('accepts a plan with no investment accounts', () => {
     const plan = {
       profile: {
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -179,8 +177,7 @@ describe('Domain Schemas', () => {
   it('allows retiring in the current modeled year', () => {
     const plan = {
       profile: {
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 67,
@@ -203,8 +200,7 @@ describe('Domain Schemas', () => {
   it('allows an already-retired plan and requires a future life expectancy', () => {
     const plan = {
       profile: {
-        age: 73,
-        birthYear: 1952,
+        birthDate: '1951-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -231,7 +227,7 @@ describe('Domain Schemas', () => {
   it('should reject invalid asset weights that do not sum to 1', () => {
     const invalidPlan = {
       profile: {
-        age: 35,
+        birthDate: '1990-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,

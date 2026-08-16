@@ -9,6 +9,7 @@ use rand::SeedableRng;
 
 use super::historical_data;
 use super::parametric_returns;
+use super::age::{age_on, birth_year_of};
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{
@@ -210,7 +211,9 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
     // Calculate fraction of current year remaining
     let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
     let current_year = as_of_date.year();
-    let rmd_start_age = get_rmd_start_age(profile.birth_year);
+    let birth_year = birth_year_of(&profile.birth_date)?;
+    let age = age_on(&profile.birth_date, &profile.as_of_date)?;
+    let rmd_start_age = get_rmd_start_age(birth_year);
     let start_of_year = chrono::NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap();
     let days_in_year = if is_leap_year(current_year) {
         366.0
@@ -223,7 +226,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
 
     // Simulate current age through life expectancy, inclusive. Deriving the
     // horizon directly also avoids unsigned underflow for already-retired plans.
-    let total_years = profile.life_expectancy - profile.age + 1;
+    let total_years = profile.life_expectancy - age + 1;
 
     let mut projections = Vec::with_capacity(total_years as usize);
     let mut portfolio_value: f64 = accounts.iter().map(|acc| acc.balance).sum();
@@ -235,7 +238,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
     let mut returns_generator = create_market_returns_generator(plan, &config);
 
     for year in 0..total_years {
-        let current_age = profile.age + year;
+        let current_age = age + year;
         let is_retired = current_age >= profile.retirement_age;
 
         // Calculate RMD amount for this year
@@ -428,7 +431,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 1.0
             };
             let spending_growth_exponent = if plan.schema_version >= PLAN_SCHEMA_VERSION {
-                let retirement_start_year = profile.retirement_age.saturating_sub(profile.age);
+                let retirement_start_year = profile.retirement_age.saturating_sub(age);
                 year - retirement_start_year
             } else {
                 // Legacy requests compounded the retirement rate from the
@@ -451,13 +454,13 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                     let salary_history = estimate_salary_history(
                         profile.current_salary,
                         profile.salary_growth_rate,
-                        profile.age,
+                        age,
                         profile.retirement_age,
                     );
                     calculate_ssa_benefit(
                         &salary_history,
                         plan.social_security.claim_age,
-                        profile.birth_year,
+                        birth_year,
                     )
                     .annual_benefit
                 };
@@ -871,8 +874,7 @@ mod tests {
         RetirementPlan {
             schema_version: PLAN_SCHEMA_VERSION,
             profile: UserProfile {
-                age: 64,
-                birth_year: 1962,
+                birth_date: "1962-01-01".to_string(),
                 state: State::TX,
                 filing_status: FilingStatus::Single,
                 retirement_age: 65,
@@ -924,7 +926,7 @@ mod tests {
     /// Overspending during working years, funded only by the portfolio.
     fn overspending_plan(taxable_balance: f64) -> RetirementPlan {
         let mut plan = test_plan();
-        plan.profile.age = 40;
+        plan.profile.birth_date = "1985-01-01".to_string();
         plan.profile.retirement_age = 60;
         plan.profile.life_expectancy = 61;
         plan.profile.current_salary = 220_000.0;
@@ -1072,8 +1074,8 @@ mod tests {
     #[test]
     fn phase_based_spending_uses_separate_growth_clocks() {
         let mut plan = test_plan();
-        plan.profile.age = 60;
-        plan.profile.birth_year = 1965;
+        plan.profile.birth_date = "1966-01-01".to_string();
+        plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 63;
         plan.profile.current_spending = 40_000.0;
@@ -1101,8 +1103,8 @@ mod tests {
     #[test]
     fn already_retired_plan_starts_retirement_growth_at_zero() {
         let mut plan = test_plan();
-        plan.profile.age = 68;
-        plan.profile.birth_year = 1957;
+        plan.profile.birth_date = "1958-01-01".to_string();
+        plan.profile.birth_date = "1957-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 69;
         plan.profile.retirement_spending = 50_000.0;
@@ -1127,8 +1129,8 @@ mod tests {
     fn legacy_schema_preserves_original_spending_math() {
         let mut plan = test_plan();
         plan.schema_version = 0;
-        plan.profile.age = 60;
-        plan.profile.birth_year = 1965;
+        plan.profile.birth_date = "1966-01-01".to_string();
+        plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 62;
         plan.profile.current_spending = 40_000.0;
@@ -1155,8 +1157,8 @@ mod tests {
     #[test]
     fn current_year_retirement_cash_flows_are_prorated() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1959-01-01".to_string();
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 67;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 60_000.0;
@@ -1186,8 +1188,8 @@ mod tests {
     #[test]
     fn rmd_excess_is_reinvested_after_tax_and_cash_reconciles() {
         let mut plan = test_plan();
-        plan.profile.age = 73;
-        plan.profile.birth_year = 1952;
+        plan.profile.birth_date = "1953-01-01".to_string();
+        plan.profile.birth_date = "1952-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 74;
         plan.profile.current_salary = 0.0;
@@ -1239,8 +1241,8 @@ mod tests {
     #[test]
     fn working_year_rmd_is_withdrawn_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.age = 75;
-        plan.profile.birth_year = 1950;
+        plan.profile.birth_date = "1951-01-01".to_string();
+        plan.profile.birth_date = "1950-01-01".to_string();
         plan.profile.retirement_age = 80;
         plan.profile.life_expectancy = 81;
         plan.profile.current_salary = 100_000.0;
@@ -1277,8 +1279,8 @@ mod tests {
     #[test]
     fn social_security_surplus_is_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1959-01-01".to_string();
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 50_000.0;
@@ -1315,8 +1317,8 @@ mod tests {
     #[test]
     fn high_tax_year_is_funded_when_assets_are_sufficient() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1959-01-01".to_string();
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 1_000_000_000.0;

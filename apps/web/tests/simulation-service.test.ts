@@ -31,7 +31,7 @@ vi.mock('@/engine/mc', () => ({
 
 const mockPlan: RetirementPlan = {
   profile: {
-    age: 35,
+    birthDate: '1989-01-01',
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,

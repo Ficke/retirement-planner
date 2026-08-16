@@ -4,9 +4,9 @@ import { validateSimulationInputs } from '@/engine/mc';
 import type { SimulationPlan } from '@/domain/types';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 35,
+    birthDate: '1990-01-01',
     state: 'CA', 
     filingStatus: 'Single',
     retirementAge: 65,
@@ -65,8 +65,7 @@ describe('Monte Carlo Simulation', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 73,
-        birthYear: 1952,
+        birthDate: '1952-01-01',
         retirementAge: 65,
         lifeExpectancy: 90,
       },

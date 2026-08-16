@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { birthDateFromLegacyAge } from '@/domain/age';
 import type {
   RetirementPlan,
   Account,
@@ -140,8 +141,7 @@ function newLocalAccount(data: CreateAccountData): Account {
 
 const defaultPlan: RetirementPlan = {
   profile: {
-    age: 35,
-    birthYear: new Date().getFullYear() - 35,
+    birthDate: `${new Date().getFullYear() - 35}-01-01`,
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -177,6 +177,9 @@ export function hydratePlan(
   type PersistedProfile = Partial<UserProfile> & {
     desiredSpending?: number;
     spendingGrowthRate?: number;
+    /** Pre-v3 fields, replaced by birthDate. */
+    age?: number;
+    birthYear?: number;
   };
   const profileInput = profileSource && typeof profileSource === 'object'
     ? profileSource as PersistedProfile
@@ -200,7 +203,6 @@ export function hydratePlan(
   // Plans saved before 4113fbe carried this flag; plans saved after do not.
   const legacyUseBackdoorRoth = assumptionsInput.useBackdoorRoth;
   const asOfDate = profileInput.asOfDate ?? defaultPlan.profile.asOfDate;
-  const age = profileInput.age ?? defaultPlan.profile.age;
 
   return retirementPlanSchema.parse({
     profile: {
@@ -223,9 +225,16 @@ export function hydratePlan(
         profileInput.retirementSpendingGrowthRate
         ?? profileInput.spendingGrowthRate
         ?? defaultPlan.profile.retirementSpendingGrowthRate,
-      birthYear:
-        profileInput.birthYear
-        ?? Number(asOfDate.slice(0, 4)) - age,
+      // Age and birth year were separate stored fields before v3, cross-checked
+      // by a validator. Rebuild the date that reproduces the stored age exactly
+      // so migrating a plan never shifts its results.
+      birthDate:
+        profileInput.birthDate
+        ?? birthDateFromLegacyAge(
+          profileInput.age ?? 35,
+          profileInput.birthYear,
+          asOfDate,
+        ),
     },
     socialSecurity: {
       ...defaultPlan.socialSecurity,

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
+import { ageOn } from "@/domain/age";
 import { MIN_RETIREMENT_AGE } from "@/domain/constants";
 import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -163,11 +164,12 @@ export function PageOverview() {
   const isUpdating = isSimulating || (!liveResult && !simulationError);
   const hasEverComputed = result !== null;
 
+  const age = ageOn(plan.profile.birthDate, plan.profile.asOfDate);
   const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
-  const yearsToRetire = Math.max(0, plan.profile.retirementAge - plan.profile.age);
+  const yearsToRetire = Math.max(0, plan.profile.retirementAge - age);
   const asOfYear = Number(plan.profile.asOfDate.slice(0, 4));
-  const retirementYear = asOfYear + plan.profile.retirementAge - plan.profile.age;
-  const alreadyRetired = plan.profile.retirementAge <= plan.profile.age;
+  const retirementYear = asOfYear + plan.profile.retirementAge - age;
+  const alreadyRetired = plan.profile.retirementAge <= age;
   const successProb = result?.successProbability ?? 0;
   const { label: successLabel, tone: successToneValue } = successTone(successProb);
   const usedFallback = result?.source === "client" && useServerSideCalculations;

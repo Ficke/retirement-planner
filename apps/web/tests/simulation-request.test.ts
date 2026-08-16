@@ -9,9 +9,9 @@ import { getClientIp } from '@/lib/rate-limit';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 35,
+    birthDate: '1991-01-01',
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -74,7 +74,7 @@ describe('simulation request limits', () => {
 
   it('rejects a request from a newer unsupported schema', () => {
     expect(monteCarloRequestSchema.safeParse({
-      plan: { ...validPlan, schemaVersion: 3 },
+      plan: { ...validPlan, schemaVersion: 4 },
       config: validConfig,
     }).success).toBe(false);
   });

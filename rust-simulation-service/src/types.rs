@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 2;
+pub const PLAN_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -52,9 +52,10 @@ pub struct Account {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
-    pub age: u32,
-    #[serde(rename = "birthYear")]
-    pub birth_year: i32,
+    /// Date of birth, ISO. Age and the RMD / Social Security birth-year cohort
+    /// are both derived from it, so they can never disagree.
+    #[serde(rename = "birthDate")]
+    pub birth_date: String,
     pub state: State,
     #[serde(rename = "filingStatus")]
     pub filing_status: FilingStatus,

@@ -4,9 +4,9 @@ import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 35,
+    birthDate: '1990-01-01',
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -78,7 +78,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 60,
+        birthDate: '1965-01-01',
         retirementAge: 62,
         lifeExpectancy: 63,
         currentSpending: 40_000,
@@ -104,7 +104,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 68,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 69,
         retirementSpending: 50_000,
@@ -172,7 +172,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 60,  // Closer to retirement to reduce complexity
+        birthDate: '1965-01-01',  // Closer to retirement to reduce complexity
         retirementAge: 65,
         lifeExpectancy: 75,  // Shorter lifespan for simpler test
         retirementSpending: 40000,  // Lower spending
@@ -257,8 +257,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1958-01-01',
         retirementAge: 67,
         lifeExpectancy: 68,
         retirementSpending: 60_000,
@@ -288,8 +287,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 73,
-        birthYear: 1952,
+        birthDate: '1951-01-01',
         retirementAge: 73,
         lifeExpectancy: 74,
         currentSalary: 0,
@@ -329,8 +327,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 75,
-        birthYear: 1950,
+        birthDate: '1949-01-01',
         retirementAge: 80,
         lifeExpectancy: 81,
         currentSalary: 100_000,
@@ -359,8 +356,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 68,
         retirementSpending: 50_000,
@@ -397,8 +393,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 68,
         retirementSpending: 1_000_000_000,
@@ -463,7 +458,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 40,
+        birthDate: '1985-01-01',
         retirementAge: 60,
         lifeExpectancy: 61,
         currentSalary: 220_000,
@@ -497,7 +492,7 @@ describe('Projection Engine', () => {
   it('fails only when the portfolio itself runs out mid-career', () => {
     const overspending = {
       ...testPlan.profile,
-      age: 40,
+      birthDate: '1985-01-01',
       retirementAge: 60,
       lifeExpectancy: 61,
       currentSalary: 220_000,

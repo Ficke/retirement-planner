@@ -12,9 +12,9 @@ import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
 
 const plan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 45,
+    birthDate: '1981-01-01',
     state: 'TX',
     filingStatus: 'Single',
     retirementAge: 65,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { ageOn } from '@/domain/age';
 
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const [year, month, day] = value.split('-').map(Number);
@@ -36,8 +37,7 @@ export const simulationAccountSchema = z.object({
 });
 
 export const userProfileSchema = z.object({
-  age: z.number().int().min(18, "Age must be at least 18").max(100, "Age must be reasonable"),
-  birthYear: z.number().int().min(1900).max(2200).optional(),
+  birthDate: isoDateSchema,
   state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other'] as const),
   filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold'] as const),
   retirementAge: z.number().int().min(MIN_RETIREMENT_AGE, `Retirement age must be at least ${MIN_RETIREMENT_AGE}`).max(100, "Retirement age must be reasonable"),
@@ -49,20 +49,19 @@ export const userProfileSchema = z.object({
   retirementSpendingGrowthRate: z.number().min(-0.1, "Retirement spending growth rate must be reasonable").max(0.1, "Retirement spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),
   asOfDate: isoDateSchema,
-}).refine((profile) => profile.lifeExpectancy > Math.max(profile.age, profile.retirementAge), {
+}).refine((profile) => {
+  const age = ageOn(profile.birthDate, profile.asOfDate);
+  return age >= 18 && age <= 100;
+}, {
+  message: "Age at the as-of date must be between 18 and 100",
+  path: ["birthDate"],
+}).refine((profile) => {
+  const age = ageOn(profile.birthDate, profile.asOfDate);
+  return profile.lifeExpectancy > Math.max(age, profile.retirementAge);
+}, {
   message: "Life expectancy must be greater than current and retirement ages",
   path: ["lifeExpectancy"],
-}).refine((profile) => {
-  if (profile.birthYear === undefined) return true;
-  const calendarAge = Number(profile.asOfDate.slice(0, 4)) - profile.birthYear;
-  return calendarAge === profile.age || calendarAge === profile.age + 1;
-}, {
-  message: "Birth year must be consistent with age and as-of year",
-  path: ["birthYear"],
-}).transform((profile) => ({
-  ...profile,
-  birthYear: profile.birthYear ?? Number(profile.asOfDate.slice(0, 4)) - profile.age,
-}));
+});
 
 /** Normalize profile payloads produced before spending phases were explicit. */
 export const legacyUserProfileSchema = z

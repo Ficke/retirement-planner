@@ -14,6 +14,7 @@ import {
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
+import { ageOn, birthYearOf } from '@/domain/age';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
 import seedrandom from 'seedrandom';
@@ -103,7 +104,8 @@ export function projectScenario(
   // calendar arithmetic so daylight-saving transitions cannot add or remove a
   // day from the first simulation period.
   const [currentYear, asOfMonth, asOfDay] = profile.asOfDate.split('-').map(Number);
-  const birthYear = profile.birthYear ?? currentYear - profile.age;
+  const birthYear = birthYearOf(profile.birthDate);
+  const age = ageOn(profile.birthDate, profile.asOfDate);
   const rmdStartAge = getRmdStartAge(birthYear);
   const daysInYear = (currentYear % 4 === 0 && currentYear % 100 !== 0) || (currentYear % 400 === 0) ? 366 : 365;
   const dayOfYear = Math.floor(
@@ -114,7 +116,7 @@ export function projectScenario(
   
   // Life expectancy is inclusive: simulate from current age through that age.
   // Deriving this directly also supports people who are already retired.
-  const totalYears = profile.lifeExpectancy - profile.age + 1;
+  const totalYears = profile.lifeExpectancy - age + 1;
 
   const yearlyProjections: PathProjection[] = [];
 
@@ -131,7 +133,7 @@ export function projectScenario(
   const returnsGenerator = createMarketReturnsGenerator(plan, rng);
   
   for (let year = 0; year < totalYears; year++) {
-    const currentAge = profile.age + year;
+    const currentAge = age + year;
     const isRetired = currentAge >= profile.retirementAge;
 
     
@@ -299,7 +301,7 @@ export function projectScenario(
       // The retirement target is the first modeled retirement year's real
       // spending. Growth begins only in the following modeled retirement year.
       // Already-retired plans also start at exponent zero on their as-of date.
-      const retirementStartYear = Math.max(0, profile.retirementAge - profile.age);
+      const retirementStartYear = Math.max(0, profile.retirementAge - age);
       const yearsRetired = year - retirementStartYear;
       const targetSpending = profile.retirementSpending
         * Math.pow(1 + profile.retirementSpendingGrowthRate, yearsRetired)
@@ -312,7 +314,7 @@ export function projectScenario(
               estimateSalaryHistory(
                 profile.currentSalary,
                 profile.salaryGrowthRate,
-                profile.age,
+                age,
                 profile.retirementAge,
               ),
               socialSecurity.claimAge,

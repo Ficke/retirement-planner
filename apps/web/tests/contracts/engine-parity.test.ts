@@ -20,10 +20,9 @@ const assumptions = {
 };
 
 const socialSecuritySurplusPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 67,
-    birthYear: 1959,
+    birthDate: '1959-01-01',
     state: 'TX',
     filingStatus: 'Single',
     retirementAge: 67,
@@ -47,10 +46,9 @@ const socialSecuritySurplusPlan: SimulationPlan = {
 };
 
 const withdrawalPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 75,
-    birthYear: 1951,
+    birthDate: '1951-01-01',
     state: 'TX',
     filingStatus: 'Single',
     retirementAge: 75,

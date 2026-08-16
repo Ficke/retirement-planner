@@ -48,8 +48,7 @@ const account = {
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
 const profile = {
-  age: 45,
-  birthYear: 1981,
+  birthDate: '1981-01-01',
   state: 'TX',
   filingStatus: 'Single',
   retirementAge: 65,

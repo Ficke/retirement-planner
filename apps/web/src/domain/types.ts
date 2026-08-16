@@ -34,9 +34,11 @@ export type UpdateAccountData = Partial<Pick<
 >>;
 
 export interface UserProfile {
-  age: number;
-  /** Calendar birth year for cohort-specific RMD rules. */
-  birthYear?: number;
+  /**
+   * Date of birth, ISO. Age and the RMD/Social-Security birth-year cohort are
+   * both derived from it, so they can never disagree.
+   */
+  birthDate: string;
   state: State;
   filingStatus: FilingStatus;
   retirementAge: number;
@@ -112,7 +114,7 @@ export interface SimulationAccount {
 }
 
 export interface SimulationPlan extends Omit<RetirementPlan, 'accounts'> {
-  schemaVersion: 2;
+  schemaVersion: 3;
   accounts: SimulationAccount[];
 }
 
