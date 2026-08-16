@@ -95,7 +95,7 @@ export const SIMULATION_RATE_LIMIT = {
 
 /** Per-instance backstop; production also needs a distributed quota. */
 export const SIMULATION_PATH_RATE_LIMIT = {
-  // A normal Overview refresh costs ~36k paths (main + three curves).
+  // A normal Plan page refresh costs ~36k paths (main + three curves).
   // Allow a few interactive edits while bounding per-instance CPU exposure.
   limit: 120_000,
   windowMs: 60 * 1000,

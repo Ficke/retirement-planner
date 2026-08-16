@@ -48,7 +48,7 @@ import {
  */
 
 // Debounce plan changes before re-running the primary result. Sensitivity
-// sweeps are lazy and run only while the Overview consumes them.
+// sweeps are lazy and run only while the Plan page consumes them.
 const SIMULATION_DELAY = 300; // ms
 const CLOUD_PROFILE_SCHEMA_VERSION = PLAN_SCHEMA_VERSION;
 let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -168,6 +168,12 @@ const defaultPlan: RetirementPlan = {
   },
 };
 
+/**
+ * Build a valid plan from whatever a store hands back, which may have been
+ * written by any older version of the app. Each field older plans stored
+ * differently is mapped forward so the resulting plan projects identically;
+ * anything absent falls back to the default plan.
+ */
 export function hydratePlan(
   profileSource: unknown,
   socialSecuritySource: unknown,
@@ -177,7 +183,7 @@ export function hydratePlan(
   type PersistedProfile = Partial<UserProfile> & {
     desiredSpending?: number;
     spendingGrowthRate?: number;
-    /** Pre-v3 fields, replaced by birthDate and retirementSpendingMultiplier. */
+    /** Superseded by birthDate and retirementSpendingMultiplier. */
     age?: number;
     birthYear?: number;
     retirementSpending?: number;
@@ -214,8 +220,8 @@ export function hydratePlan(
     profile: {
       ...defaultPlan.profile,
       ...profileInput,
-      // Preserve the old working amount while mapping the old desired amount
-      // and growth rate onto the explicit retirement phase.
+      // One "desired" amount once covered both phases; it becomes the
+      // working-year figure when nothing more specific was stored.
       currentSpending:
         profileInput.currentSpending
         ?? profileInput.desiredSpending
@@ -223,8 +229,8 @@ export function hydratePlan(
       workingSpendingGrowthRate:
         profileInput.workingSpendingGrowthRate
         ?? defaultPlan.profile.workingSpendingGrowthRate,
-      // Retirement spending used to be its own dollar figure; recover the ratio
-      // it implied so a migrated plan keeps the same target.
+      // Where the retirement target was stored as its own dollar figure, the
+      // ratio it implied against working spending reproduces that same target.
       retirementSpendingMultiplier:
         profileInput.retirementSpendingMultiplier
         ?? legacyRetirementMultiplier
@@ -233,9 +239,8 @@ export function hydratePlan(
         profileInput.retirementSpendingGrowthRate
         ?? profileInput.spendingGrowthRate
         ?? defaultPlan.profile.retirementSpendingGrowthRate,
-      // Age and birth year were separate stored fields before v3, cross-checked
-      // by a validator. Rebuild the date that reproduces the stored age exactly
-      // so migrating a plan never shifts its results.
+      // Age and birth year were once stored separately. Rebuilding the date
+      // that reproduces the stored age exactly keeps results from shifting.
       birthDate:
         profileInput.birthDate
         ?? birthDateFromLegacyAge(
@@ -251,13 +256,11 @@ export function hydratePlan(
     assumptions: {
       ...defaultPlan.assumptions,
       ...assumptionsInput,
-      // Savings is now a residual, so the old per-account dollar targets only
-      // survive as intent: a target above zero meant the household had that
-      // kind of space available to fill.
+      // Savings is a residual, so per-account dollar targets no longer mean
+      // anything directly. A target above zero is still evidence the household
+      // had that kind of space to fill, which is what these flags record.
       hsaEligible: assumptionsInput.hsaEligible
         ?? (legacyContributions?.hsa ?? 0) > 0,
-      // Plans saved between 4113fbe and this change carry no flag at all, so
-      // their Roth target is the only surviving evidence of the intent.
       useBackdoorRoth: assumptionsInput.useBackdoorRoth
         ?? (legacyContributions ? legacyContributions.roth > 0 : true),
     },
@@ -271,7 +274,7 @@ type PlanSetter = (partial: Partial<PlanState>) => void;
 interface PlanState {
   plan: RetirementPlan;
 
-  // Auth + mode (authUser is pushed in from the AuthProvider via bootstrap)
+  /** Pushed in from the AuthProvider by bootstrap, not read from Firebase here. */
   authUser: { id: string } | null;
   cloudAccountReady: boolean;
   cloudAvailable: boolean;
@@ -280,7 +283,6 @@ interface PlanState {
   profileRevision: number | null;
   dataMode: () => DataMode;
 
-  // Simulation results
   simulationResult: SimulationResult | null;
   simulationError: string | null;
   ssAnalysisResult: SSAnalysisResult[] | null;
@@ -289,11 +291,9 @@ interface PlanState {
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
 
-  // Lifecycle
   bootstrapped: boolean;
   error: string | null;
 
-  // Actions
   bootstrap: (authUser: { id: string } | null, cloudAccountReady?: boolean) => Promise<void>;
   updatePlan: (updates: {
     profile?: Partial<UserProfile>;

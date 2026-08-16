@@ -25,17 +25,17 @@ import {
 } from "@/components/ui/tooltip";
 
 export type PageId =
-  | "overview"
-  | "projections"
   | "plan"
+  | "projections"
   | "accounts"
+  | "profile"
   | "settings";
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
-  { id: "overview", label: "Plan", icon: SlidersHorizontal },
+  { id: "plan", label: "Plan", icon: SlidersHorizontal },
   { id: "projections", label: "Projections", icon: LineChart },
   { id: "accounts", label: "Accounts", icon: Wallet },
-  { id: "plan", label: "Profile", icon: UserRound },
+  { id: "profile", label: "Profile", icon: UserRound },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

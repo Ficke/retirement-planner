@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 pub const PLAN_SCHEMA_VERSION: u32 = 3;
 
-/// Version that introduced phase-based spending. Requests older than this
-/// carry the flat working amount and compound retirement growth from the
-/// as-of year, so the gate has to name that version rather than the current
-/// one — otherwise every later bump silently reverts the previous version.
+/// Version that introduced phase-based spending. Older requests carry a flat
+/// working amount and compound retirement growth from the as-of year. Gating
+/// on this rather than on the current version is what keeps the next schema
+/// bump from reverting the previous version to that older math.
 pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

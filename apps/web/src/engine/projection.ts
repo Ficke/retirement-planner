@@ -76,21 +76,13 @@ export interface ProjectionConfig {
   seed: number;
 }
 
-/**
- * Market returns generator interface for both single and block bootstrapping.
- */
 export interface MarketReturnsGenerator {
   next(): { stockReturn: number; bondReturn: number };
 }
 
 /**
- * Core retirement projection engine.
- * Implements deterministic single-path projection with proper withdrawal ordering:
- * Taxable → Traditional → Roth (per CLAUDE.md).
- *
- * @param plan - Complete retirement plan configuration
- * @param config - Simulation configuration (paths, seed, real vs nominal)
- * @returns Single path result with yearly projections (no percentiles)
+ * One deterministic path from the as-of date through life expectancy. Seeded
+ * from the config, so the same seed reproduces the same path exactly.
  */
 export function projectScenario(
   plan: SimulationPlan,
@@ -98,11 +90,8 @@ export function projectScenario(
 ): PathResult {
   const { profile, accounts, socialSecurity } = plan;
 
-  // DEBUG logging disabled - too verbose
-
-  // Calculate the inclusive fraction of the current year remaining. Use UTC
-  // calendar arithmetic so daylight-saving transitions cannot add or remove a
-  // day from the first simulation period.
+  // UTC calendar arithmetic, so a daylight-saving transition cannot add or
+  // remove a day from the first simulation period.
   const [currentYear, asOfMonth, asOfDay] = profile.asOfDate.split('-').map(Number);
   const birthYear = birthYearOf(profile.birthDate);
   const age = ageOn(profile.birthDate, profile.asOfDate);
@@ -123,13 +112,8 @@ export function projectScenario(
   const accountBalances: ProjectionAccount[] = toBuckets(accounts);
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
   
-  // Track previous year's traditional account balance for RMD calculations
   let previousYearTraditionalBalance = 0;
-  
-  // Initialize seeded RNG for reproducible results
   const rng = createRNG(config.seed);
-  
-  // Create market returns generator for block or single bootstrapping
   const returnsGenerator = createMarketReturnsGenerator(plan, rng);
   
   for (let year = 0; year < totalYears; year++) {
@@ -137,8 +121,8 @@ export function projectScenario(
     const isRetired = currentAge >= profile.retirementAge;
 
     
-    // Calculate RMD amount for this year based on previous year's traditional balance
-    // For the first year, use current balance if we don't have a previous year balance
+    // An RMD is assessed on the prior year-end balance, which the first
+    // modeled year does not have.
     let rmdAmount = 0;
     if (currentAge >= rmdStartAge) {
       const balanceForRmd = previousYearTraditionalBalance > 0 
@@ -149,7 +133,6 @@ export function projectScenario(
       rmdAmount = calculateRmd(balanceForRmd, currentAge, rmdStartAge);
     }
     
-    // For first year, prorate salary based on remaining year fraction
     const annualSalary = profile.currentSalary * Math.pow(1 + profile.salaryGrowthRate, year);
     let income = 0;
     let spending = 0;
@@ -157,7 +140,6 @@ export function projectScenario(
     let savings = 0;
     let socialSecurityBenefit = 0;
     
-    // Initialize cash flow tracking variables
     let withdrawalTaxableYear = 0;
     let withdrawalTraditionalYear = 0;
     let withdrawalRothYear = 0;
@@ -180,20 +162,17 @@ export function projectScenario(
       };
       const periodFraction = year === 0 ? remainingYearFraction : 1;
 
-      // Generate market returns for this year using the configured generator
       const yearlyReturns = returnsGenerator.next();
 
 
-      // Apply account-specific returns based on each account's individual asset weights
       for (const account of accountBalances) {
         const accountReturn =
           account.assetWeights.stocks * yearlyReturns.stockReturn +
           account.assetWeights.bonds * yearlyReturns.bondReturn;
 
-        // Apply market returns to this account's balance (prorated for first year)
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         account.balance *= (1 + effectiveReturn);
-        // Clamp to 0 to prevent negative balances from extreme market downturns
+        // An extreme drawdown can drive the weighted return below -100%.
         account.balance = Math.max(0, account.balance);
 
       }
@@ -292,11 +271,9 @@ export function projectScenario(
         - withdrawalRothYear
         - withdrawalHSAYear;
       
-      // Update total portfolio value
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
 
     } else {
-      // Retirement phase: withdrawals, SS benefits, taxes on withdrawals
       const retirementPeriodFraction = year === 0 ? remainingYearFraction : 1;
       // The retirement target is the first modeled retirement year's real
       // spending. Growth begins only in the following modeled retirement year.
@@ -323,23 +300,19 @@ export function projectScenario(
         socialSecurityBenefit = annualSocialSecurityBenefit * retirementPeriodFraction;
       }
 
-      // Generate market returns for this year using the configured generator
       const yearlyReturns = returnsGenerator.next();
 
-      // Apply account-specific returns based on each account's individual asset weights
       for (const account of accountBalances) {
         const accountReturn =
           account.assetWeights.stocks * yearlyReturns.stockReturn +
           account.assetWeights.bonds * yearlyReturns.bondReturn;
 
-        // Apply market returns to this account's balance (prorated for first year)
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         account.balance *= (1 + effectiveReturn);
-        // Clamp to 0 to prevent negative balances from extreme market downturns
+        // An extreme drawdown can drive the weighted return below -100%.
         account.balance = Math.max(0, account.balance);
       }
 
-      // Execute the explicit Taxable → Traditional → Roth → HSA policy.
       rmdAmount *= retirementPeriodFraction;
       const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } =
         executeOrderedWithdrawals(
@@ -351,13 +324,13 @@ export function projectScenario(
           plan.assumptions.taxableGainRatio ?? 0.5,
         );
 
-      // RMD excess gets reinvested in taxable account
+      // An RMD is forced out of the account, not spent, so what the year
+      // does not need is reinvested.
       if (depositTaxable > 0) {
         depositToBucket(accountBalances, 'Taxable', depositTaxable);
         depositTaxableYear = depositTaxable;
       }
 
-      // Store withdrawals for this year's projection
       withdrawalTaxableYear = withdrawalTaxable;
       withdrawalTraditionalYear = withdrawalTraditional;
       withdrawalRothYear = withdrawalRoth;
@@ -365,7 +338,6 @@ export function projectScenario(
       insufficientFundsYear = insufficientFunds;
       taxes = totalTaxes;
 
-      // Calculate actual spending based on available funds
       spending = insufficientFunds
         ? Math.max(0, totalWithdrawn - totalTaxes - depositTaxable + socialSecurityBenefit)
         : targetSpending;
@@ -373,11 +345,9 @@ export function projectScenario(
       income = socialSecurityBenefit;
       savings = depositTaxable - totalWithdrawn;
 
-      // Update portfolio value to match account balances
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
     }
     
-    // Update previous year traditional balance for next iteration's RMD calculation
     previousYearTraditionalBalance = accountBalances
       .filter(acc => acc.type === 'Traditional')
       .reduce((sum, acc) => sum + acc.balance, 0);
@@ -405,8 +375,6 @@ export function projectScenario(
     });
   }
   
-  // Single-path projection result - no percentiles or aggregation
-  // Monte Carlo worker aggregates multiple paths to create SimulationResult
   const finalWealth = currentPortfolioValue;
   const everHadInsufficientFunds = yearlyProjections.some(p => p.insufficientFunds);
   const success = !everHadInsufficientFunds;
@@ -427,7 +395,6 @@ export class SeededRNG {
   private prng: seedrandom.PRNG;
 
   constructor(seed: number) {
-    // seedrandom expects a string seed, convert number to string
     this.prng = seedrandom(seed.toString());
   }
 
@@ -436,7 +403,8 @@ export class SeededRNG {
   }
 
   normal(mean = 0, std = 1): number {
-    // Box-Muller transformation for normal distribution
+    // Box-Muller produces two normals per pass; the second is kept for the
+    // next call rather than discarded.
     if (this.spare !== undefined) {
       const val = this.spare * std + mean;
       this.spare = undefined;
@@ -451,24 +419,19 @@ export class SeededRNG {
   }
 
   studentT(df: number, mean = 0, scale = 1): number {
-    // Robust Student's t-distribution implementation
-    // For df <= 2, use Cauchy-like heavy tails but bounded
-    // For df > 2, use normal approximation with heavier tails
 
     if (df <= 0) {
       throw new Error(`Invalid degrees of freedom: ${df}`);
     }
 
-    // For very high df (>30), Student's t converges to normal
+    // Student's t converges to the normal above about 30 degrees of freedom.
     if (df > 30) {
       return this.normal(mean, scale);
     }
 
-    // Use more stable algorithm: ratio of normal to chi-square
-    // t = Z / sqrt(V/df) where Z ~ N(0,1) and V ~ chi^2(df)
+    // t = Z / sqrt(V/df), where Z ~ N(0,1) and V ~ chi^2(df).
     const z = this.normal();
 
-    // Generate chi-square using sum of squared normals (stable for small df)
     let chiSquare = 0;
     const n = Math.floor(df);
     for (let i = 0; i < n; i++) {
@@ -476,20 +439,17 @@ export class SeededRNG {
       chiSquare += u * u;
     }
 
-    // Add fractional part if df is not integer
     if (df !== n) {
       const u = this.normal();
       chiSquare += (df - n) * u * u;
     }
 
-    // Prevent division by zero
     if (chiSquare <= 0) {
       chiSquare = 1e-10;
     }
 
     const t = z / Math.sqrt(chiSquare / df);
 
-    // Bound extreme values to prevent numerical issues
     const maxValue = 10; // 10 standard deviations
     const bounded = Math.max(-maxValue, Math.min(maxValue, t));
 
@@ -505,7 +465,6 @@ export class SeededRNG {
     const d = shape - 1/3;
     const c = 1 / Math.sqrt(9 * d);
 
-    // Add iteration limit to prevent infinite loops
     let iterations = 0;
     const maxIterations = 1000;
 
@@ -528,7 +487,6 @@ export class SeededRNG {
       }
     }
 
-    // Fallback if convergence fails
     console.warn(`Gamma distribution failed to converge after ${maxIterations} iterations, using fallback`);
     return scale * shape; // Return expected value as fallback
   }
@@ -549,7 +507,6 @@ export function getBootstrapMarketReturns(rng: SeededRNG): { stockReturn: number
   const index = Math.floor(rng.next() * HISTORICAL_RETURNS.length);
   const yearData = HISTORICAL_RETURNS[index];
   
-  // Convert nominal returns to real returns: real = (1 + nominal) / (1 + inflation) - 1
   const realStockReturn = (1 + yearData.stock_return) / (1 + yearData.inflation_rate) - 1;
   const realBondReturn = (1 + yearData.bond_return) / (1 + yearData.inflation_rate) - 1;
   
@@ -581,11 +538,9 @@ export class BlockBootstrapGenerator implements MarketReturnsGenerator {
     // Circular blocks give every historical year equal probability of appearing.
     const startIndex = Math.floor(this.rng.next() * HISTORICAL_RETURNS.length);
     
-    // Extract consecutive block of returns and convert to real returns
     this.currentBlock = [];
     for (let i = 0; i < this.blockSize; i++) {
       const yearData = HISTORICAL_RETURNS[(startIndex + i) % HISTORICAL_RETURNS.length];
-      // Convert nominal returns to real returns: real = (1 + nominal) / (1 + inflation) - 1
       const realStockReturn = (1 + yearData.stock_return) / (1 + yearData.inflation_rate) - 1;
       const realBondReturn = (1 + yearData.bond_return) / (1 + yearData.inflation_rate) - 1;
       
@@ -598,7 +553,6 @@ export class BlockBootstrapGenerator implements MarketReturnsGenerator {
   }
 
   next(): { stockReturn: number; bondReturn: number } {
-    // If we've used all years in current block, generate a new block
     if (this.blockIndex >= this.currentBlock.length) {
       this.generateNewBlock();
     }
@@ -760,7 +714,7 @@ function executeOrderedWithdrawals(
     if (account.balance === undefined || isNaN(account.balance) || !isFinite(account.balance)) {
       throw new Error(`Account ${index + 1} has invalid balance: ${account.balance}`);
     }
-    // Clamp negative balances to 0 (can happen from extreme market downturns)
+    // An extreme drawdown can drive the weighted return below -100%.
     if (account.balance < 0) {
       account.balance = 0;
     }

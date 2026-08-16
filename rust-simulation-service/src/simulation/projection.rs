@@ -1,7 +1,6 @@
-/// Core retirement projection engine
-/// Ports TypeScript projection.ts logic to Rust (lines 32-922)
-/// Implements deterministic single-path projection with proper withdrawal ordering:
-/// Taxable → Traditional → Roth → HSA
+//! Single-path retirement projection. Semantics are shared with the browser
+//! engine in apps/web/src/engine/projection.ts; the cross-engine contract
+//! tests pin the two together.
 use anyhow::Result;
 use chrono::Datelike;
 use rand::rngs::StdRng;
@@ -116,12 +115,10 @@ pub struct ProjectionConfig {
     pub block_size: usize,
 }
 
-/// Market returns generator interface
 pub trait MarketReturnsGenerator {
     fn next(&mut self) -> (f64, f64); // (stock_return, bond_return)
 }
 
-/// Single year bootstrap generator
 pub struct SingleBootstrapGenerator {
     rng: StdRng,
 }
@@ -140,7 +137,6 @@ impl MarketReturnsGenerator for SingleBootstrapGenerator {
     }
 }
 
-/// Block bootstrap generator
 pub struct BlockBootstrapGenerator {
     rng: StdRng,
     block_size: usize,
@@ -178,7 +174,6 @@ impl MarketReturnsGenerator for BlockBootstrapGenerator {
     }
 }
 
-/// Parametric returns generator
 pub struct ParametricReturnsGenerator {
     rng: StdRng,
 }
@@ -203,12 +198,11 @@ impl MarketReturnsGenerator for ParametricReturnsGenerator {
     }
 }
 
-/// Core retirement projection engine - matches TypeScript projectScenario()
+/// One deterministic path from the as-of date through life expectancy.
 pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Result<PathResult> {
     let profile = &plan.profile;
     let mut accounts = to_buckets(&plan.accounts);
 
-    // Calculate fraction of current year remaining
     let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
     let current_year = as_of_date.year();
     let birth_year = birth_year_of(&profile.birth_date)?;
@@ -231,17 +225,14 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
     let mut projections = Vec::with_capacity(total_years as usize);
     let mut portfolio_value: f64 = accounts.iter().map(|acc| acc.balance).sum();
 
-    // Track previous year's traditional balance for RMD
     let mut previous_year_traditional_balance = 0.0;
 
-    // Create market returns generator
     let mut returns_generator = create_market_returns_generator(plan, &config);
 
     for year in 0..total_years {
         let current_age = age + year;
         let is_retired = current_age >= profile.retirement_age;
 
-        // Calculate RMD amount for this year
         let mut rmd_amount = 0.0;
         if current_age >= rmd_start_age {
             let balance_for_rmd = if previous_year_traditional_balance > 0.0 {
@@ -274,7 +265,6 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
         let insufficient_funds;
 
         if !is_retired {
-            // WORKING PHASE
             let annual_salary =
                 profile.current_salary * (1.0 + profile.salary_growth_rate).powi(year as i32);
             let annual_working_spending = if plan.schema_version >= PHASE_SPENDING_SCHEMA_VERSION {
@@ -295,10 +285,8 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 1.0
             };
 
-            // Generate market returns
             let (stock_return, bond_return) = returns_generator.next();
 
-            // Apply returns to each account
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
                     + account.asset_weights.bonds * bond_return;
@@ -310,7 +298,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 };
 
                 account.balance *= 1.0 + effective_return;
-                // Clamp to 0 to prevent negative balances from extreme market downturns
+                // An extreme drawdown can drive the weighted return below -100%.
                 account.balance = account.balance.max(0.0);
             }
 
@@ -424,7 +412,6 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
 
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
         } else {
-            // RETIREMENT PHASE
             let retirement_period_fraction = if year == 0 {
                 remaining_year_fraction
             } else {
@@ -483,7 +470,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 };
 
                 account.balance *= 1.0 + effective_return;
-                // Clamp to 0 to prevent negative balances from extreme market downturns
+                // An extreme drawdown can drive the weighted return below -100%.
                 account.balance = account.balance.max(0.0);
             }
 

@@ -113,7 +113,6 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
         results.push(result);
     }
 
-    // Check if any simulations failed
     let mut successful_results = Vec::new();
     let mut errors = Vec::new();
 

@@ -1,5 +1,5 @@
-/// Tax calculation module - ports TypeScript tax.ts logic to Rust
-/// Implements federal/state income tax, FICA, and retirement account contribution calculations
+//! Federal, state, and FICA tax. Semantics are shared with the browser engine
+//! in apps/web/src/engine/tax.ts.
 use crate::types::{AnnualContributions, FilingStatus, State};
 
 #[derive(Debug, Clone)]
@@ -45,7 +45,6 @@ struct PretaxContributionTargets {
     traditional: f64,
 }
 
-// 2025 Federal Tax Brackets
 fn get_federal_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
     match filing_status {
         FilingStatus::Single => vec![
@@ -199,7 +198,6 @@ fn get_federal_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
     }
 }
 
-// 2025 California Tax Brackets
 fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
     match filing_status {
         FilingStatus::Single => vec![
@@ -415,7 +413,6 @@ fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
     }
 }
 
-// Standard deductions
 fn get_standard_deduction(
     filing_status: &FilingStatus,
     age: u32,
@@ -428,7 +425,6 @@ fn get_standard_deduction(
         FilingStatus::HeadOfHousehold => 23625.0,
     };
 
-    // Additional deduction for seniors (65+)
     let additional = if age >= 65 {
         match filing_status {
             FilingStatus::Single => 2000.0,
@@ -454,7 +450,6 @@ fn get_standard_deduction(
     base + additional + enhanced
 }
 
-// CA standard deductions
 fn get_ca_standard_deduction(filing_status: &FilingStatus) -> f64 {
     match filing_status {
         FilingStatus::Single => 5706.0,
@@ -464,27 +459,22 @@ fn get_ca_standard_deduction(filing_status: &FilingStatus) -> f64 {
     }
 }
 
-// 401k contribution limits
 fn get_k401_contribution_limit(age: u32) -> f64 {
     if (60..=63).contains(&age) {
-        // Enhanced catch-up for ages 60-63 (SECURE 2.0)
         23500.0 + 11250.0
     } else if age >= 50 {
-        // Standard catch-up for 50+
         23500.0 + 7500.0
     } else {
         23500.0
     }
 }
 
-// HSA contribution limits
 fn get_hsa_contribution_limit(age: u32) -> f64 {
     let base = 4300.0; // Individual coverage
     let catchup = if age >= 55 { 1000.0 } else { 0.0 };
     base + catchup
 }
 
-// IRA contribution limits
 pub fn get_ira_contribution_limit(age: u32) -> f64 {
     if age >= 50 {
         7000.0 + 1000.0 // Base + catch-up
@@ -493,7 +483,6 @@ pub fn get_ira_contribution_limit(age: u32) -> f64 {
     }
 }
 
-/// Calculate progressive tax given income and brackets
 pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
     let mut tax = 0.0;
     let mut remaining_income = income;
@@ -516,8 +505,8 @@ pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
     tax
 }
 
-/// Calculate federal and state income taxes during working years
-/// Matches TypeScript calculateTax() function
+/// Tax on a working year. Contribution targets are clamped to statutory
+/// limits and to what the income can actually fund.
 fn calculate_tax(
     gross_income: f64,
     qualified_income: f64,

@@ -18,9 +18,8 @@ import { fmtCurrency, fmtPercent } from "./format";
 import { cn } from "@/lib/utils";
 
 /**
- * The working year the plan starts from, as a waterfall: gross income, less
- * tax and spending, with the remainder saved. It sits beside the spending lever
- * because it is that lever's consequence.
+ * The first modeled working year as a waterfall: gross income, less tax and
+ * spending, with the remainder saved. The three always sum to gross.
  */
 export function CashFlowCard({
   profile,

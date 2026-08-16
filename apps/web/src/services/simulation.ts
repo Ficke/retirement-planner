@@ -77,8 +77,6 @@ function historicalBootstrapFor(plan: RetirementPlan): boolean {
   return plan.assumptions.simulationModel !== 'parametric';
 }
 
-// --- Scenario builders (shared by both engines) ---
-
 function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
   // Disabled benefits make every path identical. A manual household benefit
   // is authoritative only at its selected claim age; without spouse/statement
@@ -102,8 +100,8 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // Sweeping today's spending captures both effects at once: spending less now
-  // saves more, and — through the multiplier — needs less later.
+  // The sweep moves today's spending, not the retirement target, so each level
+  // shows both consequences: saving more now, and needing less later.
   // 11 levels centered on current spending, step ≈ 10% rounded to nearest $5k.
   const base = plan.profile.currentSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
@@ -161,8 +159,6 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
     },
   }));
 }
-
-// --- Engine backends ---
 
 async function runOnServer(
   scenarios: Scenario[],
@@ -329,7 +325,7 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  /** Run all Overview sensitivity curves in one bounded server batch. */
+  /** Run all three sensitivity curves in one bounded server batch. */
   async runSensitivityAnalyses(
     plan: RetirementPlan,
     useServerSide = true,
