@@ -116,8 +116,8 @@ pub struct AnnualContributions {
 pub struct ProjectionSettings {
     #[serde(rename = "simulationModel")]
     pub simulation_model: SimulationModel,
-    #[serde(rename = "randomSeed")]
-    pub random_seed: Option<u64>,
+    #[serde(rename = "randomSeed", default = "default_random_seed")]
+    pub random_seed: u64,
     #[serde(rename = "taxableGainRatio")]
     pub taxable_gain_ratio: f64,
     /// HDHP coverage. Without it there is no HSA contribution to deduct.
@@ -126,6 +126,10 @@ pub struct ProjectionSettings {
     /// Without a backdoor conversion, a Roth IRA contribution is not modeled.
     #[serde(rename = "useBackdoorRoth", default)]
     pub use_backdoor_roth: bool,
+}
+
+fn default_random_seed() -> u64 {
+    42
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,7 +285,24 @@ pub struct BatchSimulationResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSimulationSummaryResponse {
+    pub id: String,
+    #[serde(rename = "successProbability")]
+    pub success_probability: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum BatchResponseMode {
+    #[default]
+    Full,
+    Summary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchRequest {
+    #[serde(rename = "responseMode", default)]
+    pub response_mode: BatchResponseMode,
     pub simulations: Vec<BatchSimulationRequest>,
 }
 
@@ -290,13 +311,64 @@ pub struct BatchResponse {
     pub results: Vec<BatchSimulationResponse>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSummaryResponse {
+    pub results: Vec<BatchSimulationSummaryResponse>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::State;
+    use super::{BatchRequest, BatchResponseMode, RetirementPlan, State};
 
     #[test]
     fn other_state_matches_typescript_wire_value() {
         let state: State = serde_json::from_str("\"Other\"").unwrap();
         assert!(matches!(state, State::Other));
+    }
+
+    #[test]
+    fn legacy_plan_without_seed_defaults_to_42() {
+        let plan: RetirementPlan = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 3,
+            "profile": {
+                "birthDate": "1966-01-01",
+                "state": "TX",
+                "filingStatus": "Single",
+                "retirementAge": 65,
+                "currentSalary": 100000.0,
+                "salaryGrowthRate": 0.01,
+                "currentSpending": 60000.0,
+                "retirementSpending": 60000.0,
+                "retirementSpendingGrowthRate": 0.0,
+                "lifeExpectancy": 80,
+                "asOfDate": "2026-01-01"
+            },
+            "accounts": [],
+            "socialSecurity": {
+                "enabled": true,
+                "estimatedBenefit": null,
+                "claimAge": 67,
+                "manualOverride": false
+            },
+            "assumptions": {
+                "simulationModel": "historical",
+                "taxableGainRatio": 0.5,
+                "hsaEligible": false,
+                "useBackdoorRoth": false
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(plan.assumptions.random_seed, 42);
+    }
+
+    #[test]
+    fn batch_response_mode_defaults_to_legacy_full() {
+        let request: BatchRequest = serde_json::from_value(serde_json::json!({
+            "simulations": []
+        }))
+        .unwrap();
+
+        assert_eq!(request.response_mode, BatchResponseMode::Full);
     }
 }

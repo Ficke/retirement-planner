@@ -115,6 +115,12 @@ pub struct ProjectionConfig {
     pub block_size: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PathSummary {
+    pub terminal_wealth: f64,
+    pub success: bool,
+}
+
 pub trait MarketReturnsGenerator {
     fn next(&mut self) -> (f64, f64); // (stock_return, bond_return)
 }
@@ -200,6 +206,26 @@ impl MarketReturnsGenerator for ParametricReturnsGenerator {
 
 /// One deterministic path from the as-of date through life expectancy.
 pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Result<PathResult> {
+    project_scenario_internal(plan, config, true)
+}
+
+/// Run the exact projection loop without retaining yearly cash-flow rows.
+pub fn project_scenario_summary(
+    plan: &RetirementPlan,
+    config: ProjectionConfig,
+) -> Result<PathSummary> {
+    let result = project_scenario_internal(plan, config, false)?;
+    Ok(PathSummary {
+        terminal_wealth: result.terminal_wealth,
+        success: result.success,
+    })
+}
+
+fn project_scenario_internal(
+    plan: &RetirementPlan,
+    config: ProjectionConfig,
+    record_projections: bool,
+) -> Result<PathResult> {
     let profile = &plan.profile;
     let mut accounts = to_buckets(&plan.accounts);
 
@@ -222,7 +248,12 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
     // horizon directly also avoids unsigned underflow for already-retired plans.
     let total_years = profile.life_expectancy - age + 1;
 
-    let mut projections = Vec::with_capacity(total_years as usize);
+    let mut projections = Vec::with_capacity(if record_projections {
+        total_years as usize
+    } else {
+        0
+    });
+    let mut success = true;
     let mut portfolio_value: f64 = accounts.iter().map(|acc| acc.balance).sum();
 
     let mut previous_year_traditional_balance = 0.0;
@@ -524,33 +555,35 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             .map(|acc| acc.balance)
             .sum();
 
-        projections.push(PathProjection {
-            year: (current_year + year as i32) as u32,
-            age: current_age,
-            portfolio_value,
-            income,
-            spending,
-            taxes,
-            savings,
-            social_security_benefit,
-            is_retired,
-            withdrawal_taxable,
-            withdrawal_traditional,
-            withdrawal_roth,
-            withdrawal_hsa,
-            rmd_amount,
-            deposit_taxable,
-            deposit_traditional,
-            deposit_roth,
-            deposit_hsa,
-            insufficient_funds,
-        });
+        if insufficient_funds {
+            success = false;
+        }
+        if record_projections {
+            projections.push(PathProjection {
+                year: (current_year + year as i32) as u32,
+                age: current_age,
+                portfolio_value,
+                income,
+                spending,
+                taxes,
+                savings,
+                social_security_benefit,
+                is_retired,
+                withdrawal_taxable,
+                withdrawal_traditional,
+                withdrawal_roth,
+                withdrawal_hsa,
+                rmd_amount,
+                deposit_taxable,
+                deposit_traditional,
+                deposit_roth,
+                deposit_hsa,
+                insufficient_funds,
+            });
+        }
     }
 
     let terminal_wealth = portfolio_value;
-    let ever_had_insufficient_funds = projections.iter().any(|p| p.insufficient_funds);
-    let success = !ever_had_insufficient_funds;
-
     Ok(PathResult {
         terminal_wealth,
         projections,
@@ -903,7 +936,7 @@ mod tests {
             },
             assumptions: ProjectionSettings {
                 simulation_model: SimulationModel::Parametric,
-                random_seed: Some(42),
+                random_seed: 42,
                 taxable_gain_ratio: 0.5,
                 hsa_eligible: false,
                 use_backdoor_roth: false,
@@ -1014,6 +1047,32 @@ mod tests {
             (merged_wealth - split_wealth).abs() < 1e-6,
             "splitting a balance changed terminal wealth: {merged_wealth} vs {split_wealth}"
         );
+    }
+
+    #[test]
+    fn summary_matches_full_projection_exactly() {
+        let mut high_spending = test_plan();
+        high_spending.profile.retirement_spending = 250_000.0;
+        let mut no_social_security = test_plan();
+        no_social_security.social_security.enabled = false;
+        let mut historical = test_plan();
+        historical.assumptions.simulation_model = SimulationModel::Historical;
+
+        for plan in [test_plan(), high_spending, no_social_security, historical] {
+            for use_historical_bootstrap in [false, true] {
+                for seed in [0, 42, 999_999] {
+                    let config = ProjectionConfig {
+                        seed,
+                        use_historical_bootstrap,
+                        block_size: 3,
+                    };
+                    let full = project_scenario(&plan, config.clone()).unwrap();
+                    let summary = project_scenario_summary(&plan, config).unwrap();
+                    assert_eq!(summary.success, full.success);
+                    assert_eq!(summary.terminal_wealth, full.terminal_wealth);
+                }
+            }
+        }
     }
 
     #[test]
