@@ -96,7 +96,7 @@ export const SIMULATION_RATE_LIMIT = {
 
 /** Per-instance backstop; production also needs a distributed quota. */
 export const SIMULATION_PATH_RATE_LIMIT = {
-  // An Overview refresh costs ~10k paths (5k main + 17 swept points at 300).
+  // A Plan refresh costs ~10k paths (5k main + 17 swept points at 300).
   // Sized so no human reaches it: the 300ms edit debounce and the 500ms sweep
   // delay cap a person at roughly 75 refreshes per minute even when tapping a
   // slider and waiting exactly the settle time, so this leaves ~30% headroom

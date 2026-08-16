@@ -1,93 +1,157 @@
-# Monte Carlo parallelization
+# Simulation architecture
 
-How the Rust service runs a simulation, why paths parallelize cleanly, and what
-it would take to spread them across machines.
+## Product contract
 
-## How a request is served
+The app has two first-class compute modes:
 
-A simulation request carries one plan and an `MCConfig` — `paths`, `seed`,
-`useHistoricalBootstrap`, and `blockSize`.
+- Cloud mode sends a transient, stripped simulation plan through the Next.js
+  proxy to the Rust Cloud Run service.
+- Local mode calculates the same scenario grids in browser Web Workers without
+  sending plan data off-device.
 
-```
-POST /api/simulate  { plan, config }
-        │
-        ▼
-run_simulation()                       simulation/monte_carlo.rs
-        │
-        │  (0..config.paths).into_par_iter()
-        │  path N uses seed.wrapping_add(N)
-        │
-        ├──────────┬──────────┬─────────── … Rayon spreads across cores
-        ▼          ▼          ▼
-   run_single_path()  →  project_scenario()   simulation/projection.rs
-        │          │          │
-        └──────────┴──────────┘
-        │
-        │  each path reduced to a PathSummary
-        │  (terminal wealth, portfolio value per year, success)
-        ▼
-aggregate_results()  →  percentiles, success probability, income sources
-        │
-        ▼
-SimulationResult
+`apps/web/src/services/simulation.ts` defines scenario construction, path
+counts, and seeds. Both engines implement the same cash-flow semantics and use
+the canonical annual market history in
+`apps/web/src/data/market-history-annual.ts`.
+
+## Seed and path identity
+
+Every plan has one root seed, editable in Settings and defaulted to `42` when an
+older plan or request omits it. There is no random-per-run mode.
+
+Within either engine, path `i` in every scenario uses:
+
+```text
+rootSeed + pathIndex
 ```
 
-Paths are summarized as they finish rather than collected whole. A
-`PathResult` holds every cash-flow field for every modeled year, and the
-aggregation only ever needs terminal wealth, the yearly portfolio value, and
-whether the path succeeded — so keeping the rest would multiply peak memory
-for nothing.
+The headline simulation and every sensitivity point therefore use common
+random numbers at a given path index. This path identity must not change when
+work is split across threads or Workers. TypeScript and Rust use different RNG
+implementations, so the identity contract does not require identical draws
+between engines; cross-engine tests instead verify the resulting financial
+semantics within their numerical tolerances.
 
-## Why paths parallelize
+## Main simulation
 
-Each path is a pure function of `(plan, seed)`:
+The headline simulation runs 5,000 paths and returns a complete
+`SimulationResult`:
 
-- `plan` is borrowed immutably. `project_scenario` collapses accounts into
-  per-type buckets and mutates only that local copy.
-- Each path seeds its own RNG from `seed + path_index`, so no generator is
-  shared.
-- Nothing is written outside the path, so there are no locks, mutexes, or
-  atomics anywhere in the simulation.
+- success probability and risk of ruin;
+- terminal-wealth percentiles;
+- yearly portfolio percentiles;
+- one internally coherent representative cash-flow path.
 
-Determinism follows from the same property: the same base seed always produces
-the same set of paths, and because aggregation only sorts and counts, the order
-in which they finish does not affect the result.
+Rust parallelizes paths with Rayon. Local mode keeps the headline simulation on
+one Web Worker; sharding percentile and representative-path aggregation remains
+deferred.
 
-## The batch endpoint
+## Sensitivity sweeps
 
-`/api/batch` takes several *scenarios* — a distinct plan and config per entry,
-which is how the sensitivity curves are computed. It is not a way to split one
-simulation's paths across requests.
+The Plan page evaluates 17 grid points at 300 paths each:
 
-Batched scenarios run in sequence rather than concurrently. Each one already
-saturates the Rayon pool across its own paths, so running them in parallel
-would nest Tokio tasks over Rayon threads and oversubscribe the cores.
+- Social Security claim age: 62, 64, 66, 68, and 70;
+- current spending: 60% through 120% in 10% steps;
+- retirement age: the plan age plus or minus four years in two-year steps,
+  subject to plan bounds.
 
-## Distributing across machines
+Spending sensitivity varies `currentSpending`. The plan's retirement-spending
+multiplier is then resolved to a dollar amount at the engine boundary. This
+keeps sensitivity behavior aligned with the canonical plan model.
 
-Nothing in the simulation prevents it. A coordinator could hand each worker a
-path range and the base seed, have each return its summaries, and aggregate
-centrally — the isolation properties above are exactly what that requires, and
-the per-path math would not change.
+Sensitivity consumers need only success probability. Both projection engines
+therefore expose a summary seam that runs the same yearly financial loop with
+projection-row recording disabled. Full and summary success must be exactly
+equal for the same plan and path seed.
 
-Whether it is worth doing is a different question. Path execution dominates the
-time, so throughput scales with cores almost linearly, and a single machine
-serves an interactive request well within the latency a slider drag can
-tolerate. Distribution would add a coordinator, partial-failure handling, and
-network round-trips to a stage that is not currently the constraint.
+### Cloud kernel
 
-Reach for it when one of these becomes true:
+Summary batches use path-major loop inversion:
 
-- A single simulation needs enough paths that one machine exceeds the
-  interactive budget.
-- Concurrent load, not single-request latency, is what saturates the service.
+```text
+parallel path index
+  for each grid point
+    run summary projection(rootSeed + pathIndex)
+    increment the worker-local success count
+reduce worker-local count vectors
+```
 
-Until then the cost is complexity with no user-visible gain.
+This removes the sequential Rayon barrier between grid points. CPU-bound Rayon
+work is launched through Tokio `spawn_blocking`, keeping the async runtime
+available for HTTP work and health probes.
 
-## Measuring
+### Local kernel
 
-Numbers here would go stale faster than they could be useful, so this document
-does not quote any. The cross-engine contract test
-(`apps/web/tests/contracts/engine-parity.test.ts`) asserts a production-shaped
-5,000-path request stays within a CI budget, and the service logs each run's
-elapsed time at `info`. Measure on the hardware you care about.
+Sensitivity work is divided into contiguous, balanced path-index shards across:
+
+```text
+min(max(hardwareConcurrency - 1, 1), 8, pathCount)
+```
+
+Each Worker receives the scenario plans and its path range, regenerates returns
+from the shared root seed, and returns one success count per grid point.
+Aborting a stale simulation terminates both the headline Worker and the
+sensitivity pool; the next run creates fresh Workers.
+
+## HTTP contracts and rolling deployment
+
+`POST /api/simulate` returns a full `SimulationResult`.
+
+`POST /api/batch` accepts `responseMode`:
+
+- `summary` returns `{ id, successProbability }` per scenario;
+- omitted or `full` returns the legacy nested full result for browser bundles
+  already open during deployment.
+
+The new web client also accepts the legacy full response after requesting
+summary mode. This covers the opposite rolling-deployment order, where a new web
+revision reaches an older Rust revision that ignores `responseMode`.
+
+Successful proxy responses stream through Next.js without parsing and
+reserializing. Validation, rate limiting, and normalized error responses remain
+at the public proxy boundary.
+
+The legacy full batch response can be removed only in a later release, after
+old browser bundles have aged out.
+
+## Parallelism and infrastructure
+
+Cloud Run is configured for one request per Rust instance, 8 vCPU, and 4 GiB of
+memory. `SIMULATION_THREADS` pins the Rayon global pool to the allocated CPU
+count instead of relying on host-core discovery.
+
+Each path is isolated: it borrows the plan, owns its account copy and RNG, and
+writes no shared state. That makes future path-range distribution possible, but
+interactive work should continue to fit within one instance. If latency
+regresses, first adjust grids and path counts; do not add scatter-gather to the
+interactive request path without evidence that one instance is the constraint.
+
+## Correctness invariants
+
+- A path fails if any modeled year is underfunded, not only when terminal wealth
+  is zero.
+- Summary projection is the full projection with recording suppressed, never a
+  second financial implementation.
+- Contributions are derived from residual working cash flow; they are not
+  stored plan assumptions.
+- `rootSeed + pathIndex` is stable across sequential, threaded, and sharded
+  execution.
+- Scenario construction remains in `services/simulation.ts`.
+- The TypeScript historical table is canonical; regenerate Rust data with
+  `node scripts/gen-rust-historical-data.mjs` after edits.
+- Generation counters and abort signals prevent stale results from overwriting
+  newer plan results.
+
+## Validation
+
+Changes to projection, seed, batching, or parallel execution require:
+
+1. TypeScript unit tests, lint, and type checking.
+2. Rust formatting, strict Clippy, release tests, and release build.
+3. The live TypeScript/Rust contract suite.
+4. Terraform formatting and validation for deployment changes.
+5. Browser smoke tests in both Cloud and Local compute modes, including
+   rapid-edit cancellation.
+
+Keep `/api/batch` full-response compatibility until a later release has allowed
+old browser bundles to age out.
