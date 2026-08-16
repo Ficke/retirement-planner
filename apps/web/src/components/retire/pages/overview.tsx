@@ -17,16 +17,10 @@ import {
   PageShell,
   Stat,
 } from "@/components/retire/ui";
-import { Donut, SensitivityChart, WealthFanChart } from "@/components/ui/charts";
+import { SensitivityChart } from "@/components/ui/charts";
+import { CashFlowCard } from "@/components/retire/cash-flow-card";
 import { fmtCurrency, fmtPercent, successTone } from "../format";
 import { cn } from "@/lib/utils";
-
-const KIND_COLOR: Record<string, { label: string; color: string }> = {
-  Taxable: { label: "Taxable", color: "var(--color-account-taxable)" },
-  Traditional: { label: "Traditional", color: "var(--color-account-traditional)" },
-  Roth: { label: "Roth", color: "var(--color-account-roth)" },
-  HSA: { label: "HSA", color: "var(--color-account-hsa)" },
-};
 
 type Point = { x: number; y: number };
 
@@ -179,18 +173,7 @@ export function PageOverview() {
       ? "Local fallback"
       : "Local engine";
 
-  const byKind: Record<string, number> = {};
-  for (const a of accounts) {
-    byKind[a.type] = (byKind[a.type] || 0) + (a.balance || 0);
-  }
-  const allocData = Object.entries(byKind).map(([k, v]) => ({
-    label: KIND_COLOR[k]?.label ?? k,
-    value: v,
-    color: KIND_COLOR[k]?.color ?? "var(--color-muted-foreground)",
-  }));
-
-  const retirementSpending = retirementSpendingOf(plan.profile);
-  const monthlyRetirementSpend = retirementSpending / 12;
+  const monthlyRetirementSpend = retirementSpendingOf(plan.profile) / 12;
 
   const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
   const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
@@ -199,7 +182,7 @@ export function PageOverview() {
   return (
     <PageShell>
       <PageHeader
-        title="Overview"
+        title="Plan"
         actions={result ? (
           <Badge
             variant="secondary"
@@ -222,7 +205,7 @@ export function PageOverview() {
 
       <KPIGrid cols={4}>
         <Stat
-          label="Plan Health"
+          label="Chance of success"
           value={
             isUpdating ? (
               <span className="text-muted-foreground inline-flex h-8 items-center">
@@ -240,12 +223,12 @@ export function PageOverview() {
             isUpdating ? (
               <span className="text-muted-foreground inline-flex items-center gap-1.5">
                 <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
-                Updating projection…
+                Recalculating…
               </span>
             ) : simulationError ? (
-              "Projection could not be updated"
+              "Couldn't calculate"
             ) : (
-              `${successLabel} · simulated paths fully fund the plan`
+              successLabel
             )
           }
           tone={isUpdating ? "neutral" : successToneValue}
@@ -268,8 +251,8 @@ export function PageOverview() {
       <DashboardCard
         title="Levers"
         description={plan.socialSecurity.manualOverride
-          ? "Drag to change your plan. Curves show success across each modeled range; manual household Social Security stays at its selected claim-age point because another-age benefit cannot be inferred safely."
-          : "Drag to change your plan. Each curve shows how success probability responds across the lever's range."}
+          ? "Your entered Social Security benefit applies only at that claim age, so its curve stays flat."
+          : undefined}
       >
         <div className="grid grid-cols-1 gap-7 md:grid-cols-3">
           <LeverCard
@@ -306,65 +289,8 @@ export function PageOverview() {
         </div>
       </DashboardCard>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <DashboardCard title="Wealth Trajectory">
-          {result?.yearlyProjections?.length ? (
-            <div
-              className={cn(
-                "transition-opacity duration-200",
-                isUpdating && "opacity-60",
-              )}
-            >
-              <WealthFanChart
-                projections={result.yearlyProjections}
-                retirementAge={plan.profile.retirementAge}
-                height={260}
-              />
-            </div>
-          ) : (
-            <div className="text-muted-foreground flex h-[260px] items-center justify-center gap-2 text-sm">
-              {simulationError ? simulationError : (
-                <>
-                  <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
-                  Running simulation…
-                </>
-              )}
-            </div>
-          )}
-        </DashboardCard>
+      <CashFlowCard profile={plan.profile} assumptions={plan.assumptions} />
 
-        <DashboardCard title="Allocation by Account Type">
-          <div className="flex items-center gap-5">
-            <Donut
-              data={allocData}
-              size={132}
-              thickness={18}
-              centerLabel="Total"
-              centerValue={fmtCurrency(netWorth, true)}
-            />
-            <div className="flex flex-1 flex-col gap-2">
-              {allocData.length === 0 && (
-                <div className="text-muted-foreground text-xs">No accounts yet.</div>
-              )}
-              {allocData.map((a) => (
-                <div key={a.label} className="flex items-center gap-2.5 text-xs">
-                  <span
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{ background: a.color }}
-                  />
-                  <span className="flex-1">{a.label}</span>
-                  <span className="text-foreground/80 font-mono">
-                    {fmtCurrency(a.value, true)}
-                  </span>
-                  <span className="text-muted-foreground min-w-10 text-right font-mono">
-                    {netWorth > 0 ? ((a.value / netWorth) * 100).toFixed(0) : "0"}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </DashboardCard>
-      </div>
     </PageShell>
   );
 }

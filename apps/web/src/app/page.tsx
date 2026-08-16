@@ -15,10 +15,10 @@ import { PageProjections } from "@/components/retire/pages/projections";
 import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
-  overview:    { label: "Overview",    Comp: PageOverview },
+  overview:    { label: "Plan",        Comp: PageOverview },
   projections: { label: "Projections", Comp: PageProjections },
-  plan:        { label: "Profile",     Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
+  plan:        { label: "Profile",     Comp: PagePlan },
   settings:    { label: "Settings",    Comp: PageSettings },
 };
 

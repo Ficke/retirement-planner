@@ -265,37 +265,39 @@ export function PageProjections() {
 
       <KPIGrid cols={4}>
         <Stat
-          label="Success Probability"
+          label="Chance of success"
           value={`${(successProb * 100).toFixed(0)}%`}
           trend={successTone(successProb).label}
           tone={successTone(successProb).tone}
         />
         <Stat
-          label="Median wealth"
+          label="Typical outcome"
           value={fmtCurrency(median, true)}
           trend={`at age ${plan.profile.lifeExpectancy}`}
         />
         <Stat
-          label="Downside (10th %)"
+          label="Poor markets"
           value={fmtCurrency(p10, true)}
+          trend="1 in 10 end up worse"
           tone="warn"
         />
         <Stat
-          label="Upside (90th %)"
+          label="Strong markets"
           value={fmtCurrency(p90, true)}
+          trend="1 in 10 end up better"
           tone="positive"
         />
       </KPIGrid>
 
       <DashboardCard
-        title={view === "wealth" ? "Wealth Trajectory" : "Income Sources"}
+        title={view === "wealth" ? "Wealth over time" : "Where income comes from"}
         actions={
           <SegmentedTabs<ChartView>
             value={view}
             onValueChange={setView}
             options={[
-              { value: "wealth", label: "Trajectory" },
-              { value: "income", label: "Income sources" },
+              { value: "wealth", label: "Wealth" },
+              { value: "income", label: "Income" },
             ]}
           />
         }
@@ -321,8 +323,8 @@ export function PageProjections() {
       </DashboardCard>
 
       <DashboardCard
-        title="Year-by-Year"
-        description="Cash-flow columns follow one internally consistent median-terminal-wealth path. Portfolio and Range are point-in-time Monte Carlo percentiles across all paths."
+        title="Year by year"
+        description="Cash flows follow one representative path. Portfolio and Range span all paths."
         actions={
           <SegmentedTabs<YearFilter>
             value={yearFilter}
