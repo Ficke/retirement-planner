@@ -108,8 +108,15 @@ call the Rust service, and the Cloud Build trigger.
 
 ```bash
 gcloud run services describe retire-plan --region us-central1 --format 'value(status.url)'
-curl -f https://<url>/healthz          # → ok
+curl -f https://<url>/                 # → 200
 ```
+
+Check `/`, not `/healthz`. Google Front End reserves the exact path `/healthz`
+on `*.run.app` and returns its own 404 before the request reaches the
+container, so an external probe there always fails even on a healthy service.
+`/healthz` still works where Cloud Run uses it — the liveness probes hit the
+container directly and never pass through GFE — and it works locally against
+the container port.
 
 ---
 
@@ -121,7 +128,7 @@ Push to `main`. The Cloud Build trigger runs `cloudbuild.yaml`:
 2. Deploy the Rust service (image only)
 3. Point the web service's `RUST_SERVICE_URL` at it
 4. Deploy the web service (image only)
-5. `curl /healthz` on the web service
+5. `curl /` on the web service, with retries
 
 Steps 2 and 4 pass `--image` and identity flags but **no sizing flags**.
 `gcloud run deploy` preserves settings it is not told about, which is what keeps
