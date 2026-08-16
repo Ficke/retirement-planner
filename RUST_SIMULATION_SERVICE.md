@@ -27,7 +27,7 @@ the browser instead.
 |-------|---------|
 | `POST /api/simulate` | One plan, one config, one `SimulationResult` |
 | `POST /api/batch` | Several independent scenarios in one request |
-| `GET /healthz` | Liveness, used by Cloud Run and CI |
+| `GET /healthz` | Liveness. Probed by Cloud Run against the container and by CI on localhost; not reachable through the public `*.run.app` URL, where GFE intercepts the path |
 
 `/api/batch` carries a distinct plan and config per entry — it is how the Plan
 page computes its sensitivity curves in a single round trip. It does not split

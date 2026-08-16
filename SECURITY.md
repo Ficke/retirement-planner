@@ -16,7 +16,7 @@ Firebase Auth, verified server-side via the Admin SDK (`lib/firebase/server-auth
 | `/api/profile` | Required | Scoped to `user.id` |
 | `/api/auth/sync-user` | Token required | Verifies the bearer token before creating the user row |
 | `/api/simulation/monte-carlo`, `/api/simulation/batch` | **None, by design** | See below |
-| `/healthz` | None | Returns the string `ok`, no I/O |
+| `/healthz` | None | Returns the string `ok`, no I/O. Reachable from inside Cloud Run only — GFE intercepts the path externally |
 
 The app is fully usable signed out. In LOCAL data mode nothing is written
 server-side at all, so there is no data to protect for anonymous users.
