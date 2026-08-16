@@ -1,22 +1,112 @@
-/// Core retirement projection engine
-/// Ports TypeScript projection.ts logic to Rust (lines 32-922)
-/// Implements deterministic single-path projection with proper withdrawal ordering:
-/// Taxable → Traditional → Roth → HSA
+//! Single-path retirement projection. Semantics are shared with the browser
+//! engine in apps/web/src/engine/projection.ts; the cross-engine contract
+//! tests pin the two together.
 use anyhow::Result;
 use chrono::Datelike;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+use super::age::{age_on, birth_year_of};
 use super::historical_data;
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
-use super::tax::{calculate_retirement_tax, calculate_working_cash_flow};
+use super::tax::{
+    calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy, OtherIncome,
+};
 
 use crate::types::{
-    Account, AccountType, AnnualContributions, FilingStatus, PathProjection, PathResult,
-    RetirementPlan, State, PLAN_SCHEMA_VERSION,
+    Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult, RetirementPlan,
+    State, PHASE_SPENDING_SCHEMA_VERSION,
 };
+
+const BUCKET_ORDER: [AccountType; 4] = [
+    AccountType::Taxable,
+    AccountType::Traditional,
+    AccountType::Roth,
+    AccountType::Hsa,
+];
+
+/// Cash tolerance, in dollars, below which a shortfall is considered funded.
+const SHORTFALL_TOLERANCE: f64 = 1.0;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct OrderedWithdrawal {
+    taxable: f64,
+    traditional: f64,
+    roth: f64,
+    hsa: f64,
+    total: f64,
+}
+
+/// Drain buckets in the withdrawal order until `amount` is raised or nothing is left.
+fn withdraw_in_order(accounts: &mut [Account], amount: f64) -> OrderedWithdrawal {
+    let mut drawn = OrderedWithdrawal::default();
+    let mut remaining = amount.max(0.0);
+    for account_type in BUCKET_ORDER {
+        if remaining <= 0.0 {
+            break;
+        }
+        let Some(bucket) = accounts
+            .iter_mut()
+            .find(|account| account.account_type == account_type && account.balance > 0.0)
+        else {
+            continue;
+        };
+        let withdrawal = remaining.min(bucket.balance);
+        bucket.balance -= withdrawal;
+        remaining -= withdrawal;
+        drawn.total += withdrawal;
+        match account_type {
+            AccountType::Taxable => drawn.taxable += withdrawal,
+            AccountType::Traditional => drawn.traditional += withdrawal,
+            AccountType::Roth => drawn.roth += withdrawal,
+            AccountType::Hsa => drawn.hsa += withdrawal,
+        }
+    }
+    drawn
+}
+
+/// Collapse accounts into one bucket per type. Splitting a balance across two
+/// accounts of the same type must not change the projection, so weights blend by
+/// balance; an empty bucket keeps the plain average so later deposits still land
+/// at the intended allocation.
+fn to_buckets(accounts: &[Account]) -> Vec<Account> {
+    let mut buckets = Vec::with_capacity(BUCKET_ORDER.len());
+    for account_type in BUCKET_ORDER {
+        let members: Vec<&Account> = accounts
+            .iter()
+            .filter(|account| account.account_type == account_type)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let balance: f64 = members.iter().map(|account| account.balance).sum();
+        let stocks = if balance > 0.0 {
+            members
+                .iter()
+                .map(|account| account.balance * account.asset_weights.stocks)
+                .sum::<f64>()
+                / balance
+        } else {
+            members
+                .iter()
+                .map(|account| account.asset_weights.stocks)
+                .sum::<f64>()
+                / members.len() as f64
+        };
+        buckets.push(Account {
+            account_type,
+            balance,
+            asset_weights: AssetWeights {
+                stocks,
+                bonds: 1.0 - stocks,
+            },
+            is_surplus_cash: false,
+        });
+    }
+    buckets
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
@@ -25,12 +115,10 @@ pub struct ProjectionConfig {
     pub block_size: usize,
 }
 
-/// Market returns generator interface
 pub trait MarketReturnsGenerator {
     fn next(&mut self) -> (f64, f64); // (stock_return, bond_return)
 }
 
-/// Single year bootstrap generator
 pub struct SingleBootstrapGenerator {
     rng: StdRng,
 }
@@ -49,7 +137,6 @@ impl MarketReturnsGenerator for SingleBootstrapGenerator {
     }
 }
 
-/// Block bootstrap generator
 pub struct BlockBootstrapGenerator {
     rng: StdRng,
     block_size: usize,
@@ -87,7 +174,6 @@ impl MarketReturnsGenerator for BlockBootstrapGenerator {
     }
 }
 
-/// Parametric returns generator
 pub struct ParametricReturnsGenerator {
     rng: StdRng,
 }
@@ -112,15 +198,16 @@ impl MarketReturnsGenerator for ParametricReturnsGenerator {
     }
 }
 
-/// Core retirement projection engine - matches TypeScript projectScenario()
+/// One deterministic path from the as-of date through life expectancy.
 pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Result<PathResult> {
     let profile = &plan.profile;
-    let mut accounts = plan.accounts.clone();
+    let mut accounts = to_buckets(&plan.accounts);
 
-    // Calculate fraction of current year remaining
     let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
     let current_year = as_of_date.year();
-    let rmd_start_age = get_rmd_start_age(profile.birth_year);
+    let birth_year = birth_year_of(&profile.birth_date)?;
+    let age = age_on(&profile.birth_date, &profile.as_of_date)?;
+    let rmd_start_age = get_rmd_start_age(birth_year);
     let start_of_year = chrono::NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap();
     let days_in_year = if is_leap_year(current_year) {
         366.0
@@ -133,22 +220,19 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
 
     // Simulate current age through life expectancy, inclusive. Deriving the
     // horizon directly also avoids unsigned underflow for already-retired plans.
-    let total_years = profile.life_expectancy - profile.age + 1;
+    let total_years = profile.life_expectancy - age + 1;
 
     let mut projections = Vec::with_capacity(total_years as usize);
     let mut portfolio_value: f64 = accounts.iter().map(|acc| acc.balance).sum();
 
-    // Track previous year's traditional balance for RMD
     let mut previous_year_traditional_balance = 0.0;
 
-    // Create market returns generator
     let mut returns_generator = create_market_returns_generator(plan, &config);
 
     for year in 0..total_years {
-        let current_age = profile.age + year;
+        let current_age = age + year;
         let is_retired = current_age >= profile.retirement_age;
 
-        // Calculate RMD amount for this year
         let mut rmd_amount = 0.0;
         if current_age >= rmd_start_age {
             let balance_for_rmd = if previous_year_traditional_balance > 0.0 {
@@ -174,17 +258,16 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
         let mut withdrawal_traditional = 0.0;
         let mut withdrawal_roth = 0.0;
         let mut withdrawal_hsa = 0.0;
-        let mut deposit_taxable = 0.0;
+        let deposit_taxable;
         let mut deposit_traditional = 0.0;
         let mut deposit_roth = 0.0;
         let mut deposit_hsa = 0.0;
         let insufficient_funds;
 
         if !is_retired {
-            // WORKING PHASE
             let annual_salary =
                 profile.current_salary * (1.0 + profile.salary_growth_rate).powi(year as i32);
-            let annual_working_spending = if plan.schema_version >= PLAN_SCHEMA_VERSION {
+            let annual_working_spending = if plan.schema_version >= PHASE_SPENDING_SCHEMA_VERSION {
                 profile.current_spending
                     * (1.0 + profile.working_spending_growth_rate).powi(year as i32)
             } else {
@@ -192,39 +275,9 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 // before the phase-based spending model.
                 profile.current_spending
             };
-            let has_hsa = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Hsa));
-            let has_traditional = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Traditional));
-            let has_roth = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Roth));
-            let has_taxable = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Taxable));
-            let eligible_targets = AnnualContributions {
-                hsa: if has_hsa {
-                    plan.assumptions.contributions.hsa
-                } else {
-                    0.0
-                },
-                traditional: if has_traditional {
-                    plan.assumptions.contributions.traditional
-                } else {
-                    0.0
-                },
-                roth: if has_roth {
-                    plan.assumptions.contributions.roth
-                } else {
-                    0.0
-                },
-                taxable: if has_taxable {
-                    plan.assumptions.contributions.taxable
-                } else {
-                    0.0
-                },
+            let policy = ContributionPolicy {
+                hsa_eligible: plan.assumptions.hsa_eligible,
+                use_backdoor_roth: plan.assumptions.use_backdoor_roth,
             };
             let period_fraction = if year == 0 {
                 remaining_year_fraction
@@ -232,10 +285,8 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 1.0
             };
 
-            // Generate market returns
             let (stock_return, bond_return) = returns_generator.next();
 
-            // Apply returns to each account
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
                     + account.asset_weights.bonds * bond_return;
@@ -247,7 +298,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 };
 
                 account.balance *= 1.0 + effective_return;
-                // Clamp to 0 to prevent negative balances from extreme market downturns
+                // An extreme drawdown can drive the weighted return below -100%.
                 account.balance = account.balance.max(0.0);
             }
 
@@ -268,109 +319,106 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             }
             rmd_amount = withdrawal_traditional;
             let annualized_rmd_income = withdrawal_traditional / period_fraction;
-            let baseline_working_cash_flow = calculate_working_cash_flow(
+            let taxable_gain_ratio = plan.assumptions.taxable_gain_ratio;
+            let mut working_cash_flow = calculate_working_cash_flow(
                 annual_salary,
                 annual_working_spending,
                 current_age,
                 &profile.filing_status,
                 &profile.state,
-                &eligible_targets,
-                0.0,
+                &policy,
+                OtherIncome {
+                    ordinary: annualized_rmd_income,
+                    qualified: 0.0,
+                },
             );
-            let working_cash_flow = if annualized_rmd_income > 0.0 {
-                calculate_working_cash_flow(
+
+            // Spending above after-tax income is funded from the portfolio,
+            // exactly as it is in retirement — it is a drawdown, not a failure.
+            // Traditional withdrawals are ordinary income and taxable
+            // withdrawals realize gains, so each pass re-converges the tax the
+            // withdrawal itself creates. Traditional already counts as income
+            // inside funding_gap; the other buckets are principal and have to
+            // be credited separately.
+            let mut shortfall_principal = 0.0;
+            let mut shortfall_gains = 0.0;
+            let mut unfunded = 0.0;
+            for _ in 0..4 {
+                unfunded = working_cash_flow.funding_gap * period_fraction - shortfall_principal;
+                if unfunded <= SHORTFALL_TOLERANCE {
+                    unfunded = 0.0;
+                    break;
+                }
+                let drawn = withdraw_in_order(&mut accounts, unfunded);
+                if drawn.total <= SHORTFALL_TOLERANCE {
+                    break; // portfolio exhausted
+                }
+                withdrawal_taxable += drawn.taxable;
+                withdrawal_traditional += drawn.traditional;
+                withdrawal_roth += drawn.roth;
+                withdrawal_hsa += drawn.hsa;
+                shortfall_principal += drawn.taxable + drawn.roth + drawn.hsa;
+                shortfall_gains += drawn.taxable * taxable_gain_ratio;
+                working_cash_flow = calculate_working_cash_flow(
                     annual_salary,
                     annual_working_spending,
                     current_age,
                     &profile.filing_status,
                     &profile.state,
-                    &eligible_targets,
-                    annualized_rmd_income,
-                )
-            } else {
-                baseline_working_cash_flow.clone()
-            };
+                    &policy,
+                    OtherIncome {
+                        ordinary: withdrawal_traditional / period_fraction,
+                        qualified: shortfall_gains / period_fraction,
+                    },
+                );
+            }
+
             income = annual_salary * period_fraction;
-            spending = annual_working_spending * period_fraction;
+            spending = annual_working_spending * period_fraction - unfunded.max(0.0);
             taxes = working_cash_flow.tax.total_tax * period_fraction;
-            insufficient_funds = working_cash_flow.funding_gap > 1.0;
+            // Only true ruin counts as failure: the portfolio could not cover it.
+            insufficient_funds = unfunded > SHORTFALL_TOLERANCE;
 
-            // Add new savings (prorated for first year)
-            let contribution_proration = period_fraction;
-
-            // HSA contributions
-            if working_cash_flow.contributions.hsa > 0.0 {
-                if let Some(hsa_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Hsa))
-                {
-                    let deposit = working_cash_flow.contributions.hsa * contribution_proration;
-                    hsa_account.balance += deposit;
-                    deposit_hsa = deposit;
-                }
-            }
-
-            // 401k contributions
-            if working_cash_flow.contributions.traditional > 0.0 {
-                if let Some(trad_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Traditional))
-                {
-                    let deposit =
-                        working_cash_flow.contributions.traditional * contribution_proration;
-                    trad_account.balance += deposit;
-                    deposit_traditional = deposit;
-                }
-            }
-
-            // Roth contributions
-            if working_cash_flow.contributions.roth > 0.0 {
-                if let Some(roth_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Roth))
-                {
-                    let deposit = working_cash_flow.contributions.roth * contribution_proration;
-                    roth_account.balance += deposit;
-                    deposit_roth = deposit;
-                }
-            }
-
-            // Explicit after-tax savings to taxable
-            if working_cash_flow.contributions.taxable > 0.0 {
-                if let Some(taxable_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Taxable))
-                {
-                    let deposit = working_cash_flow.contributions.taxable * contribution_proration;
-                    taxable_account.balance += deposit;
-                    deposit_taxable = deposit;
-                }
-            }
-
-            // Preserve only the cash forced into the budget by the RMD;
-            // ordinary wage surplus remains controlled by explicit targets.
-            let forced_surplus_deposit = (working_cash_flow.unallocated_cash
-                - baseline_working_cash_flow.unallocated_cash)
-                .max(0.0)
-                * period_fraction;
-            if forced_surplus_deposit > 0.0 {
-                deposit_taxable_cash(&mut accounts, forced_surplus_deposit);
-                deposit_taxable += forced_surplus_deposit;
-            }
+            // The residual is fully invested, so the buckets receive all of it
+            // and nothing is left unallocated. First year prorates like every
+            // other flow.
+            let contributions = &working_cash_flow.contributions;
+            deposit_hsa = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Hsa,
+                contributions.hsa * period_fraction,
+            );
+            deposit_traditional = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Traditional,
+                contributions.traditional * period_fraction,
+            );
+            deposit_roth = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Roth,
+                contributions.roth * period_fraction,
+            );
+            deposit_taxable = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Taxable,
+                contributions.taxable * period_fraction,
+            );
 
             savings = deposit_taxable + deposit_traditional + deposit_roth + deposit_hsa
-                - withdrawal_traditional;
+                - withdrawal_taxable
+                - withdrawal_traditional
+                - withdrawal_roth
+                - withdrawal_hsa;
 
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
         } else {
-            // RETIREMENT PHASE
             let retirement_period_fraction = if year == 0 {
                 remaining_year_fraction
             } else {
                 1.0
             };
-            let spending_growth_exponent = if plan.schema_version >= PLAN_SCHEMA_VERSION {
-                let retirement_start_year = profile.retirement_age.saturating_sub(profile.age);
+            let spending_growth_exponent = if plan.schema_version >= PHASE_SPENDING_SCHEMA_VERSION {
+                let retirement_start_year = profile.retirement_age.saturating_sub(age);
                 year - retirement_start_year
             } else {
                 // Legacy requests compounded the retirement rate from the
@@ -393,13 +441,13 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                     let salary_history = estimate_salary_history(
                         profile.current_salary,
                         profile.salary_growth_rate,
-                        profile.age,
+                        age,
                         profile.retirement_age,
                     );
                     calculate_ssa_benefit(
                         &salary_history,
                         plan.social_security.claim_age,
-                        profile.birth_year,
+                        birth_year,
                     )
                     .annual_benefit
                 };
@@ -422,7 +470,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 };
 
                 account.balance *= 1.0 + effective_return;
-                // Clamp to 0 to prevent negative balances from extreme market downturns
+                // An extreme drawdown can drive the weighted return below -100%.
                 account.balance = account.balance.max(0.0);
             }
 
@@ -450,7 +498,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
 
             // Reinvest RMD excess
             if deposit_taxable > 0.0 {
-                deposit_taxable_cash(&mut accounts, deposit_taxable);
+                deposit_to_bucket(&mut accounts, AccountType::Taxable, deposit_taxable);
             }
 
             // Calculate actual spending based on available funds
@@ -543,30 +591,45 @@ struct WithdrawalContext<'a> {
     taxable_gain_ratio: f64,
 }
 
-fn deposit_taxable_cash(accounts: &mut Vec<Account>, amount: f64) {
+/// Deposit into a type's bucket, opening it when the household holds no account
+/// of that kind — funding must never depend on which accounts happen to exist.
+/// A new bucket inherits the portfolio's blend so the money is invested the way
+/// the rest of it is; with nothing to blend it stays in cash, which is also what
+/// keeps that balance out of the taxable-gain calculation.
+///
+/// Returns the amount deposited, for the caller's cash-flow row.
+fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amount: f64) -> f64 {
     if amount <= 0.0 {
-        return;
+        return 0.0;
     }
-    if let Some(taxable_account) = accounts
+    if let Some(bucket) = accounts
         .iter_mut()
-        .find(|account| matches!(account.account_type, AccountType::Taxable))
+        .find(|account| account.account_type == account_type)
     {
-        taxable_account.balance += amount;
-        return;
+        bucket.balance += amount;
+        return amount;
     }
 
-    // Internal zero-real-return cash account. It is not persisted or exposed;
-    // it prevents after-tax RMD or income surpluses from disappearing when the
-    // input plan has no brokerage account.
+    let total: f64 = accounts.iter().map(|account| account.balance).sum();
+    let stocks = if total > 0.0 {
+        accounts
+            .iter()
+            .map(|account| account.balance * account.asset_weights.stocks)
+            .sum::<f64>()
+            / total
+    } else {
+        0.0
+    };
     accounts.push(Account {
-        account_type: AccountType::Taxable,
+        account_type,
         balance: amount,
-        asset_weights: crate::types::AssetWeights {
-            stocks: 0.0,
-            bonds: 0.0,
+        asset_weights: AssetWeights {
+            stocks,
+            bonds: if total > 0.0 { 1.0 - stocks } else { 0.0 },
         },
-        is_surplus_cash: true,
+        is_surplus_cash: total == 0.0,
     });
+    amount
 }
 
 fn execute_ordered_withdrawals(
@@ -790,17 +853,16 @@ fn is_leap_year(year: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PLAN_SCHEMA_VERSION;
     use crate::types::{
-        AnnualContributions, AssetWeights, ProjectionSettings, SimulationModel,
-        SocialSecuritySettings, UserProfile,
+        AssetWeights, ProjectionSettings, SimulationModel, SocialSecuritySettings, UserProfile,
     };
 
     fn test_plan() -> RetirementPlan {
         RetirementPlan {
             schema_version: PLAN_SCHEMA_VERSION,
             profile: UserProfile {
-                age: 64,
-                birth_year: 1962,
+                birth_date: "1962-01-01".to_string(),
                 state: State::TX,
                 filing_status: FilingStatus::Single,
                 retirement_age: 65,
@@ -843,14 +905,115 @@ mod tests {
                 simulation_model: SimulationModel::Parametric,
                 random_seed: Some(42),
                 taxable_gain_ratio: 0.5,
-                contributions: AnnualContributions {
-                    hsa: 0.0,
-                    traditional: 0.0,
-                    roth: 0.0,
-                    taxable: 0.0,
-                },
+                hsa_eligible: false,
+                use_backdoor_roth: false,
             },
         }
+    }
+
+    /// Overspending during working years, funded only by the portfolio.
+    fn overspending_plan(taxable_balance: f64) -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1985-01-01".to_string();
+        plan.profile.retirement_age = 60;
+        plan.profile.life_expectancy = 61;
+        plan.profile.current_salary = 220_000.0;
+        plan.profile.salary_growth_rate = 0.0;
+        plan.profile.current_spending = 250_000.0;
+        plan.profile.working_spending_growth_rate = 0.0;
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.social_security.enabled = false;
+        plan.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: taxable_balance,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        plan
+    }
+
+    #[test]
+    fn working_year_shortfall_is_funded_from_the_portfolio() {
+        let config = ProjectionConfig {
+            seed: 5,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        let result =
+            project_scenario(&overspending_plan(2_000_000.0), config).expect("projection succeeds");
+        let working: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|p| !p.is_retired)
+            .collect();
+
+        // Overspending has to come out of the portfolio, so the household is
+        // drawing down and saving nothing.
+        assert!(working[1].withdrawal_taxable > 0.0);
+        assert!(working[1].savings < 0.0);
+        // A large portfolio absorbs the gap, so this is a drawdown, not a failure.
+        assert!(!working[1].insufficient_funds);
+    }
+
+    #[test]
+    fn working_year_failure_means_the_portfolio_ran_out() {
+        let config = ProjectionConfig {
+            seed: 5,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        let rich = project_scenario(&overspending_plan(5_000_000.0), config.clone())
+            .expect("projection succeeds");
+        let poor =
+            project_scenario(&overspending_plan(20_000.0), config).expect("projection succeeds");
+
+        // Same overspending, opposite verdicts — success tracks whether the
+        // portfolio can carry it, instead of pinning to 0% for any overspender.
+        assert!(rich.success);
+        assert!(!poor.success);
+    }
+
+    #[test]
+    fn splitting_a_balance_across_accounts_does_not_change_the_projection() {
+        let config = ProjectionConfig {
+            seed: 7,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+
+        let traditional = |balance: f64, stocks: f64| Account {
+            account_type: AccountType::Traditional,
+            balance,
+            asset_weights: AssetWeights {
+                stocks,
+                bonds: 1.0 - stocks,
+            },
+            is_surplus_cash: false,
+        };
+
+        let mut merged = test_plan();
+        merged.accounts = vec![traditional(3_000_000.0, 0.7)];
+
+        // Same money, same balance-weighted 70/30, split across two accounts.
+        let mut split = test_plan();
+        split.accounts = vec![traditional(1_000_000.0, 0.9), traditional(2_000_000.0, 0.6)];
+
+        let merged_wealth = project_scenario(&merged, config.clone())
+            .expect("projection should succeed")
+            .terminal_wealth;
+        let split_wealth = project_scenario(&split, config)
+            .expect("projection should succeed")
+            .terminal_wealth;
+
+        // A depleted plan would make the comparison vacuous.
+        assert!(merged_wealth > 0.0, "test plan must stay solvent");
+        assert!(
+            (merged_wealth - split_wealth).abs() < 1e-6,
+            "splitting a balance changed terminal wealth: {merged_wealth} vs {split_wealth}"
+        );
     }
 
     #[test]
@@ -903,8 +1066,7 @@ mod tests {
     #[test]
     fn phase_based_spending_uses_separate_growth_clocks() {
         let mut plan = test_plan();
-        plan.profile.age = 60;
-        plan.profile.birth_year = 1965;
+        plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 63;
         plan.profile.current_spending = 40_000.0;
@@ -932,8 +1094,7 @@ mod tests {
     #[test]
     fn already_retired_plan_starts_retirement_growth_at_zero() {
         let mut plan = test_plan();
-        plan.profile.age = 68;
-        plan.profile.birth_year = 1957;
+        plan.profile.birth_date = "1957-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 69;
         plan.profile.retirement_spending = 50_000.0;
@@ -954,12 +1115,43 @@ mod tests {
         assert!((result.projections[1].spending - 55_000.0).abs() < 1e-6);
     }
 
+    /// The gate is the version that introduced phase-based spending, not the
+    /// current one, so bumping the schema for an unrelated reason must not send
+    /// a still-deployed bundle back to the pre-phase math.
+    #[test]
+    fn phase_spending_applies_to_every_version_from_its_own() {
+        let mut plan = test_plan();
+        plan.schema_version = PHASE_SPENDING_SCHEMA_VERSION;
+        plan.profile.birth_date = "1965-01-01".to_string();
+        plan.profile.retirement_age = 62;
+        plan.profile.life_expectancy = 62;
+        plan.profile.current_spending = 40_000.0;
+        plan.profile.working_spending_growth_rate = 0.1;
+        plan.profile.retirement_spending = 70_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.1;
+        plan.profile.as_of_date = "2025-01-01".into();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        // Working spending compounds, and retirement growth starts at retirement.
+        assert!((result.projections[0].spending - 40_000.0).abs() < 1e-6);
+        assert!((result.projections[1].spending - 44_000.0).abs() < 1e-6);
+        assert!((result.projections[2].spending - 70_000.0).abs() < 1e-6);
+    }
+
     #[test]
     fn legacy_schema_preserves_original_spending_math() {
         let mut plan = test_plan();
         plan.schema_version = 0;
-        plan.profile.age = 60;
-        plan.profile.birth_year = 1965;
+        plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 62;
         plan.profile.current_spending = 40_000.0;
@@ -986,8 +1178,7 @@ mod tests {
     #[test]
     fn current_year_retirement_cash_flows_are_prorated() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 67;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 60_000.0;
@@ -1017,8 +1208,7 @@ mod tests {
     #[test]
     fn rmd_excess_is_reinvested_after_tax_and_cash_reconciles() {
         let mut plan = test_plan();
-        plan.profile.age = 73;
-        plan.profile.birth_year = 1952;
+        plan.profile.birth_date = "1952-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 74;
         plan.profile.current_salary = 0.0;
@@ -1070,8 +1260,7 @@ mod tests {
     #[test]
     fn working_year_rmd_is_withdrawn_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.age = 75;
-        plan.profile.birth_year = 1950;
+        plan.profile.birth_date = "1950-01-01".to_string();
         plan.profile.retirement_age = 80;
         plan.profile.life_expectancy = 81;
         plan.profile.current_salary = 100_000.0;
@@ -1108,8 +1297,7 @@ mod tests {
     #[test]
     fn social_security_surplus_is_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 50_000.0;
@@ -1146,8 +1334,7 @@ mod tests {
     #[test]
     fn high_tax_year_is_funded_when_assets_are_sufficient() {
         let mut plan = test_plan();
-        plan.profile.age = 67;
-        plan.profile.birth_year = 1958;
+        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
         plan.profile.retirement_spending = 1_000_000_000.0;

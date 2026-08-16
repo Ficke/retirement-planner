@@ -1,616 +1,296 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
-
+import { useEffect, useRef } from "react";
+import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
-import type { FilingStatus, State } from "@/domain/types";
-import { calculateWorkingCashFlow } from "@/engine/tax";
-import { Input } from "@/components/ui/input";
+import { ageOn, retirementSpendingOf } from "@/domain/age";
+import { MIN_RETIREMENT_AGE } from "@/domain/constants";
+import type { SimulationResult } from "@/domain/types";
+import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   DashboardCard,
+  KPIGrid,
   PageHeader,
   PageShell,
+  Stat,
 } from "@/components/retire/ui";
-import { fmtCurrency, fmtPercent, fmtSigned } from "../format";
+import { SensitivityChart } from "@/components/ui/charts";
+import { CashFlowCard } from "@/components/retire/cash-flow-card";
+import { fmtCurrency, fmtPercent, successTone } from "../format";
 import { cn } from "@/lib/utils";
 
-const STATE_OPTIONS: [State, string][] = [
-  ["CA", "California — 2025 tax estimate"],
-  ["TX", "Texas — no individual income tax"],
-  ["FL", "Florida — no individual income tax"],
-  ["NY", "New York — state/local tax excluded"],
-  ["WA", "Washington — capital-gains tax excluded"],
-  ["Other", "Other — state/local tax excluded"],
-];
+type Point = { x: number; y: number };
 
-const FILING_OPTIONS: [FilingStatus, string][] = [
-  ["Single", "Single"],
-  ["MarriedFilingJointly", "Married Filing Jointly"],
-  ["MarriedFilingSeparately", "Married Filing Separately"],
-  ["HeadOfHousehold", "Head of Household"],
-];
+function toPoints<T>(arr: T[] | null | undefined, xKey: keyof T): Point[] {
+  if (!arr) return [];
+  return arr
+    .map((item) => ({
+      x: item[xKey] as unknown as number,
+      y: (item as unknown as { result: SimulationResult }).result.successProbability,
+    }))
+    .sort((a, b) => a.x - b.x);
+}
+
+/**
+ * A plan lever: slider to change it, sensitivity curve showing how success
+ * probability responds across the lever's range (marker = current value).
+ */
+function LeverCard({
+  label,
+  value,
+  display,
+  min,
+  max,
+  step = 1,
+  onChange,
+  points,
+  xFormat,
+}: {
+  label: string;
+  value: number;
+  display: string;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (v: number) => void;
+  points: Point[];
+  xFormat: (v: number) => string;
+}) {
+  const inRange =
+    points.length > 0 && value >= points[0].x && value <= points[points.length - 1].x;
+
+  let markerY: number | null = null;
+  if (inRange) {
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      if (value >= a.x && value <= b.x) {
+        const t = (value - a.x) / (b.x - a.x || 1);
+        markerY = a.y + t * (b.y - a.y);
+        break;
+      }
+    }
+    if (markerY == null) markerY = points[points.length - 1].y;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between">
+        <Label className="text-foreground text-sm font-medium">{label}</Label>
+        <span className="text-foreground font-mono text-sm font-semibold tabular-nums">
+          {display}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={step}
+        onValueChange={(v) => onChange(v[0])}
+      />
+      {points.length === 0 ? (
+        <Skeleton className="h-[120px] w-full" />
+      ) : (
+        <div className="flex flex-col gap-1">
+          <SensitivityChart
+            points={points}
+            marker={inRange && markerY != null ? { x: value, y: markerY } : undefined}
+            xLabel={label}
+            xFormat={xFormat}
+            height={120}
+          />
+          <div className="text-muted-foreground text-right font-mono text-[11px]">
+            {inRange && markerY != null
+              ? `${fmtPercent(markerY, 0)} success at ${xFormat(value)}`
+              : "outside swept range"}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PagePlan() {
-  const { plan, updatePlan } = usePlan();
-  const updateProfile = (profile: Parameters<typeof updatePlan>[0]["profile"]) =>
-    updatePlan({ profile });
-  const updateSocialSecurity = (
-    socialSecurity: Parameters<typeof updatePlan>[0]["socialSecurity"],
-  ) => updatePlan({ socialSecurity });
-  const p = plan.profile;
-  const ss = plan.socialSecurity;
-  const contributionTargets = plan.assumptions.contributions;
-  const updateContribution = (field: keyof typeof contributionTargets, value: number) =>
-    updatePlan({
-      assumptions: {
-        contributions: { ...contributionTargets, [field]: value },
-      },
-    });
+  const plan = usePlan((s) => s.plan);
+  const liveResult = usePlan((s) => s.simulationResult);
+  const simulationError = usePlan((s) => s.simulationError);
+  const isSimulating = usePlan((s) => s.isSimulatingMain);
+  const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
+  const updatePlan = usePlan((s) => s.updatePlan);
+  const accounts = usePlan((s) => s.plan.accounts);
+  const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
+  const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
+  const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
+  const isSimulatingSensitivities = usePlan((s) => s.isSimulatingSensitivities);
+  const runSensitivityAnalyses = usePlan((s) => s.runSensitivityAnalyses);
 
-  const workingCashFlow = useMemo(() => {
-    try {
-      return calculateWorkingCashFlow(
-        p.currentSalary,
-        p.currentSpending,
-        p.age,
-        p.filingStatus,
-        p.state,
-        {
-          hsa: plan.accounts.some((account) => account.type === "HSA") ? contributionTargets.hsa : 0,
-          traditional: plan.accounts.some((account) => account.type === "Traditional")
-            ? contributionTargets.traditional
-            : 0,
-          roth: plan.accounts.some((account) => account.type === "Roth") ? contributionTargets.roth : 0,
-          taxable: plan.accounts.some((account) => account.type === "Taxable")
-            ? contributionTargets.taxable
-            : 0,
-        },
-      );
-    } catch {
-      return null;
+  // Sensitivity sweeps are expensive and only this page displays them. Load
+  // the three curves together so cloud mode uses one bounded batch request.
+  useEffect(() => {
+    if (
+      !isSimulatingSensitivities
+      && ssAnalysisResult === null
+      && spendingAnalysisResult === null
+      && retirementAgeAnalysisResult === null
+    ) {
+      const timeout = window.setTimeout(() => void runSensitivityAnalyses(), 500);
+      return () => window.clearTimeout(timeout);
     }
-  }, [p.currentSalary, p.currentSpending, p.age, p.filingStatus, p.state, plan.accounts, contributionTargets]);
+  }, [
+    plan,
+    isSimulatingSensitivities,
+    ssAnalysisResult,
+    spendingAnalysisResult,
+    retirementAgeAnalysisResult,
+    runSensitivityAnalyses,
+  ]);
 
-  const tax = workingCashFlow?.tax;
-  const actualContributions = workingCashFlow?.contributions ?? {
-    hsa: 0,
-    traditional: 0,
-    roth: 0,
-    taxable: 0,
-  };
-  const totalTax = tax?.totalTax ?? 0;
-  const effRate = tax?.effectiveRate ?? 0;
-  const takeHome = p.currentSalary - totalTax - actualContributions.hsa - actualContributions.traditional;
-  const available = workingCashFlow?.unallocatedCash ?? 0;
-  const fundingGap = workingCashFlow?.fundingGap ?? 0;
-  const availableRate = p.currentSalary > 0 ? available / p.currentSalary : 0;
-  const spendOfGross = p.currentSalary > 0 ? p.currentSpending / p.currentSalary : 0;
-  const takeHomeRate = p.currentSalary > 0 ? takeHome / p.currentSalary : 0;
-  const workingYears = Math.max(0, p.retirementAge - p.age);
-  const finalWorkingSpending = workingYears > 0
-    ? p.currentSpending * (1 + p.workingSpendingGrowthRate) ** Math.max(0, workingYears - 1)
-    : null;
-  const retirementTransition = finalWorkingSpending == null
-    ? null
-    : p.retirementSpending - finalWorkingSpending;
-  const retirementTransitionRate = finalWorkingSpending && retirementTransition != null
-    ? retirementTransition / finalWorkingSpending
-    : null;
+  // Keep the last completed result visible while a new simulation runs,
+  // so slider drags don't flash "0% / Off track" between recomputes.
+  const lastResultRef = useRef<SimulationResult | null>(null);
+  useEffect(() => {
+    if (liveResult) lastResultRef.current = liveResult;
+  }, [liveResult]);
+  const result = liveResult ?? lastResultRef.current;
+  const isUpdating = isSimulating || (!liveResult && !simulationError);
+  const hasEverComputed = result !== null;
+
+  const age = ageOn(plan.profile.birthDate, plan.profile.asOfDate);
+  const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
+  const yearsToRetire = Math.max(0, plan.profile.retirementAge - age);
+  const asOfYear = Number(plan.profile.asOfDate.slice(0, 4));
+  const retirementYear = asOfYear + plan.profile.retirementAge - age;
+  const alreadyRetired = plan.profile.retirementAge <= age;
+  const successProb = result?.successProbability ?? 0;
+  const { label: successLabel, tone: successToneValue } = successTone(successProb);
+  const usedFallback = result?.source === "client" && useServerSideCalculations;
+  const engineLabel = result?.source === "server"
+    ? "Cloud engine"
+    : usedFallback
+      ? "Local fallback"
+      : "Local engine";
+
+  const monthlyRetirementSpend = retirementSpendingOf(plan.profile) / 12;
+
+  const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
+  const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
+  const ssPts = toPoints(ssAnalysisResult, "claimAge");
 
   return (
     <PageShell>
       <PageHeader
-        title="Profile"
-        description="Personal details and planning assumptions. Auto-saves on change."
+        title="Plan"
+        actions={result ? (
+          <Badge
+            variant="secondary"
+            className={cn(
+              "gap-1.5",
+              result.source === "server" && "bg-info/15 text-info",
+              usedFallback && "bg-warn/15 text-warn",
+            )}
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                result.source === "server" ? "bg-info" : usedFallback ? "bg-warn" : "bg-muted-foreground",
+              )}
+            />
+            {engineLabel}
+          </Badge>
+        ) : undefined}
       />
 
-      <DashboardCard>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <NumberField
-            label="Primary age"
-            value={p.age}
-            onChange={(v) => updateProfile({
-              age: v,
-              birthYear: Number(p.asOfDate.slice(0, 4)) - v,
-            })}
-          />
-          <NumberField
-            label="Birth year (for RMD cohort)"
-            value={p.birthYear ?? Number(p.asOfDate.slice(0, 4)) - p.age}
-            onChange={(v) => updateProfile({ birthYear: v })}
-          />
-          <NumberField
-            label="Life expectancy"
-            value={p.lifeExpectancy}
-            onChange={(v) => updateProfile({ lifeExpectancy: v })}
-          />
-          <DateField
-            label="As-of date"
-            value={p.asOfDate}
-            onChange={(v) => updateProfile({ asOfDate: v })}
-          />
-          <SelectField
-            label="State"
-            value={p.state}
-            options={STATE_OPTIONS}
-            onChange={(v) => updateProfile({ state: v as State })}
-          />
-          <SelectField
-            label="Filing status"
-            value={p.filingStatus}
-            options={FILING_OPTIONS}
-            onChange={(v) => updateProfile({ filingStatus: v as FilingStatus })}
-          />
-          <CurrencyField
-            label="Primary annual wages"
-            value={p.currentSalary}
-            onChange={(v) => updateProfile({ currentSalary: v })}
-          />
-          <NumberField
-            label="Salary growth (real %)"
-            value={Number((p.salaryGrowthRate * 100).toFixed(1))}
-            step={0.1}
-            min={-10}
-            max={20}
-            onChange={(v) => updateProfile({ salaryGrowthRate: v / 100 })}
-          />
-        </div>
-      </DashboardCard>
+      <KPIGrid cols={4}>
+        <Stat
+          label="Chance of success"
+          value={
+            isUpdating ? (
+              <span className="text-muted-foreground inline-flex h-8 items-center">
+                <Loader2 className="size-6 animate-spin" />
+              </span>
+            ) : hasEverComputed ? (
+              `${(successProb * 100).toFixed(0)}%`
+            ) : simulationError ? (
+              <span className="text-muted-foreground">Unavailable</span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )
+          }
+          trend={
+            isUpdating ? (
+              <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
+                Recalculating…
+              </span>
+            ) : simulationError ? (
+              "Couldn't calculate"
+            ) : (
+              successLabel
+            )
+          }
+          tone={isUpdating ? "neutral" : successToneValue}
+        />
+        <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} />
+        <Stat
+          label="Retirement Year"
+          value={String(retirementYear)}
+          trend={alreadyRetired
+            ? `Age ${plan.profile.retirementAge} · already retired`
+            : `Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
+        />
+        <Stat
+          label="Retirement Spending"
+          value={`${fmtCurrency(monthlyRetirementSpend, false).replace(".00", "")}/mo`}
+          trend={`${(plan.profile.retirementSpendingMultiplier * 100).toFixed(0)}% of today's spending`}
+        />
+      </KPIGrid>
 
       <DashboardCard
-        title="Spending plan"
-        description="Set working and retirement spending together. Amounts are annual and shown in today's dollars; growth rates are real changes above or below inflation."
+        title="Levers"
+        description={plan.socialSecurity.manualOverride
+          ? "Your entered Social Security benefit applies only at that claim age, so its curve stays flat."
+          : undefined}
       >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Working years</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Current spending is the annual rate at the as-of date. Growth applies once per
-                subsequent working year.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <CurrencyField
-                label="Current annual spending"
-                value={p.currentSpending}
-                onChange={(v) => updateProfile({ currentSpending: v })}
-              />
-              <NumberField
-                label="Annual real growth (%)"
-                value={Number((p.workingSpendingGrowthRate * 100).toFixed(1))}
-                step={0.1}
-                min={-10}
-                max={10}
-                onChange={(v) => updateProfile({ workingSpendingGrowthRate: v / 100 })}
-              />
-            </div>
-          </div>
-
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Retirement</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                The target is independent of working-year spending. Growth applies after the first
-                modeled year of retirement.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <CurrencyField
-                label="First-year annual target"
-                value={p.retirementSpending}
-                onChange={(v) => updateProfile({ retirementSpending: v })}
-              />
-              <NumberField
-                label="Annual real growth (%)"
-                value={Number((p.retirementSpendingGrowthRate * 100).toFixed(1))}
-                step={0.1}
-                min={-10}
-                max={10}
-                onChange={(v) => updateProfile({ retirementSpendingGrowthRate: v / 100 })}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-muted/40 border-border mt-4 rounded-lg border p-4">
-          {finalWorkingSpending == null ? (
-            <div>
-              <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                Retirement spending now
-              </div>
-              <div className="mt-1 font-mono text-lg font-semibold">
-                {fmtCurrency(p.retirementSpending)}
-              </div>
-              <p className="text-muted-foreground mt-1 text-sm">
-                This plan is already retired, so the target starts in the as-of year with no
-                elapsed-retirement growth applied.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <SpendingPreview
-                label={`Current · age ${p.age}`}
-                value={p.currentSpending}
-              />
-              <SpendingPreview
-                label={`Final working year · age ${p.retirementAge - 1}`}
-                value={finalWorkingSpending}
-              />
-              <SpendingPreview
-                label={`First retirement year · age ${p.retirementAge}`}
-                value={p.retirementSpending}
-                detail={retirementTransition == null
-                  ? undefined
-                  : `${fmtSigned(retirementTransition)}${retirementTransitionRate == null
-                    ? ""
-                    : ` (${fmtPercent(retirementTransitionRate, 1)})`} transition`}
-              />
-            </div>
-          )}
-        </div>
-      </DashboardCard>
-
-      {(p.state === "NY" || p.state === "WA" || p.state === "Other") && (
-        <div className="border-warning/40 bg-warning/10 text-foreground rounded-lg border px-4 py-3 text-sm">
-          State and local taxes are excluded for this selection, so projected spendable income and
-          success can be overstated. Federal tax remains modeled using 2025 law in real dollars.
-        </div>
-      )}
-
-      <DashboardCard
-        title="Social Security"
-        description="Use a combined annual household benefit at the selected claim age when available. The salary-based option estimates only the primary person from primary wages using the 2025 PIA formula, without wage-indexing past earnings; it is not an official SSA quote."
-      >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <SelectField
-            label="Include benefits"
-            value={ss.enabled ? "on" : "off"}
-            options={[["on", "Included"], ["off", "Excluded"]]}
-            onChange={(value) => updateSocialSecurity({ enabled: value === "on" })}
+        <div className="grid grid-cols-1 gap-7 md:grid-cols-3">
+          <LeverCard
+            label="Planned / actual retirement age"
+            value={plan.profile.retirementAge}
+            display={`Age ${plan.profile.retirementAge}`}
+            min={MIN_RETIREMENT_AGE}
+            max={Math.min(100, plan.profile.lifeExpectancy - 1)}
+            onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
+            points={agePts}
+            xFormat={(v) => `Age ${v}`}
           />
-          <NumberField
-            label="Claim age"
-            value={ss.claimAge}
-            onChange={(value) => updateSocialSecurity({ claimAge: value })}
+          <LeverCard
+            label="Annual spending"
+            value={plan.profile.currentSpending}
+            display={fmtCurrency(plan.profile.currentSpending)}
+            min={20000}
+            max={200000}
+            step={1000}
+            onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
+            points={spendPts}
+            xFormat={(v) => fmtCurrency(v, true)}
           />
-          <SelectField
-            label="Benefit source"
-            value={ss.manualOverride ? "statement" : "estimate"}
-            options={[["statement", "SSA statement"], ["estimate", "Salary-based estimate"]]}
-            onChange={(value) => updateSocialSecurity({ manualOverride: value === "statement" })}
-          />
-          {ss.manualOverride && (
-            <CurrencyField
-              label="Annual household benefit at claim age"
-              value={ss.estimatedBenefit ?? 0}
-              onChange={(value) => updateSocialSecurity({ estimatedBenefit: value })}
-            />
-          )}
-        </div>
-      </DashboardCard>
-
-      <DashboardCard
-        title="Annual contribution targets"
-        description="Targets are applied only to matching accounts and reduced when IRS limits or available cash require it. Priority: HSA, Traditional, Roth, then Taxable."
-      >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <CurrencyField
-            label="HSA (individual coverage)"
-            value={contributionTargets.hsa}
-            onChange={(v) => updateContribution("hsa", v)}
-          />
-          <CurrencyField
-            label="Traditional 401(k)"
-            value={contributionTargets.traditional}
-            onChange={(v) => updateContribution("traditional", v)}
-          />
-          <CurrencyField
-            label="Roth IRA"
-            value={contributionTargets.roth}
-            onChange={(v) => updateContribution("roth", v)}
-          />
-          <CurrencyField
-            label="Taxable brokerage"
-            value={contributionTargets.taxable}
-            onChange={(v) => updateContribution("taxable", v)}
+          <LeverCard
+            label="Social Security claim age"
+            value={plan.socialSecurity.claimAge}
+            display={`Age ${plan.socialSecurity.claimAge}`}
+            min={62}
+            max={70}
+            onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
+            points={ssPts}
+            xFormat={(v) => `Age ${v}`}
           />
         </div>
       </DashboardCard>
 
-      <DashboardCard title="Tax & Savings" flush>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Flow</TableHead>
-              <TableHead className="text-right">Annual</TableHead>
-              <TableHead className="text-right">% of Gross</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <FlowRow label="Gross salary" amount={fmtCurrency(p.currentSalary)} pct="100%" strong />
-            <FlowRow
-              label="− Estimated taxes (federal + state + FICA)"
-              amount={`-${fmtCurrency(totalTax)}`}
-              pct={fmtPercent(effRate, 1)}
-              tone="negative"
-              indent
-            />
-            <FlowRow
-              label="− HSA + Traditional contributions"
-              amount={`-${fmtCurrency(actualContributions.hsa + actualContributions.traditional)}`}
-              pct={fmtPercent(
-                p.currentSalary > 0
-                  ? (actualContributions.hsa + actualContributions.traditional) / p.currentSalary
-                  : 0,
-                1,
-              )}
-              tone="negative"
-              indent
-            />
-            <FlowRow
-              label="Take-home pay"
-              amount={fmtCurrency(takeHome)}
-              pct={fmtPercent(takeHomeRate, 1)}
-              strong
-            />
-            <FlowRow
-              label="− Annual spending"
-              amount={`-${fmtCurrency(p.currentSpending)}`}
-              pct={fmtPercent(spendOfGross, 1)}
-              tone="negative"
-              indent
-            />
-            <FlowRow
-              label="− Roth + Taxable contributions"
-              amount={`-${fmtCurrency(actualContributions.roth + actualContributions.taxable)}`}
-              pct={fmtPercent(
-                p.currentSalary > 0
-                  ? (actualContributions.roth + actualContributions.taxable) / p.currentSalary
-                  : 0,
-                1,
-              )}
-              tone="negative"
-              indent
-            />
-            <FlowRow
-              label={fundingGap > 0 ? "Annual cash shortfall" : "Unallocated cash"}
-              amount={fundingGap > 0 ? `-${fmtCurrency(fundingGap)}` : fmtCurrency(available)}
-              pct={fmtPercent(
-                fundingGap > 0 && p.currentSalary > 0 ? -fundingGap / p.currentSalary : availableRate,
-                1,
-              )}
-              tone={fundingGap > 0 ? "negative" : undefined}
-              strong
-            />
-          </TableBody>
-        </Table>
-        <div className="bg-muted/40 border-border text-muted-foreground border-t px-4 py-2.5 text-[11px]">
-          {p.state === "CA" ? "Federal + California 2025" : "Federal 2025"} brackets and FICA.
-        </div>
-      </DashboardCard>
+      <CashFlowCard profile={plan.profile} assumptions={plan.assumptions} />
+
     </PageShell>
-  );
-}
-
-// -- Field primitives --------------------------------------------------------
-
-function Wrap({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label
-        htmlFor={htmlFor}
-        className="text-muted-foreground text-xs font-medium tracking-wide uppercase"
-      >
-        {label}
-      </Label>
-      {children}
-    </div>
-  );
-}
-
-function SpendingPreview({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: number;
-  detail?: string;
-}) {
-  return (
-    <div>
-      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg font-semibold">{fmtCurrency(value)}</div>
-      {detail && <div className="text-muted-foreground mt-1 text-xs">{detail}</div>}
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  step,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  step?: number;
-  min?: number;
-  max?: number;
-  onChange: (v: number) => void;
-}) {
-  const id = useId();
-  return (
-    <Wrap label={label} htmlFor={id}>
-      <Input
-        id={id}
-        type="number"
-        step={step}
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (!Number.isNaN(n)) onChange(n);
-        }}
-      />
-    </Wrap>
-  );
-}
-
-function DateField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const id = useId();
-  return (
-    <Wrap label={label} htmlFor={id}>
-      <Input id={id} type="date" value={value} onChange={(e) => onChange(e.target.value)} />
-    </Wrap>
-  );
-}
-
-function CurrencyField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  const id = useId();
-  const formatted = useMemo(
-    () =>
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 0,
-      }).format(value || 0),
-    [value],
-  );
-  // Switch to raw editing on focus, format on blur — keeps text caret happy.
-  const [draft, setDraft] = useState<string | null>(null);
-  return (
-    <Wrap label={label} htmlFor={id}>
-      <Input
-        id={id}
-        inputMode="numeric"
-        className="font-mono"
-        value={draft ?? formatted}
-        onFocus={() => setDraft(String(value))}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft == null) return;
-          const n = Number(draft.replace(/[^0-9.-]/g, ""));
-          if (!Number.isNaN(n)) onChange(n);
-          setDraft(null);
-        }}
-      />
-    </Wrap>
-  );
-}
-
-function SelectField<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: [T, string][];
-  onChange: (v: T) => void;
-}) {
-  const id = useId();
-  return (
-    <Wrap label={label} htmlFor={id}>
-      <Select value={value} onValueChange={(v) => onChange(v as T)}>
-        <SelectTrigger id={id} className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([v, l]) => (
-            <SelectItem key={v} value={v}>
-              {l}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Wrap>
-  );
-}
-
-function FlowRow({
-  label,
-  amount,
-  pct,
-  tone,
-  strong,
-  indent,
-}: {
-  label: string;
-  amount: string;
-  pct: string;
-  tone?: "negative";
-  strong?: boolean;
-  indent?: boolean;
-}) {
-  return (
-    <TableRow className={cn(strong && "bg-muted/40")}>
-      <TableCell
-        className={cn(
-          tone === "negative" && "text-danger",
-          strong && "font-semibold",
-          indent && "pl-8",
-        )}
-      >
-        {label}
-      </TableCell>
-      <TableCell
-        className={cn(
-          "text-right font-mono",
-          tone === "negative" && "text-danger",
-          strong && "font-semibold",
-        )}
-      >
-        {amount}
-      </TableCell>
-      <TableCell className="text-muted-foreground text-right font-mono">{pct}</TableCell>
-    </TableRow>
   );
 }

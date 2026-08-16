@@ -8,17 +8,17 @@ import { usePlan } from "@/state/usePlan";
 import { Sidebar, type PageId } from "@/components/retire/sidebar";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { PageOverview } from "@/components/retire/pages/overview";
 import { PagePlan } from "@/components/retire/pages/plan";
+import { PageProfile } from "@/components/retire/pages/profile";
 import { PageAccounts } from "@/components/retire/pages/accounts";
 import { PageProjections } from "@/components/retire/pages/projections";
 import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
-  overview:    { label: "Overview",    Comp: PageOverview },
+  plan:        { label: "Plan",        Comp: PagePlan },
   projections: { label: "Projections", Comp: PageProjections },
-  plan:        { label: "Profile",     Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
+  profile:     { label: "Profile",     Comp: PageProfile },
   settings:    { label: "Settings",    Comp: PageSettings },
 };
 
@@ -31,7 +31,7 @@ export default function Home() {
   const clearError = usePlan((s) => s.clearError);
   const { resolvedTheme, setTheme } = useTheme();
 
-  const [page, setPage] = useState<PageId>("overview");
+  const [page, setPage] = useState<PageId>("plan");
   const [collapsed, setCollapsed] = useState(false);
 
   // The app is fully usable without an account (local data mode). Bootstrap

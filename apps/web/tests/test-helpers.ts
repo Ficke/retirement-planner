@@ -25,11 +25,7 @@ export function createTestProjectionSettings(partial?: Partial<ProjectionSetting
     simulationModel: partial?.simulationModel || 'historical',
     randomSeed: partial?.randomSeed,
     taxableGainRatio: partial?.taxableGainRatio ?? 0.5,
-    contributions: partial?.contributions ?? {
-      hsa: 0,
-      traditional: 0,
-      roth: 0,
-      taxable: 0,
-    },
+    hsaEligible: partial?.hsaEligible ?? false,
+    useBackdoorRoth: partial?.useBackdoorRoth ?? false,
   };
 }

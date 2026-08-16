@@ -48,8 +48,7 @@ const account = {
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
 const profile = {
-  age: 45,
-  birthYear: 1981,
+  birthDate: '1981-01-01',
   state: 'TX',
   filingStatus: 'Single',
   retirementAge: 65,
@@ -57,7 +56,7 @@ const profile = {
   salaryGrowthRate: 0.03,
   currentSpending: 50_000,
   workingSpendingGrowthRate: 0.01,
-  retirementSpending: 60_000,
+  retirementSpendingMultiplier: 1,
   retirementSpendingGrowthRate: 0.02,
   lifeExpectancy: 90,
   asOfDate: '2026-01-01',
@@ -154,7 +153,7 @@ describe('cloud API authorization boundaries', () => {
         assumptions: {
           simulationModel: 'historical',
           taxableGainRatio: 0.5,
-          contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+          hsaEligible: false, useBackdoorRoth: false,
         },
         revision: 3,
       }),
@@ -183,7 +182,7 @@ describe('cloud API authorization boundaries', () => {
         assumptions: {
           simulationModel: 'historical',
           taxableGainRatio: 0.5,
-          contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+          hsaEligible: false, useBackdoorRoth: false,
         },
         revision: 2,
       }),

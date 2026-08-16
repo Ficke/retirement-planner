@@ -57,7 +57,7 @@ describe('Domain Schemas', () => {
     expect(migrated).toEqual([account]);
     saveLocalAccounts(migrated!, null);
     expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       accounts: [account],
     });
   });
@@ -83,8 +83,7 @@ describe('Domain Schemas', () => {
   it('normalizes a legacy profile save before it is persisted as schema v2', () => {
     const saved = SaveProfileSchema.parse({
       profile: {
-        age: 40,
-        birthYear: 1986,
+        birthDate: '1986-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -104,7 +103,8 @@ describe('Domain Schemas', () => {
     expect(saved.profile).toMatchObject({
       currentSpending: 48_000,
       workingSpendingGrowthRate: 0,
-      retirementSpending: 60_000,
+      // $60k target on $48k of working-year spending.
+      retirementSpendingMultiplier: 1.25,
       retirementSpendingGrowthRate: 0.01,
     });
     expect(saved.profile).not.toHaveProperty('desiredSpending');
@@ -113,7 +113,7 @@ describe('Domain Schemas', () => {
   it('should accept valid default retirement plan', () => {
     const defaultPlan = {
       profile: {
-        age: 35,
+        birthDate: '1990-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -121,7 +121,7 @@ describe('Domain Schemas', () => {
         salaryGrowthRate: 0.03,
         currentSpending: 80000,
         workingSpendingGrowthRate: 0,
-        retirementSpending: 80000,
+        retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         asOfDate: '2025-01-01',
@@ -155,8 +155,7 @@ describe('Domain Schemas', () => {
   it('accepts a plan with no investment accounts', () => {
     const plan = {
       profile: {
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -164,7 +163,7 @@ describe('Domain Schemas', () => {
         salaryGrowthRate: 0,
         currentSpending: 40_000,
         workingSpendingGrowthRate: 0,
-        retirementSpending: 40_000,
+        retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-01-01',
@@ -179,8 +178,7 @@ describe('Domain Schemas', () => {
   it('allows retiring in the current modeled year', () => {
     const plan = {
       profile: {
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 67,
@@ -188,7 +186,7 @@ describe('Domain Schemas', () => {
         salaryGrowthRate: 0,
         currentSpending: 50_000,
         workingSpendingGrowthRate: 0,
-        retirementSpending: 50_000,
+        retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-06-30',
@@ -203,8 +201,7 @@ describe('Domain Schemas', () => {
   it('allows an already-retired plan and requires a future life expectancy', () => {
     const plan = {
       profile: {
-        age: 73,
-        birthYear: 1952,
+        birthDate: '1951-01-01',
         state: 'TX',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -212,7 +209,7 @@ describe('Domain Schemas', () => {
         salaryGrowthRate: 0,
         currentSpending: 50_000,
         workingSpendingGrowthRate: 0,
-        retirementSpending: 50_000,
+        retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         asOfDate: '2025-06-30',
@@ -231,7 +228,7 @@ describe('Domain Schemas', () => {
   it('should reject invalid asset weights that do not sum to 1', () => {
     const invalidPlan = {
       profile: {
-        age: 35,
+        birthDate: '1990-01-01',
         state: 'CA',
         filingStatus: 'Single',
         retirementAge: 65,
@@ -239,7 +236,7 @@ describe('Domain Schemas', () => {
         salaryGrowthRate: 0.03,
         currentSpending: 80000,
         workingSpendingGrowthRate: 0,
-        retirementSpending: 80000,
+        retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         asOfDate: '2025-01-01',

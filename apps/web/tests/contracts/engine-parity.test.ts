@@ -16,14 +16,13 @@ const assumptions = {
   simulationModel: 'historical' as const,
   randomSeed: 42,
   taxableGainRatio: 0.5,
-  contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+  hsaEligible: false, useBackdoorRoth: false,
 };
 
 const socialSecuritySurplusPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 67,
-    birthYear: 1959,
+    birthDate: '1959-01-01',
     state: 'TX',
     filingStatus: 'Single',
     retirementAge: 67,
@@ -47,10 +46,9 @@ const socialSecuritySurplusPlan: SimulationPlan = {
 };
 
 const withdrawalPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 75,
-    birthYear: 1951,
+    birthDate: '1951-01-01',
     state: 'TX',
     filingStatus: 'Single',
     retirementAge: 75,

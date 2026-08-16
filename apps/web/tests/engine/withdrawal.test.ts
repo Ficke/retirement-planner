@@ -170,9 +170,9 @@ describe('Withdrawal Logic', () => {
     // Use the imported projectScenario function
     
     const plan = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       profile: {
-        age: 67,
+        birthDate: '1958-01-01',
         retirementAge: 67,
         lifeExpectancy: 95,
         currentSalary: 0,
@@ -194,7 +194,7 @@ describe('Withdrawal Logic', () => {
       assumptions: {
         simulationModel: 'historical' as const,
         taxableGainRatio: 0.5,
-        contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+        hsaEligible: false, useBackdoorRoth: false,
       }
     };
 

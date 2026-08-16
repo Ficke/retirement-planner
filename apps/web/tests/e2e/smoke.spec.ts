@@ -1,19 +1,21 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Smoke coverage for the 5-page sidebar IA.
+ * Smoke coverage for the 5-page sidebar IA: knobs on Plan, outputs on
+ * Projections, portfolio on Accounts, set-and-forget facts on Profile, app and
+ * model configuration on Settings.
  *
  * These run signed out, which is the app's LOCAL data mode: profile and
  * accounts live in localStorage, and no database or Firebase session is
  * involved. That keeps the suite runnable in CI without secrets.
  */
 
-const PAGES = ['Overview', 'Projections', 'Profile', 'Accounts', 'Settings'] as const;
+const PAGES = ['Plan', 'Projections', 'Accounts', 'Profile', 'Settings'] as const;
 
 /** Navigate and wait past the bootstrap spinner. */
 async function gotoApp(page: Page) {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible();
 }
 
 /** Sidebar nav buttons; scoped so page content with the same text can't match. */
@@ -29,10 +31,10 @@ function statCard(page: Page, label: string) {
   return page.locator('[data-slot="card"]').filter({ hasText: label });
 }
 
-test('boots into Overview with the KPI row', async ({ page }) => {
+test('boots into Plan with the KPI row', async ({ page }) => {
   await gotoApp(page);
 
-  for (const label of ['Plan Health', 'Net Worth', 'Retirement Year', 'Retirement Spending']) {
+  for (const label of ['Chance of success', 'Net Worth', 'Retirement Year', 'Retirement Spending']) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
 });
@@ -57,7 +59,7 @@ test('signed out, the app runs in local mode and offers sign-in', async ({ page 
   await expect(page.getByText('This browser', { exact: true })).toBeVisible();
 });
 
-test('an account added locally reaches Overview net worth', async ({ page }) => {
+test('an account added locally reaches the Plan net worth', async ({ page }) => {
   await gotoApp(page);
   await navItem(page, 'Accounts').click();
 
@@ -69,7 +71,7 @@ test('an account added locally reaches Overview net worth', async ({ page }) => 
 
   await expect(page.getByText('Test Brokerage')).toBeVisible();
 
-  await navItem(page, 'Overview').click();
+  await navItem(page, 'Plan').click();
   await expect(statCard(page, 'Net Worth').getByText('$250k')).toBeVisible();
 });
 

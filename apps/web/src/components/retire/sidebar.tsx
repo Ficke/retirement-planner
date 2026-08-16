@@ -2,12 +2,12 @@
 
 import {
   ChevronLeft,
-  Home,
   LineChart,
   LogIn,
   LogOut,
   Settings,
   SlidersHorizontal,
+  UserRound,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -25,17 +25,17 @@ import {
 } from "@/components/ui/tooltip";
 
 export type PageId =
-  | "overview"
-  | "projections"
   | "plan"
+  | "projections"
   | "accounts"
+  | "profile"
   | "settings";
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
-  { id: "overview", label: "Overview", icon: Home },
+  { id: "plan", label: "Plan", icon: SlidersHorizontal },
   { id: "projections", label: "Projections", icon: LineChart },
-  { id: "plan", label: "Profile", icon: SlidersHorizontal },
   { id: "accounts", label: "Accounts", icon: Wallet },
+  { id: "profile", label: "Profile", icon: UserRound },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

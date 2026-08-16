@@ -9,9 +9,9 @@ import { getClientIp } from '@/lib/rate-limit';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 35,
+    birthDate: '1991-01-01',
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -35,7 +35,7 @@ const validPlan = {
   assumptions: {
     simulationModel: 'historical',
     taxableGainRatio: 0.5,
-    contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+    hsaEligible: false, useBackdoorRoth: false,
   },
 };
 
@@ -49,6 +49,18 @@ const legacyPlan = {
     retirementSpendingGrowthRate: undefined,
     desiredSpending: 55000,
     spendingGrowthRate: 0.02,
+  },
+};
+
+/** What a v2 bundle puts on the wire: age and birth year, spending in dollars. */
+const v2Plan = {
+  ...validPlan,
+  schemaVersion: 2,
+  profile: {
+    ...validPlan.profile,
+    birthDate: undefined,
+    age: 35,
+    birthYear: 1991,
   },
 };
 
@@ -72,9 +84,19 @@ describe('simulation request limits', () => {
     });
   });
 
+  it('accepts a request from the previously deployed bundle', () => {
+    const result = monteCarloRequestSchema.safeParse({ plan: v2Plan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Preserved, not upgraded: v2 predates birthDate but already had the
+    // phase-based spending model, and the engine keys that off the version.
+    expect(result.data.plan.schemaVersion).toBe(2);
+    expect(result.data.plan.profile.birthDate).toBe('1991-01-01');
+  });
+
   it('rejects a request from a newer unsupported schema', () => {
     expect(monteCarloRequestSchema.safeParse({
-      plan: { ...validPlan, schemaVersion: 3 },
+      plan: { ...validPlan, schemaVersion: 4 },
       config: validConfig,
     }).success).toBe(false);
   });

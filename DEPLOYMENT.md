@@ -177,7 +177,7 @@ health checks. Either add a version or remove the mount.
 
 **Simulations are slow or falling back to the client**
 
-The engine badge on the Overview page shows which engine served the result.
+The engine badge on the Plan page shows which engine served the result.
 Falling back means the web service could not reach the Rust service. Check:
 
 ```bash

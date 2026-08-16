@@ -1,162 +1,77 @@
-# 🦀 Rust Monte Carlo Simulation Service Implementation
+# Rust simulation service
 
-## Project Overview
+The Monte Carlo engine. The web app calls it for every simulation and falls
+back to the client-side Web Worker when it is unreachable, so the service is a
+performance dependency, not a correctness one — the app stays fully usable
+without it.
 
-**Goal**: Replace client-side Monte Carlo simulations with a high-performance server-side Rust service while preserving client-side calculations as a privacy option.
+Both engines implement the same semantics. `apps/web/tests/contracts/engine-parity.test.ts`
+runs a scenario through each and asserts the cash flows match.
 
-**Current State**: TypeScript Web Worker implementation runs 5,000 Monte Carlo paths in 2-5 seconds with variable performance across devices.
+## Running it
 
-**Target State**: Rust microservice delivers 10x performance improvement (0.5-1s) with consistent results and horizontal scaling capability.
-
-## Architecture Design
-
-### Server-First Approach
-- **Default**: All simulations run on Rust microservice
-- **Privacy Option**: Users can opt for client-side calculations
-- **Fallback**: Automatic client-side fallback if server unavailable
-- **Future**: WASM implementation using same Rust codebase
-
-### Service Architecture
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Next.js App  │───▶│  Proxy Endpoint  │───▶│  Rust Service   │
-│                 │    │                  │    │                 │
-│  User Settings  │    │  Route Decision  │    │  Monte Carlo    │
-│  Fallback Logic │    │  Error Handling  │    │  Engine         │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-          │                       │
-          ▼                       ▼
-┌─────────────────┐    ┌──────────────────┐
-│  Web Worker     │    │     Cache        │
-│  (Client-side)  │    │   (Future)       │
-└─────────────────┘    └──────────────────┘
+```bash
+cd rust-simulation-service && cargo run
 ```
 
-## Implementation Phases
+Listens on `:8081` by default; set `PORT` to change it. `RUST_LOG` controls log
+level, and each completed run logs its path count and elapsed time at `info`.
 
-### ✅ Phase 0: Planning & Documentation
-- [x] Architecture design
-- [x] Project planning
-- [x] Create tracking document
+The web app reaches it at `RUST_SERVICE_URL`, defaulting to
+`http://localhost:8081`. When the service does not answer, simulations run in
+the browser instead.
 
-### ✅ Phase 1: Rust Service Foundation (Week 1)
-- [x] Create `rust-simulation-service/` directory structure
-- [x] Initialize Cargo.toml with dependencies (serde, tokio, warp, rayon)
-- [x] Implement data structures matching TypeScript types
-- [x] Build core Monte Carlo engine with Rayon parallelization
-- [x] Create HTTP server with `/api/simulate` endpoint
-- [ ] Unit tests for financial calculations
+## Endpoints
 
-### 📋 Phase 2: Next.js Integration (Week 1-2)
-- [ ] Add user preference: "Use server-side calculations" (default: true)
-- [ ] Create `/api/simulation/monte-carlo` proxy endpoint
-- [ ] Update simulation service to check preference and route
-- [ ] Implement graceful fallback to Web Worker
-- [ ] Add UI toggle in settings panel
+| Route | Purpose |
+|-------|---------|
+| `POST /api/simulate` | One plan, one config, one `SimulationResult` |
+| `POST /api/batch` | Several independent scenarios in one request |
+| `GET /healthz` | Liveness, used by Cloud Run and CI |
 
-### 📋 Phase 3: Complete Migration (Week 2)
-- [ ] Update all simulation triggers to use server-side
-- [ ] Add loading states for network calls
-- [ ] Error handling and retry logic
-- [ ] Performance monitoring and metrics
-- [ ] Integration testing
+`/api/batch` carries a distinct plan and config per entry — it is how the Plan
+page computes its sensitivity curves in a single round trip. It does not split
+one simulation's paths across entries.
 
-### 📋 Phase 4: Production Deployment (Week 2-3)
-- [ ] Multi-stage Docker build optimization
-- [ ] Deploy as Cloud Run service
-- [ ] Configure auto-scaling and health checks
-- [ ] Add monitoring and alerting
-- [ ] Load testing and performance validation
+Scenarios in a batch run sequentially. Each already parallelizes across its own
+paths with Rayon, so running them concurrently would nest Tokio over Rayon and
+oversubscribe the cores.
 
-### 📋 Phase 5: Optimization (Week 3-4)
-- [ ] Caching layer for similar plans
-- [ ] Request batching for sensitivity analyses
-- [ ] Performance benchmarking vs client-side
-- [ ] Documentation and architecture diagrams
+## Limits
 
-## Technical Specifications
+Rejected with `400` before any work is scheduled:
 
-### Data Flow
-1. **User Input** → RetirementPlan JSON (~5-50KB)
-2. **Routing Decision** → Check user preference + service health
-3. **Rust Service** → Monte Carlo calculation (target: 0.5-1s)
-4. **Response** → SimulationResult JSON with percentiles
-5. **UI Update** → Charts and analysis rendered
+| Limit | Value |
+|-------|-------|
+| Paths per simulation | 5,000 |
+| Simulations per batch | 40 |
+| Total paths per batch | 40,000 |
+| Block size | 1–10 |
+| Request body | 256 KB |
 
-### Performance Targets
-- **Latency**: < 1 second for 5,000 Monte Carlo paths
-- **Consistency**: Same performance across all devices
-- **Availability**: 99.9% uptime with graceful fallbacks
-- **Throughput**: Handle 100+ concurrent simulations
+The plan is validated too: retirement age 45–100, age at the as-of date 18–100,
+life expectancy above retirement age, and a `schemaVersion` no newer than the
+service supports. A plan from an older schema is accepted and simulated under
+the semantics that version shipped with.
 
-### Key Dependencies
-- **Rust**: `serde_json`, `tokio`, `warp`, `rayon`, `rand`
-- **Next.js**: Existing simulation service architecture
-- **Infrastructure**: Cloud Run, Docker, monitoring
+These bounds are the service's own backstop. The public Next.js routes in front
+of it apply their own clamps and per-IP rate limits — see
+`apps/web/src/lib/simulation-request.ts`.
 
-## Progress Tracking
+## Historical data
 
-### Current Sprint Status
-**Active**: Phase 2 - Next.js Integration  
-**Next Up**: User preference settings and proxy endpoint  
-**Blocked**: None  
+`src/simulation/historical_data.rs` is generated from the canonical TypeScript
+dataset. After editing `apps/web/src/data/market-history-annual.ts`, regenerate
+it:
 
-### Metrics Dashboard
-- **Tests Passing**: ⚠️ No tests yet (needs implementation)
-- **Performance Benchmark**: TBD 
-- **Code Coverage**: TBD
-- **Deployment Status**: Development
+```bash
+node scripts/gen-rust-historical-data.mjs
+```
 
-### Completed Milestones
-- ✅ **Rust Service MVP**: Complete Monte Carlo simulation service with HTTP API
-- ✅ **Data Structures**: Full TypeScript compatibility for RetirementPlan inputs/outputs  
-- ✅ **Parallel Processing**: Rayon-based parallelization for 5000+ Monte Carlo paths
-- ✅ **HTTP Server**: Warp-based async server with `/api/simulate` endpoint
+CI runs the same script with `--check` and fails when the two drift apart.
 
-## Risk Mitigation
+## Deployment
 
-### Technical Risks
-- **Rust Learning Curve**: Start with simple HTTP server, iterate complexity
-- **Data Type Compatibility**: Comprehensive testing against TypeScript types
-- **Performance Regression**: Benchmark every change, maintain fallback
-
-### Operational Risks  
-- **Service Downtime**: Automatic fallback to client-side calculations
-- **Scaling Issues**: Start with single instance, design for horizontal scaling
-- **Data Privacy**: Clear user controls and opt-out mechanisms
-
-## Future Enhancements
-
-### Short Term (Month 1-2)
-- Request caching and optimization
-- Batch processing for sensitivity analysis
-- WebSocket streaming for real-time progress
-
-### Medium Term (Month 3-6)
-- WASM implementation for offline-first experience
-- Advanced caching strategies
-- Multi-region deployment
-
-### Long Term (Month 6+)
-- GPU acceleration for massive simulations
-- Machine learning optimization
-- Real-time collaborative planning
-
-## Notes & Decisions
-
-### Architecture Decisions
-- **Server-first**: Simplifies reasoning about where calculations happen
-- **Privacy toggle**: Addresses data sensitivity concerns
-- **Stateless design**: Enables easy horizontal scaling
-- **JSON API**: Seamless TypeScript interoperability
-
-### Development Approach
-- **Incremental**: Each phase delivers working functionality
-- **Test-driven**: Comprehensive testing against existing behavior
-- **Performance-focused**: Continuous benchmarking and optimization
-
----
-
-**Last Updated**: 2025-11-02  
-**Status**: Phase 1 - Complete, Phase 2 - Starting  
-**Next Milestone**: Next.js integration and user preferences
+Built and deployed as a Cloud Run service; see [DEPLOYMENT.md](DEPLOYMENT.md).
+For how paths parallelize and what distributing them would involve, see
+[docs/architecture/simulation-architecture.md](docs/architecture/simulation-architecture.md).

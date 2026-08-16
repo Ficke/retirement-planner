@@ -7,14 +7,14 @@ import {
 
 describe('Retirement Tax Calculation', () => {
   it('taxes working-year RMD income without applying payroll tax to it', () => {
-    const targets = { hsa: 0, traditional: 0, roth: 0, taxable: 0 };
+    const policy = { hsaEligible: false, useBackdoorRoth: false };
     const wagesOnly = calculateWorkingCashFlow(
       100_000,
       60_000,
       75,
       'Single',
       'TX',
-      targets,
+      policy,
     );
     const withRmd = calculateWorkingCashFlow(
       100_000,
@@ -22,75 +22,79 @@ describe('Retirement Tax Calculation', () => {
       75,
       'Single',
       'TX',
-      targets,
-      40_000,
+      policy,
+      { ordinary: 40_000, qualified: 0 },
     );
 
     expect(withRmd.tax.ficaTax).toBe(wagesOnly.tax.ficaTax);
     expect(withRmd.tax.totalTax).toBeGreaterThan(wagesOnly.tax.totalTax);
-    expect(withRmd.unallocatedCash).toBeGreaterThan(wagesOnly.unallocatedCash);
+    // RMD proceeds are income the household did not spend, so they land in taxable.
+    expect(withRmd.contributions.taxable).toBeGreaterThan(wagesOnly.contributions.taxable);
   });
 
   describe('Working-year cash flow', () => {
-    it('uses explicit targets and preserves the cash-flow identity', () => {
+    it('invests the entire residual, leaving nothing unallocated', () => {
       const result = calculateWorkingCashFlow(
         100_000,
         50_000,
         40,
         'Single',
         'TX',
-        { hsa: 4_300, traditional: 10_000, roth: 7_000, taxable: 5_000 },
+        { hsaEligible: true, useBackdoorRoth: true },
       );
 
-      expect(result.contributions).toEqual({
-        hsa: 4_300,
-        traditional: 10_000,
-        roth: 7_000,
-        taxable: 5_000,
-      });
+      // Gross is fully accounted for: taxed, spent, or saved. No fourth bucket.
       expect(
-        result.tax.totalTax
-          + 50_000
-          + result.totalContributions
-          + result.unallocatedCash,
+        result.tax.totalTax + 50_000 + result.totalContributions,
       ).toBeCloseTo(100_000, 6);
+      expect(result.contributions.taxable).toBeGreaterThanOrEqual(0);
     });
 
-    it('does not infer contributions and caps explicit targets', () => {
-      const none = calculateWorkingCashFlow(
-        100_000,
-        40_000,
-        40,
-        'Single',
-        'TX',
-        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
-      );
-      expect(none.totalContributions).toBe(0);
-
-      const capped = calculateWorkingCashFlow(
+    it('fills tax-advantaged space to its statutory limits before taxable', () => {
+      const result = calculateWorkingCashFlow(
         500_000,
         40_000,
         40,
         'Single',
         'TX',
-        { hsa: 99_000, traditional: 99_000, roth: 99_000, taxable: 0 },
+        { hsaEligible: true, useBackdoorRoth: true },
       );
-      expect(capped.contributions.hsa).toBe(4_300);
-      expect(capped.contributions.traditional).toBe(23_500);
-      expect(capped.contributions.roth).toBe(7_000);
+
+      expect(result.contributions.hsa).toBe(4_300);
+      expect(result.contributions.traditional).toBe(23_500);
+      expect(result.contributions.roth).toBe(7_000);
+      // A high earner has far more residual than the limits absorb.
+      expect(result.contributions.taxable).toBeGreaterThan(100_000);
     });
 
-    it('reports salary-only working-year funding gaps', () => {
+    it('skips the space the household cannot use, without losing the cash', () => {
+      const eligible = calculateWorkingCashFlow(
+        200_000, 40_000, 40, 'Single', 'TX',
+        { hsaEligible: true, useBackdoorRoth: true },
+      );
+      const ineligible = calculateWorkingCashFlow(
+        200_000, 40_000, 40, 'Single', 'TX',
+        { hsaEligible: false, useBackdoorRoth: false },
+      );
+
+      expect(ineligible.contributions.hsa).toBe(0);
+      expect(ineligible.contributions.roth).toBe(0);
+      // The money still gets saved — it just goes to taxable instead.
+      expect(ineligible.contributions.taxable)
+        .toBeGreaterThan(eligible.contributions.taxable);
+    });
+
+    it('reports a funding gap when spending outruns after-tax income', () => {
       const result = calculateWorkingCashFlow(
         50_000,
         60_000,
         40,
         'Single',
         'TX',
-        { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+        { hsaEligible: false, useBackdoorRoth: false },
       );
       expect(result.fundingGap).toBeGreaterThan(10_000);
-      expect(result.unallocatedCash).toBe(0);
+      expect(result.totalContributions).toBe(0);
     });
   });
 

@@ -1,10 +1,12 @@
 import { create } from 'zustand';
+import { birthDateFromLegacyAge } from '@/domain/age';
 import type {
   RetirementPlan,
   Account,
   UserProfile,
   SocialSecuritySettings,
   AssumptionSettings,
+  AnnualContributions,
   SimulationResult,
   SSAnalysisResult,
   SpendingAnalysisResult,
@@ -46,7 +48,7 @@ import {
  */
 
 // Debounce plan changes before re-running the primary result. Sensitivity
-// sweeps are lazy and run only while the Overview consumes them.
+// sweeps are lazy and run only while the Plan page consumes them.
 const SIMULATION_DELAY = 300; // ms
 const CLOUD_PROFILE_SCHEMA_VERSION = PLAN_SCHEMA_VERSION;
 let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -139,8 +141,7 @@ function newLocalAccount(data: CreateAccountData): Account {
 
 const defaultPlan: RetirementPlan = {
   profile: {
-    age: 35,
-    birthYear: new Date().getFullYear() - 35,
+    birthDate: `${new Date().getFullYear() - 35}-01-01`,
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -148,7 +149,7 @@ const defaultPlan: RetirementPlan = {
     salaryGrowthRate: 0.01,
     currentSpending: 50000,
     workingSpendingGrowthRate: 0.0,
-    retirementSpending: 50000,
+    retirementSpendingMultiplier: 1,
     retirementSpendingGrowthRate: 0.0,
     lifeExpectancy: 90,
     asOfDate: new Date().toISOString().split('T')[0],
@@ -162,15 +163,17 @@ const defaultPlan: RetirementPlan = {
   assumptions: {
     simulationModel: 'historical',
     taxableGainRatio: 0.5,
-    contributions: {
-      hsa: 0,
-      traditional: 0,
-      roth: 0,
-      taxable: 0,
-    },
+    hsaEligible: false,
+    useBackdoorRoth: true,
   },
 };
 
+/**
+ * Build a valid plan from whatever a store hands back, which may have been
+ * written by any older version of the app. Each field older plans stored
+ * differently is mapped forward so the resulting plan projects identically;
+ * anything absent falls back to the default plan.
+ */
 export function hydratePlan(
   profileSource: unknown,
   socialSecuritySource: unknown,
@@ -180,6 +183,10 @@ export function hydratePlan(
   type PersistedProfile = Partial<UserProfile> & {
     desiredSpending?: number;
     spendingGrowthRate?: number;
+    /** Superseded by birthDate and retirementSpendingMultiplier. */
+    age?: number;
+    birthYear?: number;
+    retirementSpending?: number;
   };
   const profileInput = profileSource && typeof profileSource === 'object'
     ? profileSource as PersistedProfile
@@ -187,18 +194,34 @@ export function hydratePlan(
   const socialSecurityInput = socialSecuritySource && typeof socialSecuritySource === 'object'
     ? socialSecuritySource as Partial<SocialSecuritySettings>
     : {};
+  type PersistedAssumptions = Partial<AssumptionSettings> & {
+    contributions?: Partial<AnnualContributions>;
+    useBackdoorRoth?: boolean;
+  };
   const assumptionsInput = assumptionsSource && typeof assumptionsSource === 'object'
-    ? assumptionsSource as Partial<AssumptionSettings>
+    ? assumptionsSource as PersistedAssumptions
     : {};
+  const legacyContributions = assumptionsInput.contributions
+    ? {
+        hsa: assumptionsInput.contributions.hsa ?? 0,
+        roth: assumptionsInput.contributions.roth ?? 0,
+      }
+    : null;
   const asOfDate = profileInput.asOfDate ?? defaultPlan.profile.asOfDate;
-  const age = profileInput.age ?? defaultPlan.profile.age;
+  const legacyWorkingSpending = profileInput.currentSpending ?? profileInput.desiredSpending;
+  const legacyTarget = profileInput.retirementSpending ?? profileInput.desiredSpending;
+  // A plan with no working-year spending has no ratio to recover.
+  const legacyRetirementMultiplier =
+    legacyTarget != null && legacyWorkingSpending != null && legacyWorkingSpending > 0
+      ? legacyTarget / legacyWorkingSpending
+      : undefined;
 
   return retirementPlanSchema.parse({
     profile: {
       ...defaultPlan.profile,
       ...profileInput,
-      // Preserve the old working amount while mapping the old desired amount
-      // and growth rate onto the explicit retirement phase.
+      // One "desired" amount once covered both phases; it becomes the
+      // working-year figure when nothing more specific was stored.
       currentSpending:
         profileInput.currentSpending
         ?? profileInput.desiredSpending
@@ -206,17 +229,25 @@ export function hydratePlan(
       workingSpendingGrowthRate:
         profileInput.workingSpendingGrowthRate
         ?? defaultPlan.profile.workingSpendingGrowthRate,
-      retirementSpending:
-        profileInput.retirementSpending
-        ?? profileInput.desiredSpending
-        ?? defaultPlan.profile.retirementSpending,
+      // Where the retirement target was stored as its own dollar figure, the
+      // ratio it implied against working spending reproduces that same target.
+      retirementSpendingMultiplier:
+        profileInput.retirementSpendingMultiplier
+        ?? legacyRetirementMultiplier
+        ?? defaultPlan.profile.retirementSpendingMultiplier,
       retirementSpendingGrowthRate:
         profileInput.retirementSpendingGrowthRate
         ?? profileInput.spendingGrowthRate
         ?? defaultPlan.profile.retirementSpendingGrowthRate,
-      birthYear:
-        profileInput.birthYear
-        ?? Number(asOfDate.slice(0, 4)) - age,
+      // Age and birth year were once stored separately. Rebuilding the date
+      // that reproduces the stored age exactly keeps results from shifting.
+      birthDate:
+        profileInput.birthDate
+        ?? birthDateFromLegacyAge(
+          profileInput.age ?? 35,
+          profileInput.birthYear,
+          asOfDate,
+        ),
     },
     socialSecurity: {
       ...defaultPlan.socialSecurity,
@@ -225,10 +256,13 @@ export function hydratePlan(
     assumptions: {
       ...defaultPlan.assumptions,
       ...assumptionsInput,
-      contributions: {
-        ...defaultPlan.assumptions.contributions,
-        ...assumptionsInput.contributions,
-      },
+      // Savings is a residual, so per-account dollar targets no longer mean
+      // anything directly. A target above zero is still evidence the household
+      // had that kind of space to fill, which is what these flags record.
+      hsaEligible: assumptionsInput.hsaEligible
+        ?? (legacyContributions?.hsa ?? 0) > 0,
+      useBackdoorRoth: assumptionsInput.useBackdoorRoth
+        ?? (legacyContributions ? legacyContributions.roth > 0 : true),
     },
     accounts: Array.isArray(accountsSource) ? accountsSource : [],
   });
@@ -240,7 +274,7 @@ type PlanSetter = (partial: Partial<PlanState>) => void;
 interface PlanState {
   plan: RetirementPlan;
 
-  // Auth + mode (authUser is pushed in from the AuthProvider via bootstrap)
+  /** Pushed in from the AuthProvider by bootstrap, not read from Firebase here. */
   authUser: { id: string } | null;
   cloudAccountReady: boolean;
   cloudAvailable: boolean;
@@ -249,7 +283,6 @@ interface PlanState {
   profileRevision: number | null;
   dataMode: () => DataMode;
 
-  // Simulation results
   simulationResult: SimulationResult | null;
   simulationError: string | null;
   ssAnalysisResult: SSAnalysisResult[] | null;
@@ -258,11 +291,9 @@ interface PlanState {
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
 
-  // Lifecycle
   bootstrapped: boolean;
   error: string | null;
 
-  // Actions
   bootstrap: (authUser: { id: string } | null, cloudAccountReady?: boolean) => Promise<void>;
   updatePlan: (updates: {
     profile?: Partial<UserProfile>;
@@ -487,12 +518,6 @@ export const usePlan = create<PlanState>((set, get) => ({
           assumptions: {
             ...state.plan.assumptions,
             ...updates.assumptions,
-            ...(updates.assumptions.contributions && {
-              contributions: {
-                ...state.plan.assumptions.contributions,
-                ...updates.assumptions.contributions,
-              },
-            }),
           },
         }),
       };

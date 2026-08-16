@@ -5,9 +5,9 @@ import type { SimulationPlan } from '@/domain/types';
 describe('HSA Withdrawal Logic Fix', () => {
   // Create a test plan with high spending that should trigger withdrawal priority issues
   const createTestPlan = (): SimulationPlan => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     profile: {
-      age: 75, // Start well after RMD age
+      birthDate: '1949-01-01', // Start well after RMD age
       state: 'CA',
       filingStatus: 'Single',
       retirementAge: 65, // Already retired
@@ -54,7 +54,7 @@ describe('HSA Withdrawal Logic Fix', () => {
     assumptions: {
       simulationModel: 'historical',
       taxableGainRatio: 0.5,
-      contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      hsaEligible: false, useBackdoorRoth: false,
     },
   });
 

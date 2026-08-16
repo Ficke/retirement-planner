@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { hydratePlan, usePlan } from '@/state/usePlan';
+import { ageOn } from '@/domain/age';
 import type {
   RetirementAgeAnalysisResult,
   SpendingAnalysisResult,
@@ -80,8 +81,7 @@ describe('State Management - Simple Invalidation Logic', () => {
 
   it('migrates legacy spending fields into explicit working and retirement phases', () => {
     const migrated = hydratePlan({
-      age: 40,
-      birthYear: 1986,
+      birthDate: '1986-01-01',
       asOfDate: '2026-01-01',
       currentSpending: 48_000,
       desiredSpending: 60_000,
@@ -91,10 +91,63 @@ describe('State Management - Simple Invalidation Logic', () => {
     expect(migrated.profile).toMatchObject({
       currentSpending: 48_000,
       workingSpendingGrowthRate: 0,
-      retirementSpending: 60_000,
+      // $60k target on $48k of working-year spending.
+      retirementSpendingMultiplier: 1.25,
       retirementSpendingGrowthRate: 0.02,
     });
     expect(migrated.profile).not.toHaveProperty('desiredSpending');
     expect(migrated.profile).not.toHaveProperty('spendingGrowthRate');
+  });
+
+  it('reads contribution intent out of legacy per-account targets', () => {
+    const base = { birthDate: '1986-01-01', asOfDate: '2026-01-01' };
+    const legacy = {
+      simulationModel: 'historical',
+      taxableGainRatio: 0.5,
+      contributions: { hsa: 4_300, traditional: 23_500, roth: 7_000, taxable: 30_000 },
+    };
+
+    const funded = hydratePlan(base, null, legacy, []);
+    expect(funded.assumptions.hsaEligible).toBe(true);
+    expect(funded.assumptions.useBackdoorRoth).toBe(true);
+    expect(funded.assumptions).not.toHaveProperty('contributions');
+
+    // A zero target meant the household had no such space to fill.
+    const unfunded = hydratePlan(base, null, {
+      ...legacy,
+      contributions: { hsa: 0, traditional: 23_500, roth: 0, taxable: 30_000 },
+    }, []);
+    expect(unfunded.assumptions.hsaEligible).toBe(false);
+    expect(unfunded.assumptions.useBackdoorRoth).toBe(false);
+  });
+
+  it('rebuilds a birth date that reproduces a v2 plan stored age exactly', () => {
+    // Birthday already passed at the as-of date: 2026 - 1986 === 40.
+    const passed = hydratePlan(
+      { age: 40, birthYear: 1986, asOfDate: '2026-06-01' }, null, null, [],
+    );
+    expect(ageOn(passed.profile.birthDate, '2026-06-01')).toBe(40);
+
+    // Birthday still ahead: the calendar difference is one more than the age.
+    const upcoming = hydratePlan(
+      { age: 39, birthYear: 1986, asOfDate: '2026-06-01' }, null, null, [],
+    );
+    expect(ageOn(upcoming.profile.birthDate, '2026-06-01')).toBe(39);
+
+    // Plans that never stored a birth year still land on their stored age.
+    const yearless = hydratePlan(
+      { age: 52, asOfDate: '2026-06-01' }, null, null, [],
+    );
+    expect(ageOn(yearless.profile.birthDate, '2026-06-01')).toBe(52);
+  });
+
+  it('honors the pre-4113fbe backdoor Roth flag when a plan still carries it', () => {
+    const migrated = hydratePlan(
+      { birthDate: '1986-01-01', asOfDate: '2026-01-01' },
+      null,
+      { simulationModel: 'historical', taxableGainRatio: 0.5, useBackdoorRoth: false },
+      [],
+    );
+    expect(migrated.assumptions.useBackdoorRoth).toBe(false);
   });
 });

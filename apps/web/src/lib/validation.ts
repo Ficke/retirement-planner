@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import {
-  legacyUserProfileSchema,
+  legacyStoredProfileSchema,
   projectionSettingsSchema,
   socialSecuritySettingsSchema,
   userProfileSchema,
@@ -45,7 +45,7 @@ export const AccountIdSchema = z.string().uuid();
 
 // Profile validation
 export const SaveProfileSchema = z.object({
-  profile: z.union([userProfileSchema, legacyUserProfileSchema]),
+  profile: z.union([userProfileSchema, legacyStoredProfileSchema]),
   socialSecurity: socialSecuritySettingsSchema,
   assumptions: projectionSettingsSchema,
   revision: z.number().int().min(0).nullable(),

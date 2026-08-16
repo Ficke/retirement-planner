@@ -43,9 +43,9 @@ describe('RMD Calculation', () => {
 
   describe('RMD Integration Tests', () => {
     const createTestPlan = (age: number, traditionalBalance: number, retirementSpending: number): SimulationPlan => ({
-      schemaVersion: 2,
+      schemaVersion: 3,
       profile: {
-        age: age,
+        birthDate: `${2025 - age}-01-01`,
         asOfDate: '2025-01-01',
         currentSalary: 0, // Retired
         retirementAge: age - 1, // Already retired
@@ -82,7 +82,7 @@ describe('RMD Calculation', () => {
       assumptions: {
         simulationModel: 'historical',
         taxableGainRatio: 0.5,
-        contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+        hsaEligible: false, useBackdoorRoth: false,
       }
     });
 

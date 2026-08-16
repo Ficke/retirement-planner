@@ -26,18 +26,37 @@ export interface PretaxContributionTargets {
   traditional: number;
 }
 
+/**
+ * Income reaching the household from somewhere other than wages — RMDs and
+ * portfolio withdrawals. Ordinary is taxed at bracket rates; qualified is the
+ * realized-gain share of a taxable withdrawal.
+ */
+export interface OtherIncome {
+  ordinary: number;
+  qualified: number;
+}
+
+/** Household facts that decide which tax-advantaged space is actually available. */
+export interface ContributionPolicy {
+  /** HDHP coverage. Without it there is no HSA contribution to deduct. */
+  hsaEligible: boolean;
+  /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
+  useBackdoorRoth: boolean;
+}
+
 export interface WorkingCashFlowResult {
   tax: TaxResult;
   contributions: AnnualContributions;
   totalContributions: number;
-  unallocatedCash: number;
+  /** Spending above after-tax income. The portfolio covers it; it is not a failure. */
   fundingGap: number;
 }
 
 /**
- * Resolve annual contribution targets against taxes, statutory limits, and
- * available cash. The priority is explicit and identical in both engines:
- * HSA → Traditional → Roth → Taxable.
+ * Savings is the residual: whatever gross income does not lose to taxes and
+ * spending gets invested. Contributions fill statutory limits in the order
+ * HSA → Traditional → Roth, and taxable absorbs the remainder — so no cash is
+ * ever left over, and none of it disappears.
  */
 export function calculateWorkingCashFlow(
   grossIncome: number,
@@ -45,43 +64,48 @@ export function calculateWorkingCashFlow(
   age: number,
   filingStatus: FilingStatus,
   state: string,
-  targets: AnnualContributions,
-  otherOrdinaryIncome = 0,
+  policy: ContributionPolicy,
+  other: OtherIncome = { ordinary: 0, qualified: 0 },
 ): WorkingCashFlowResult {
-  let tax = calculateTax(grossIncome, 0, age, filingStatus, state, undefined, otherOrdinaryIncome);
+  const hsaMax = policy.hsaEligible ? getHSAContributionLimit(age) : 0;
+  const k401Max = getK401ContributionLimit(age);
+
+  let tax = calculateTax(
+    grossIncome, other.qualified, age, filingStatus, state, undefined, other.ordinary,
+  );
   for (let iteration = 0; iteration < 4; iteration++) {
     const availableBeforeContributions = Math.max(
       0,
-      grossIncome + otherOrdinaryIncome - tax.totalTax - annualSpending,
+      grossIncome + other.ordinary - tax.totalTax - annualSpending,
     );
-    const hsa = Math.min(targets.hsa, availableBeforeContributions);
+    const hsa = Math.min(hsaMax, availableBeforeContributions);
     const traditional = Math.min(
-      targets.traditional,
+      k401Max,
       Math.max(0, availableBeforeContributions - hsa),
     );
     tax = calculateTax(
       grossIncome,
-      0,
+      other.qualified,
       age,
       filingStatus,
       state,
       { hsa, traditional },
-      otherOrdinaryIncome,
+      other.ordinary,
     );
   }
 
   const cashAfterPretaxAndSpending = grossIncome
-    + otherOrdinaryIncome
+    + other.ordinary
     - tax.totalTax
     - annualSpending
     - tax.hsaContribution
     - tax.k401Contribution;
   const fundingGap = Math.max(0, -cashAfterPretaxAndSpending);
-  let afterTaxBudget = Math.max(0, cashAfterPretaxAndSpending);
-  const roth = Math.min(targets.roth, getIRAContributionLimit(age), afterTaxBudget);
-  afterTaxBudget -= roth;
-  const taxable = Math.min(targets.taxable, afterTaxBudget);
-  afterTaxBudget -= taxable;
+  const afterTaxBudget = Math.max(0, cashAfterPretaxAndSpending);
+  const roth = policy.useBackdoorRoth
+    ? Math.min(getIRAContributionLimit(age), afterTaxBudget)
+    : 0;
+  const taxable = afterTaxBudget - roth;
 
   const contributions = {
     hsa: tax.hsaContribution,
@@ -93,22 +117,17 @@ export function calculateWorkingCashFlow(
     tax,
     contributions,
     totalContributions: Object.values(contributions).reduce((sum, value) => sum + value, 0),
-    unallocatedCash: afterTaxBudget,
     fundingGap,
   };
 }
 
 /**
- * Calculate federal and state income taxes for explicit pre-tax contributions.
- * Implements LTCG stacking per CLAUDE.md: qualified dividends and LTCG
- * are taxed after ordinary income for rate determination.
+ * Federal, state, and FICA tax on a working year. Qualified dividends and
+ * long-term gains stack on top of ordinary income for rate determination, so
+ * they are taxed at the rate ordinary income has already reached.
  *
- * @param grossIncome - Total salary/wages before any deductions
- * @param qualifiedIncome - Qualified dividends + long-term capital gains
- * @param age - Current age for catch-up contribution eligibility
- * @param filingStatus - Tax filing status
- * @param state - State for tax calculation (currently only CA implemented)
- * @returns Detailed tax breakdown including retirement contributions
+ * Contribution targets are clamped to statutory limits and to what the income
+ * can actually fund, so a caller may pass its own desired amounts.
  */
 export function calculateTax(
   grossIncome: number,
@@ -119,8 +138,6 @@ export function calculateTax(
   contributionTargets: PretaxContributionTargets = { hsa: 0, traditional: 0 },
   otherOrdinaryIncome = 0,
 ): TaxResult {
-  // These are user targets, not an inferred optimizer. The projection layer
-  // separately reduces them when the household's cash flow cannot fund them.
   const hsaMax = getHSAContributionLimit(age);
   const k401Max = getK401ContributionLimit(age);
   const hsaContribution = Math.min(Math.max(0, contributionTargets.hsa), hsaMax, grossIncome);
@@ -130,7 +147,6 @@ export function calculateTax(
     Math.max(0, grossIncome - hsaContribution),
   );
 
-  // Now calculate actual taxes with these contribution amounts
   const afterHSAIncome = grossIncome - hsaContribution;
   const afterK401Income = afterHSAIncome - k401Contribution;
   const standardDeduction = getStandardDeduction(
@@ -139,14 +155,12 @@ export function calculateTax(
     afterK401Income + otherOrdinaryIncome + qualifiedIncome,
   );
 
-  // Calculate federal tax using progressive brackets (HSA + 401k both reduce taxable income)
   const federalTaxableIncome = Math.max(
     0,
     afterK401Income + otherOrdinaryIncome - standardDeduction,
   );
   const federalTax = calculateProgressiveTax(federalTaxableIncome, FEDERAL_TAX_BRACKETS_2025[filingStatus]);
   
-  // Calculate state tax (CA only for now)
   let stateTax = 0;
   if (state === 'CA') {
     const caStandardDeduction = CA_STANDARD_DEDUCTIONS_2025[filingStatus];
@@ -158,7 +172,6 @@ export function calculateTax(
     stateTax = calculateProgressiveTax(caTaxableIncome, CA_TAX_BRACKETS_2025[filingStatus]);
   }
   
-  // Calculate FICA taxes on gross wages (before 401k deduction)
   const socialSecurityTax = Math.min(grossIncome, PAYROLL_LIMITS_2025.fica_wage_base) * PAYROLL_LIMITS_2025.social_security_rate;
   const medicareTax = grossIncome * PAYROLL_LIMITS_2025.medicare_rate;
   const additionalMedicareThreshold = getAdditionalMedicareThreshold(filingStatus);
@@ -170,7 +183,6 @@ export function calculateTax(
   const totalTax = federalTax + stateTax + ficaTax;
   const totalIncome = grossIncome + otherOrdinaryIncome;
   
-  // Calculate marginal rates
   const federalMarginalRate = getMarginalTaxRate(federalTaxableIncome, FEDERAL_TAX_BRACKETS_2025[filingStatus]);
   const stateMarginalRate = state === 'CA' ? 
     getMarginalTaxRate(
@@ -197,24 +209,17 @@ export function calculateTax(
   };
 }
 
-/**
- * Get 401k contribution limit based on age and SECURE 2.0 rules
- */
+/** SECURE 2.0 raises the catch-up between 60 and 63, then drops it back. */
 function getK401ContributionLimit(age: number): number {
   if (age >= 60 && age <= 63) {
-    // Enhanced catch-up for ages 60-63 (SECURE 2.0)
     return RETIREMENT_LIMITS_2025.k401_base + RETIREMENT_LIMITS_2025.k401_catchup_enhanced;
   } else if (age >= 50) {
-    // Standard catch-up for 50+
     return RETIREMENT_LIMITS_2025.k401_base + RETIREMENT_LIMITS_2025.k401_catchup_standard;
   }
   return RETIREMENT_LIMITS_2025.k401_base;
 }
 
-/**
- * Get HSA contribution limit based on age and coverage type
- * For simplicity, assuming individual coverage. Could be enhanced to include family coverage.
- */
+/** Individual coverage only — family HDHP coverage is not modeled. */
 function getHSAContributionLimit(age: number): number {
   const baseLimit = RETIREMENT_LIMITS_2025.hsa_individual;
   const catchupLimit = age >= 55 ? RETIREMENT_LIMITS_2025.hsa_catchup : 0;
@@ -227,9 +232,6 @@ function getIRAContributionLimit(age: number): number {
     : RETIREMENT_LIMITS_2025.ira_base;
 }
 
-/**
- * Get standard deduction including senior additional amount
- */
 function getStandardDeduction(
   filingStatus: FilingStatus,
   age: number,
@@ -253,10 +255,6 @@ function getStandardDeduction(
   return deduction;
 }
 
-
-/**
- * Get marginal tax rate at specific income level
- */
 function getMarginalTaxRate(income: number, brackets: TaxBracket[]): number {
   for (let i = brackets.length - 1; i >= 0; i--) {
     const bracket = brackets[i];
@@ -268,16 +266,8 @@ function getMarginalTaxRate(income: number, brackets: TaxBracket[]): number {
 }
 
 /**
- * Calculate tax on retirement income (no FICA, no retirement contributions).
- * Used specifically for retirement years where income comes from withdrawals and SS.
- * 
- * @param traditionalWithdrawals - Traditional 401k/IRA withdrawals (fully taxable as ordinary income)
- * @param socialSecurityBenefit - Annual SS benefits (special taxation rules apply)
- * @param qualifiedIncome - LTCG and qualified dividends from taxable accounts
- * @param age - Current age for standard deduction calculation
- * @param filingStatus - Tax filing status
- * @param state - State for tax calculation
- * @returns Tax result without FICA or retirement contributions
+ * Tax on a retirement year. Wages have stopped, so there is no FICA and no
+ * contribution to deduct; Social Security is taxed under its own rules.
  */
 export function calculateRetirementTax(
   traditionalWithdrawals: number,
@@ -287,7 +277,6 @@ export function calculateRetirementTax(
   filingStatus: FilingStatus,
   state: string = 'CA'
 ): TaxResult {
-  // Calculate how much of Social Security is taxable based on combined income
   const taxableSS = calculateTaxableSocialSecurity(
     traditionalWithdrawals, 
     socialSecurityBenefit, 
@@ -295,10 +284,8 @@ export function calculateRetirementTax(
     filingStatus
   );
   
-  // Total ordinary income for tax purposes
   const totalOrdinaryIncome = traditionalWithdrawals + taxableSS;
   
-  // Calculate federal tax using progressive brackets (no 401k deductions in retirement)
   const standardDeduction = getStandardDeduction(
     filingStatus,
     age,
@@ -307,7 +294,6 @@ export function calculateRetirementTax(
   const federalTaxableIncome = Math.max(0, totalOrdinaryIncome - standardDeduction);
   const federalTax = calculateProgressiveTax(federalTaxableIncome, FEDERAL_TAX_BRACKETS_2025[filingStatus]);
   
-  // Calculate LTCG tax on qualified income (stacked after ordinary income)
   const unusedStandardDeduction = Math.max(0, standardDeduction - totalOrdinaryIncome);
   const taxableQualifiedIncome = Math.max(0, qualifiedIncome - unusedStandardDeduction);
   const ltcgTax = calculateLTCGTax(federalTaxableIncome, taxableQualifiedIncome, filingStatus);
@@ -320,7 +306,6 @@ export function calculateRetirementTax(
   );
   const totalFederalTax = federalTax + ltcgTax + netInvestmentIncomeTax;
   
-  // Calculate state tax (CA only for now)
   let stateTax = 0;
   if (state === 'CA') {
     const caStandardDeduction = CA_STANDARD_DEDUCTIONS_2025[filingStatus];
@@ -330,12 +315,10 @@ export function calculateRetirementTax(
     stateTax = calculateProgressiveTax(caTaxableIncome, CA_TAX_BRACKETS_2025[filingStatus]);
   }
   
-  // No FICA taxes in retirement
   const ficaTax = 0;
   
   const totalTax = totalFederalTax + stateTax + ficaTax;
   
-  // Calculate marginal rates based on total ordinary income
   const federalMarginalRate = getMarginalTaxRate(federalTaxableIncome, FEDERAL_TAX_BRACKETS_2025[filingStatus]);
   const stateMarginalRate = state === 'CA' ? 
     getMarginalTaxRate(
@@ -352,20 +335,14 @@ export function calculateRetirementTax(
       totalTax / (traditionalWithdrawals + socialSecurityBenefit + qualifiedIncome) : 0,
     marginalRate: federalMarginalRate + stateMarginalRate,
     taxableIncome: federalTaxableIncome,
-    hsaContribution: 0, // No contributions in retirement
-    k401Contribution: 0, // No contributions in retirement
+    hsaContribution: 0,
+    k401Contribution: 0,
   };
 }
 
 /**
- * Calculate taxable portion of Social Security benefits.
- * Uses IRS combined income thresholds and taxation percentages.
- * 
- * @param otherIncome - Traditional withdrawals and other ordinary income
- * @param socialSecurityBenefit - Annual SS benefits
- * @param qualifiedIncome - LTCG and qualified dividends
- * @param filingStatus - Filing status for threshold determination
- * @returns Taxable portion of Social Security benefits
+ * The taxable portion of Social Security, which the IRS keys off "combined
+ * income" — other income plus half the benefit — against two thresholds.
  */
 export function calculateTaxableSocialSecurity(
   otherIncome: number,
@@ -375,11 +352,8 @@ export function calculateTaxableSocialSecurity(
 ): number {
   if (socialSecurityBenefit === 0) return 0;
   
-  // Combined income = AGI + nontaxable interest + 50% of SS benefits
-  // For retirement, AGI includes traditional withdrawals + qualified income
   const combinedIncome = otherIncome + qualifiedIncome + (socialSecurityBenefit * 0.5);
   
-  // IRS thresholds for SS taxation
   const thresholds = {
     Single: { tier1: 25000, tier2: 34000 },
     MarriedFilingJointly: { tier1: 32000, tier2: 44000 },
@@ -390,14 +364,11 @@ export function calculateTaxableSocialSecurity(
   const threshold = thresholds[filingStatus];
   
   if (combinedIncome <= threshold.tier1) {
-    // No SS benefits taxable
     return 0;
   } else if (combinedIncome <= threshold.tier2) {
-    // Up to 50% of SS benefits taxable
     const excess = combinedIncome - threshold.tier1;
     return Math.min(socialSecurityBenefit * 0.5, excess * 0.5);
   } else {
-    // Up to 85% of SS benefits taxable
     const lowerTierTaxable = Math.min(
       socialSecurityBenefit * 0.5,
       (threshold.tier2 - threshold.tier1) * 0.5,
@@ -422,13 +393,8 @@ function getNetInvestmentIncomeThreshold(filingStatus: FilingStatus): number {
 }
 
 /**
- * Calculate Long-Term Capital Gains tax using preferential rates.
- * LTCG rates are based on taxable income level after ordinary income.
- * 
- * @param ordinaryTaxableIncome - Taxable ordinary income (after standard deduction)
- * @param ltcgIncome - Long-term capital gains and qualified dividends
- * @param filingStatus - Filing status for bracket determination
- * @returns LTCG tax owed
+ * Long-term gains get their own preferential brackets, but the bracket is
+ * chosen by where the gains land once stacked on top of ordinary income.
  */
 function calculateLTCGTax(
   ordinaryTaxableIncome: number,
@@ -437,7 +403,6 @@ function calculateLTCGTax(
 ): number {
   if (ltcgIncome <= 0) return 0;
   
-  // 2025 LTCG brackets
   const ltcgBrackets = {
     Single: [
       { min: 0, max: 48450, rate: 0.00 },
@@ -461,7 +426,6 @@ function calculateLTCGTax(
     ],
   };
   
-  // LTCG income is "stacked" on top of ordinary income for rate determination
   const stackedIncome = ordinaryTaxableIncome;
   const brackets = ltcgBrackets[filingStatus];
   
@@ -474,7 +438,6 @@ function calculateLTCGTax(
     
     const bracketMax = bracket.max ?? Infinity;
     
-    // Only apply this bracket if our stacked income reaches this level
     if (currentThreshold < bracketMax) {
       const applicableInThisBracket = Math.min(
         remainingLTCG,
@@ -492,13 +455,6 @@ function calculateLTCGTax(
   return tax;
 }
 
-/**
- * Calculate tax on a specific bracket using progressive rates.
- * 
- * @param income - Taxable income amount
- * @param brackets - Array of tax brackets
- * @returns Total tax owed
- */
 export function calculateProgressiveTax(income: number, brackets: TaxBracket[]): number {
   let tax = 0;
   let remainingIncome = income;

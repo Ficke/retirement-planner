@@ -70,7 +70,6 @@ export function PageSettings() {
     <PageShell>
         <PageHeader
           title="Settings"
-          description="Where your data lives, where calculations run, and how the model behaves."
         />
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
@@ -139,7 +138,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Where simulations run"
-            helper="Cloud engine: each run sends model inputs, balances, and allocations to our server, but strips account names, institutions, owner IDs, and timestamps. It computes in memory and stores nothing. Local engine: calculations never leave this device (slower on large sweeps)."
+            helper="Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device, but is slower."
             badge={
               <Badge
                 variant="secondary"
@@ -171,7 +170,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Returns model"
-            helper={`Historical: replays past US market years (${DATA_RANGE}) in 3-year blocks, preserving sequences like 2008 → 2009. Parametric: samples a statistical model fit to that history (Student-t equities, Normal bonds, log-space).`}
+            helper={`Historical replays real market years (${DATA_RANGE}) in blocks, keeping runs like 2008 → 2009 intact. Parametric samples a model fit to that history.`}
           >
             <ToggleGroup
               type="single"
@@ -191,7 +190,7 @@ export function PageSettings() {
 
         <DashboardCard
           title="What the model assumes"
-          description={`Derived from US asset-class history, ${DATA_RANGE}. Real (after-inflation) annual returns; 5,000 Monte Carlo paths per run over your Profile horizon.`}
+          description={`US market history, ${DATA_RANGE}. Returns are after inflation; 5,000 paths per run.`}
           flush
         >
           <Table>
@@ -254,18 +253,13 @@ export function PageSettings() {
         </h2>
         <DashboardCard>
           <p className="text-muted-foreground mb-5 text-sm leading-relaxed">
-            Tax rules and limits use 2025 law held constant in real dollars. Estimates use standard
-            deductions and omit itemized deductions, tax credits, AMT, local taxes, and income
-            categories the profile does not collect. Age-based deductions and contribution limits
-            apply to the primary person; married plans do not infer a spouse&apos;s age, earnings,
-            contributions, or Social Security benefit. Married filing separately assumes the filer
-            lived with their spouse during the year for Social Security taxation. Recurring cash
-            flows, including RMDs, are prorated from the as-of date in the first modeled year because
-            the plan does not collect year-to-date amounts.
+            2025 law, held constant in real dollars. Standard deductions only — no itemizing,
+            credits, or AMT. Ages and limits apply to one earner; a spouse&apos;s details are not
+            inferred.
           </p>
           <Setting
             label="Taxable withdrawal gain share"
-            helper="The portion of each taxable-brokerage withdrawal treated as long-term capital gain; the remainder is return of cost basis. Use 0% for all basis and 100% for all gain. HSA withdrawals are assumed to pay qualified medical expenses and remain tax-free."
+            helper="How much of a brokerage withdrawal is gain rather than your original investment."
           >
             <div className="flex max-w-40 items-center gap-2">
               <Input
@@ -293,7 +287,7 @@ export function PageSettings() {
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <Setting
               label="Seed mode"
-              helper="Fixed seed = identical results across runs (good for screenshots and regression tests). Random = fresh sample each run."
+              helper="Fixed repeats the same results every run. Random draws a fresh sample."
             >
               <ToggleGroup
                 type="single"

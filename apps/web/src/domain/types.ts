@@ -34,9 +34,11 @@ export type UpdateAccountData = Partial<Pick<
 >>;
 
 export interface UserProfile {
-  age: number;
-  /** Calendar birth year for cohort-specific RMD rules. */
-  birthYear?: number;
+  /**
+   * Date of birth, ISO. Age and the RMD/Social-Security birth-year cohort are
+   * both derived from it, so they can never disagree.
+   */
+  birthDate: string;
   state: State;
   filingStatus: FilingStatus;
   retirementAge: number;
@@ -46,8 +48,11 @@ export interface UserProfile {
   currentSpending: number;
   /** Annual real change in working-year spending. */
   workingSpendingGrowthRate: number;
-  /** First modeled retirement year's spending target in real dollars. */
-  retirementSpending: number;
+  /**
+   * Retirement spending as a share of working-year spending. Today's spending
+   * is the lever; the retirement target follows from it.
+   */
+  retirementSpendingMultiplier: number;
   /** Annual real change after the first modeled retirement year. */
   retirementSpendingGrowthRate: number;
   lifeExpectancy: number;
@@ -88,8 +93,10 @@ export interface ProjectionSettings {
   randomSeed?: number;
   /** Portion of taxable-account withdrawals treated as long-term capital gain. */
   taxableGainRatio: number;
-  /** Annual contribution targets, reduced when statutory limits or cash flow require it. */
-  contributions: AnnualContributions;
+  /** HDHP coverage. Without it there is no HSA contribution to deduct. */
+  hsaEligible: boolean;
+  /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
+  useBackdoorRoth: boolean;
 }
 
 /** @deprecated Use ProjectionSettings instead */
@@ -109,8 +116,16 @@ export interface SimulationAccount {
   assetWeights: AssetWeights;
 }
 
-export interface SimulationPlan extends Omit<RetirementPlan, 'accounts'> {
-  schemaVersion: 2;
+/** The profile as the engines see it, with the retirement target resolved. */
+export interface SimulationProfile
+  extends Omit<UserProfile, 'retirementSpendingMultiplier'> {
+  /** First modeled retirement year's spending in real dollars. */
+  retirementSpending: number;
+}
+
+export interface SimulationPlan extends Omit<RetirementPlan, 'accounts' | 'profile'> {
+  schemaVersion: 3;
+  profile: SimulationProfile;
   accounts: SimulationAccount[];
 }
 
@@ -148,11 +163,7 @@ export interface RetirementAgeAnalysisResult {
   result: SimulationResult;
 }
 
-/**
- * Single-path deterministic projection result.
- * Returned by projectScenario() for one simulation path.
- * Does NOT include percentiles - those only exist after Monte Carlo aggregation.
- */
+/** One modeled year on one path: every cash flow, in real dollars. */
 export interface PathProjection {
   year: number;
   age: number;
@@ -163,12 +174,10 @@ export interface PathProjection {
   savings: number;
   socialSecurityBenefit: number;
   isRetired: boolean;
-  // Retirement income sources
   withdrawalTaxable: number;
   withdrawalTraditional: number;
   withdrawalRoth: number;
   rmdAmount: number;
-  // Detailed cash flows per account type
   depositTaxable: number;
   depositTraditional: number;
   depositRoth: number;
@@ -177,22 +186,13 @@ export interface PathProjection {
   insufficientFunds: boolean;
 }
 
-/**
- * Result from a single simulation path.
- * Returned by projectScenario() - contains yearly projections without percentiles.
- * The worker aggregates multiple PathResults to create a SimulationResult.
- */
+/** One complete path. Monte Carlo aggregates many of these into percentiles. */
 export interface PathResult {
   terminalWealth: number;
   projections: PathProjection[];
   success: boolean; // Whether every modeled year was fully funded
 }
 
-/**
- * Monte Carlo aggregated projection with percentiles.
- * Created by mc.worker.ts after running 5000+ paths and calculating percentiles.
- * This is what the UI displays.
- */
 export interface IncomeSourcesRow {
   age: number;
   isRetired: boolean;
@@ -203,6 +203,7 @@ export interface IncomeSourcesRow {
   withdrawalHSA: number;
 }
 
+/** A year of the representative path, widened with the percentile fan. */
 export interface YearlyProjection extends PathProjection {
   p5: number;
   p10: number;
@@ -213,7 +214,6 @@ export interface YearlyProjection extends PathProjection {
   p90: number;
 }
 
-// Loading states
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
 export interface AccountLoadingState {
@@ -222,7 +222,6 @@ export interface AccountLoadingState {
   lastUpdated?: string;
 }
 
-// Type-safe account validation
 export interface AccountValidation {
   isValid: boolean;
   errors: string[];

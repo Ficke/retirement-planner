@@ -4,9 +4,9 @@ import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
-    age: 35,
+    birthDate: '1990-01-01',
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
@@ -56,7 +56,7 @@ const testPlan: SimulationPlan = {
   },
   assumptions: createTestProjectionSettings({
     simulationModel: 'historical',
-    contributions: { hsa: 4_300, traditional: 23_500, roth: 7_000, taxable: 5_000 },
+    hsaEligible: true, useBackdoorRoth: true,
   }),
 };
 
@@ -78,7 +78,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 60,
+        birthDate: '1965-01-01',
         retirementAge: 62,
         lifeExpectancy: 63,
         currentSpending: 40_000,
@@ -104,7 +104,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 68,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 69,
         retirementSpending: 50_000,
@@ -172,7 +172,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 60,  // Closer to retirement to reduce complexity
+        birthDate: '1965-01-01',  // Closer to retirement to reduce complexity
         retirementAge: 65,
         lifeExpectancy: 75,  // Shorter lifespan for simpler test
         retirementSpending: 40000,  // Lower spending
@@ -257,8 +257,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1958-01-01',
         retirementAge: 67,
         lifeExpectancy: 68,
         retirementSpending: 60_000,
@@ -288,8 +287,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 73,
-        birthYear: 1952,
+        birthDate: '1951-01-01',
         retirementAge: 73,
         lifeExpectancy: 74,
         currentSalary: 0,
@@ -329,8 +327,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 75,
-        birthYear: 1950,
+        birthDate: '1949-01-01',
         retirementAge: 80,
         lifeExpectancy: 81,
         currentSalary: 100_000,
@@ -359,8 +356,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 68,
         retirementSpending: 50_000,
@@ -397,8 +393,7 @@ describe('Projection Engine', () => {
       ...testPlan,
       profile: {
         ...testPlan.profile,
-        age: 67,
-        birthYear: 1958,
+        birthDate: '1957-01-01',
         retirementAge: 65,
         lifeExpectancy: 68,
         retirementSpending: 1_000_000_000,
@@ -420,6 +415,141 @@ describe('Projection Engine', () => {
     expect(
       firstYear.withdrawalTraditional - firstYear.taxes - firstYear.depositTaxable,
     ).toBeCloseTo(firstYear.spending, 0);
+  });
+
+  it('is unchanged by how a balance is split across accounts of one type', () => {
+    const merged: SimulationPlan = {
+      ...testPlan,
+      accounts: [
+        createTestAccount({
+          type: 'Traditional',
+          balance: 3_000_000,
+          assetWeights: { stocks: 0.7, bonds: 0.3 },
+        }),
+      ],
+      assumptions: createTestProjectionSettings({ randomSeed: 7 }),
+    };
+    // Same money, same balance-weighted 70/30, split across two accounts.
+    const split: SimulationPlan = {
+      ...merged,
+      accounts: [
+        createTestAccount({
+          type: 'Traditional',
+          balance: 1_000_000,
+          assetWeights: { stocks: 0.9, bonds: 0.1 },
+        }),
+        createTestAccount({
+          type: 'Traditional',
+          balance: 2_000_000,
+          assetWeights: { stocks: 0.6, bonds: 0.4 },
+        }),
+      ],
+    };
+
+    const config = { paths: 1, seed: 7 };
+    const mergedWealth = projectScenario(merged, config).terminalWealth;
+    // A depleted plan would make the comparison vacuous.
+    expect(mergedWealth).toBeGreaterThan(0);
+    expect(projectScenario(split, config).terminalWealth).toBeCloseTo(mergedWealth, 6);
+  });
+
+  it('funds a working-year shortfall from the portfolio instead of thin air', () => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        birthDate: '1985-01-01',
+        retirementAge: 60,
+        lifeExpectancy: 61,
+        currentSalary: 220_000,
+        salaryGrowthRate: 0,
+        currentSpending: 250_000,
+        workingSpendingGrowthRate: 0,
+        asOfDate: '2025-01-01',
+      },
+      accounts: [
+        createTestAccount({
+          type: 'Taxable',
+          balance: 2_000_000,
+          assetWeights: { stocks: 0.6, bonds: 0.4 },
+        }),
+      ],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings({ randomSeed: 5 }),
+    };
+
+    const working = projectScenario(plan, { paths: 1, seed: 5 })
+      .projections.filter((year) => !year.isRetired);
+
+    // Overspending has to come out of the portfolio, so the household is
+    // drawing down and saving nothing.
+    expect(working[1].withdrawalTaxable).toBeGreaterThan(0);
+    expect(working[1].savings).toBeLessThan(0);
+    // A large portfolio absorbs the gap, so this is a drawdown, not a failure.
+    expect(working[1].insufficientFunds).toBe(false);
+  });
+
+  it('fails only when the portfolio itself runs out mid-career', () => {
+    const overspending = {
+      ...testPlan.profile,
+      birthDate: '1985-01-01',
+      retirementAge: 60,
+      lifeExpectancy: 61,
+      currentSalary: 220_000,
+      salaryGrowthRate: 0,
+      currentSpending: 250_000,
+      workingSpendingGrowthRate: 0,
+      asOfDate: '2025-01-01',
+    };
+    const base: SimulationPlan = {
+      ...testPlan,
+      profile: overspending,
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings({ randomSeed: 5 }),
+    };
+
+    const rich = projectScenario({
+      ...base,
+      accounts: [createTestAccount({ type: 'Taxable', balance: 5_000_000 })],
+    }, { paths: 1, seed: 5 });
+    const poor = projectScenario({
+      ...base,
+      accounts: [createTestAccount({ type: 'Taxable', balance: 20_000 })],
+    }, { paths: 1, seed: 5 });
+
+    // Same overspending, opposite verdicts — success now tracks whether the
+    // portfolio can carry it, instead of pinning to 0% for anyone overspending.
+    expect(rich.success).toBe(true);
+    expect(poor.success).toBe(false);
+  });
+
+  it('routes deposits to the bucket regardless of account order', () => {
+    const accounts = [
+      createTestAccount({
+        type: 'Traditional',
+        balance: 1_500_000,
+        assetWeights: { stocks: 1, bonds: 0 },
+      }),
+      createTestAccount({
+        type: 'Traditional',
+        balance: 1_500_000,
+        assetWeights: { stocks: 0, bonds: 1 },
+      }),
+    ];
+    const withContributions = createTestProjectionSettings({
+      randomSeed: 11,
+      hsaEligible: false, useBackdoorRoth: false,
+    });
+    const forward: SimulationPlan = { ...testPlan, accounts, assumptions: withContributions };
+    const reversed: SimulationPlan = {
+      ...forward,
+      accounts: [...accounts].reverse(),
+    };
+
+    const config = { paths: 1, seed: 11 };
+    const forwardWealth = projectScenario(forward, config).terminalWealth;
+    expect(forwardWealth).toBeGreaterThan(0);
+    expect(projectScenario(reversed, config).terminalWealth).toBeCloseTo(forwardWealth, 6);
   });
 
 });

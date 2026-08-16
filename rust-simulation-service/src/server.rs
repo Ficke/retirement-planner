@@ -1,6 +1,7 @@
 use tracing::{error, info};
 use warp::{Filter, Reply};
 
+use crate::simulation::age::age_on;
 use crate::simulation::monte_carlo;
 use crate::types::{
     BatchRequest, BatchResponse, BatchSimulationResponse, RetirementPlan, SimulationRequest,
@@ -112,7 +113,6 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
         results.push(result);
     }
 
-    // Check if any simulations failed
     let mut successful_results = Vec::new();
     let mut errors = Vec::new();
 
@@ -171,20 +171,8 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
         ));
     }
     let profile = &plan.profile;
-    if profile.age < 18 || profile.age > 100 {
-        return Err("age must be between 18 and 100".into());
-    }
     if profile.retirement_age < 45 || profile.retirement_age > 100 {
         return Err("retirementAge must be between 45 and 100".into());
-    }
-    if profile.life_expectancy <= profile.retirement_age
-        || profile.life_expectancy <= profile.age
-        || profile.life_expectancy > 120
-    {
-        return Err(
-            "lifeExpectancy must be after current and retirement ages and no greater than 120"
-                .into(),
-        );
     }
     let Ok(as_of_date) = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d") else {
         return Err("asOfDate must use YYYY-MM-DD".into());
@@ -192,9 +180,21 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     if !(1900..=2200).contains(&chrono::Datelike::year(&as_of_date)) {
         return Err("asOfDate year must be between 1900 and 2200".into());
     }
-    let calendar_age = chrono::Datelike::year(&as_of_date) - profile.birth_year;
-    if calendar_age != profile.age as i32 && calendar_age != profile.age as i32 + 1 {
-        return Err("birthYear must be consistent with age and asOfDate".into());
+    // Age derives from birthDate, so it cannot contradict another stored field.
+    let Ok(age) = age_on(&profile.birth_date, &profile.as_of_date) else {
+        return Err("birthDate must use YYYY-MM-DD and precede asOfDate".into());
+    };
+    if !(18..=100).contains(&age) {
+        return Err("age at asOfDate must be between 18 and 100".into());
+    }
+    if profile.life_expectancy <= profile.retirement_age
+        || profile.life_expectancy <= age
+        || profile.life_expectancy > 120
+    {
+        return Err(
+            "lifeExpectancy must be after current and retirement ages and no greater than 120"
+                .into(),
+        );
     }
     let finite_profile_values = [
         profile.current_salary,
@@ -230,23 +230,10 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     if plan.accounts.len() > 20 {
         return Err("plan may contain at most 20 accounts".into());
     }
-    let contributions = &plan.assumptions.contributions;
     if !plan.assumptions.taxable_gain_ratio.is_finite()
         || !(0.0..=1.0).contains(&plan.assumptions.taxable_gain_ratio)
     {
         return Err("taxableGainRatio must be between 0 and 1".into());
-    }
-    let contribution_values = [
-        contributions.hsa,
-        contributions.traditional,
-        contributions.roth,
-        contributions.taxable,
-    ];
-    if !contribution_values
-        .iter()
-        .all(|value| value.is_finite() && (0.0..=1_000_000.0).contains(value))
-    {
-        return Err("contribution targets must be finite and between 0 and 1000000".into());
     }
     for (index, account) in plan.accounts.iter().enumerate() {
         let weights = &account.asset_weights;
@@ -276,8 +263,7 @@ mod tests {
     fn validates_plan_without_accounts() {
         let plan: RetirementPlan = serde_json::from_value(serde_json::json!({
             "profile": {
-                "age": 40,
-                "birthYear": 1985,
+                "birthDate": "1985-06-15",
                 "state": "CA",
                 "filingStatus": "Single",
                 "retirementAge": 65,
@@ -300,12 +286,8 @@ mod tests {
                 "simulationModel": "historical",
                 "randomSeed": 42,
                 "taxableGainRatio": 0.5,
-                "contributions": {
-                    "hsa": 0.0,
-                    "traditional": 0.0,
-                    "roth": 0.0,
-                    "taxable": 0.0
-                }
+                "hsaEligible": false,
+                "useBackdoorRoth": true
             }
         }))
         .expect("test plan should deserialize");

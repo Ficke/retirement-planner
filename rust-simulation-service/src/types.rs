@@ -1,8 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 2;
+pub const PLAN_SCHEMA_VERSION: u32 = 3;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Version that introduced phase-based spending. Older requests carry a flat
+/// working amount and compound retirement growth from the as-of year. Gating
+/// on this rather than on the current version is what keeps the next schema
+/// bump from reverting the previous version to that older math.
+pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum AccountType {
     Taxable,
@@ -52,9 +58,10 @@ pub struct Account {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
-    pub age: u32,
-    #[serde(rename = "birthYear")]
-    pub birth_year: i32,
+    /// Date of birth, ISO. Age and the RMD / Social Security birth-year cohort
+    /// are both derived from it, so they can never disagree.
+    #[serde(rename = "birthDate")]
+    pub birth_date: String,
     pub state: State,
     #[serde(rename = "filingStatus")]
     pub filing_status: FilingStatus,
@@ -113,7 +120,12 @@ pub struct ProjectionSettings {
     pub random_seed: Option<u64>,
     #[serde(rename = "taxableGainRatio")]
     pub taxable_gain_ratio: f64,
-    pub contributions: AnnualContributions,
+    /// HDHP coverage. Without it there is no HSA contribution to deduct.
+    #[serde(rename = "hsaEligible", default)]
+    pub hsa_eligible: bool,
+    /// Without a backdoor conversion, a Roth IRA contribution is not modeled.
+    #[serde(rename = "useBackdoorRoth", default)]
+    pub use_backdoor_roth: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

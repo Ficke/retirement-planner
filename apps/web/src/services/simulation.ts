@@ -8,6 +8,7 @@
  */
 
 import { runMonteCarloSimulation } from '@/engine/mc';
+import { ageOn, retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
@@ -50,9 +51,12 @@ interface BatchSimulationResponse {
 
 /** Build the minimal transient plan shared by both compute engines. */
 function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
+  const profile = { ...plan.profile, retirementSpending: retirementSpendingOf(plan.profile) };
+  delete (profile as Partial<typeof plan.profile>).retirementSpendingMultiplier;
   return {
     ...plan,
     schemaVersion: PLAN_SCHEMA_VERSION,
+    profile,
     accounts: plan.accounts.map((account) => ({
       type: account.type,
       balance: account.balance,
@@ -72,8 +76,6 @@ function baseSeed(plan: RetirementPlan): number {
 function historicalBootstrapFor(plan: RetirementPlan): boolean {
   return plan.assumptions.simulationModel !== 'parametric';
 }
-
-// --- Scenario builders (shared by both engines) ---
 
 function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
   // Disabled benefits make every path identical. A manual household benefit
@@ -98,8 +100,10 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // 11 levels centered on first-year retirement spending, step ≈ 10% rounded to nearest $5k
-  const base = plan.profile.retirementSpending;
+  // The sweep moves today's spending, not the retirement target, so each level
+  // shows both consequences: saving more now, and needing less later.
+  // 11 levels centered on current spending, step ≈ 10% rounded to nearest $5k.
+  const base = plan.profile.currentSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
   const levels = [...new Set(
     Array.from({ length: 11 }, (_, i) => (
@@ -112,7 +116,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
       id: `spending-${annualSpending}`,
       plan: {
         ...plan,
-        profile: { ...plan.profile, retirementSpending: annualSpending },
+        profile: { ...plan.profile, currentSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
       seed: seed + 2000,
@@ -124,7 +128,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
   // For an already-retired plan, changing a historical retirement age cannot
   // affect future cash flows, so avoid spending compute on duplicate paths.
   const center = plan.profile.retirementAge;
-  if (center <= plan.profile.age) {
+  if (center <= ageOn(plan.profile.birthDate, plan.profile.asOfDate)) {
     return [{
       retirementAge: center,
       scenario: {
@@ -138,7 +142,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
 
   // ±5 years around a future retirement date, bounded by the current age and
   // the modeled lifetime so every generated scenario remains valid.
-  const min = Math.max(plan.profile.age, center - 5, MIN_RETIREMENT_AGE);
+  const min = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), center - 5, MIN_RETIREMENT_AGE);
   const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
   const ages: number[] = [];
   for (let a = min; a <= max; a++) ages.push(a);
@@ -155,8 +159,6 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
     },
   }));
 }
-
-// --- Engine backends ---
 
 async function runOnServer(
   scenarios: Scenario[],
@@ -323,7 +325,7 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  /** Run all Overview sensitivity curves in one bounded server batch. */
+  /** Run all three sensitivity curves in one bounded server batch. */
   async runSensitivityAnalyses(
     plan: RetirementPlan,
     useServerSide = true,

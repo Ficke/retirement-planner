@@ -3,6 +3,12 @@
 ### Data Model
 Accounts store a **balance** and **stock/bond allocation** directly. No transactions, snapshots, or holdings tracking — the simulation only needs portfolio size and asset allocation.
 
+One fact is stored once and everything else derived: the profile keeps
+`birthDate` (age and the RMD / Social Security birth-year cohort follow) and
+`retirementSpendingMultiplier` (the dollar retirement target follows from
+current spending). The engines receive the resolved dollar figure; storage
+keeps the multiplier.
+
 ### Data Modes
 Two data modes, always **derived**, never stored: LOCAL (not signed in, or cloud
 sync off — profile + accounts in localStorage only) and CLOUD (signed in with
@@ -28,8 +34,17 @@ or local (Web Worker).
   (5000 paths, Rayon parallelism), client Web Worker as graceful fallback
 - **Public endpoints are gated**: `/api/simulation/*` is unauthenticated by
   design but rate-limited per IP and clamped (`lib/simulation-request.ts`)
-- **Success/risk-of-ruin**: a path fails if it ever runs short mid-retirement,
-  not just on terminal wealth — both engines use this definition
+- **Savings is the residual**: gross income less taxes and spending, all of it
+  invested. Contributions fill statutory limits HSA → 401(k) → Roth IRA, and
+  taxable absorbs the rest, so `gross = taxes + spending + savings` closes
+  exactly. A working year that spends beyond its income draws on the portfolio,
+  exactly as a retirement year does
+- **Accounts collapse into per-type buckets** at the top of each projection,
+  weights blended by balance. Splitting one balance across two accounts of the
+  same type cannot change a projection
+- **Success/risk-of-ruin**: a path fails if any modeled year — working or
+  retirement — cannot be funded even after drawing down the portfolio, not just
+  on terminal wealth. Both engines use this definition
 
 ### Key Files
 - `apps/web/src/state/usePlan.ts` — Zustand store, data modes, simulation orchestration
