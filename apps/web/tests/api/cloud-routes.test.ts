@@ -56,7 +56,7 @@ const profile = {
   salaryGrowthRate: 0.03,
   currentSpending: 50_000,
   workingSpendingGrowthRate: 0.01,
-  retirementSpending: 60_000,
+  retirementSpendingMultiplier: 1,
   retirementSpendingGrowthRate: 0.02,
   lifeExpectancy: 90,
   asOfDate: '2026-01-01',

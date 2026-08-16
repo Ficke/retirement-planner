@@ -8,7 +8,7 @@
  */
 
 import { runMonteCarloSimulation } from '@/engine/mc';
-import { ageOn } from '@/domain/age';
+import { ageOn, retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
@@ -51,9 +51,12 @@ interface BatchSimulationResponse {
 
 /** Build the minimal transient plan shared by both compute engines. */
 function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
+  const profile = { ...plan.profile, retirementSpending: retirementSpendingOf(plan.profile) };
+  delete (profile as Partial<typeof plan.profile>).retirementSpendingMultiplier;
   return {
     ...plan,
     schemaVersion: PLAN_SCHEMA_VERSION,
+    profile,
     accounts: plan.accounts.map((account) => ({
       type: account.type,
       balance: account.balance,
@@ -99,8 +102,10 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // 11 levels centered on first-year retirement spending, step ≈ 10% rounded to nearest $5k
-  const base = plan.profile.retirementSpending;
+  // Sweeping today's spending captures both effects at once: spending less now
+  // saves more, and — through the multiplier — needs less later.
+  // 11 levels centered on current spending, step ≈ 10% rounded to nearest $5k.
+  const base = plan.profile.currentSpending;
   const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
   const levels = [...new Set(
     Array.from({ length: 11 }, (_, i) => (
@@ -113,7 +118,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
       id: `spending-${annualSpending}`,
       plan: {
         ...plan,
-        profile: { ...plan.profile, retirementSpending: annualSpending },
+        profile: { ...plan.profile, currentSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
       seed: seed + 2000,

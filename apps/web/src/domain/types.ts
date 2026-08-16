@@ -48,8 +48,11 @@ export interface UserProfile {
   currentSpending: number;
   /** Annual real change in working-year spending. */
   workingSpendingGrowthRate: number;
-  /** First modeled retirement year's spending target in real dollars. */
-  retirementSpending: number;
+  /**
+   * Retirement spending as a share of working-year spending. Today's spending
+   * is the lever; the retirement target follows from it.
+   */
+  retirementSpendingMultiplier: number;
   /** Annual real change after the first modeled retirement year. */
   retirementSpendingGrowthRate: number;
   lifeExpectancy: number;
@@ -113,8 +116,16 @@ export interface SimulationAccount {
   assetWeights: AssetWeights;
 }
 
-export interface SimulationPlan extends Omit<RetirementPlan, 'accounts'> {
+/** The profile as the engines see it, with the retirement target resolved. */
+export interface SimulationProfile
+  extends Omit<UserProfile, 'retirementSpendingMultiplier'> {
+  /** First modeled retirement year's spending in real dollars. */
+  retirementSpending: number;
+}
+
+export interface SimulationPlan extends Omit<RetirementPlan, 'accounts' | 'profile'> {
   schemaVersion: 3;
+  profile: SimulationProfile;
   accounts: SimulationAccount[];
 }
 

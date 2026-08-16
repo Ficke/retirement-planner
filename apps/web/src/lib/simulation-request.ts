@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import {
   projectionSettingsSchema,
-  legacyUserProfileSchema,
+  legacySimulationProfileSchema,
   simulationAccountSchema,
   simulationPlanSchema as currentSimulationPlanSchema,
   socialSecuritySettingsSchema,
@@ -45,7 +45,7 @@ const simulationConfigSchema = z.object({
 const legacySimulationPlanSchema = z
   .object({
     schemaVersion: z.number().int().min(0).max(1).optional(),
-    profile: legacyUserProfileSchema,
+    profile: legacySimulationProfileSchema,
     accounts: z.array(simulationAccountSchema),
     socialSecurity: socialSecuritySettingsSchema,
     assumptions: projectionSettingsSchema,

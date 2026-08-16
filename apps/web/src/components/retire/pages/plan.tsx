@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from "react";
 
 import { usePlan } from "@/state/usePlan";
-import { ageOn } from "@/domain/age";
+import { ageOn, retirementSpendingOf } from "@/domain/age";
 import type { FilingStatus, State } from "@/domain/types";
 import { calculateWorkingCashFlow } from "@/engine/tax";
 import { Input } from "@/components/ui/input";
@@ -58,6 +58,7 @@ export function PagePlan() {
   const ss = plan.socialSecurity;
   const { hsaEligible, useBackdoorRoth } = plan.assumptions;
   const age = ageOn(p.birthDate, p.asOfDate);
+  const retirementSpending = retirementSpendingOf(p);
 
   const workingCashFlow = useMemo(() => {
     try {
@@ -95,7 +96,7 @@ export function PagePlan() {
     : null;
   const retirementTransition = finalWorkingSpending == null
     ? null
-    : p.retirementSpending - finalWorkingSpending;
+    : retirementSpending - finalWorkingSpending;
   const retirementTransitionRate = finalWorkingSpending && retirementTransition != null
     ? retirementTransition / finalWorkingSpending
     : null;
@@ -186,15 +187,18 @@ export function PagePlan() {
             <div className="mb-4">
               <h3 className="font-medium">Retirement</h3>
               <p className="text-muted-foreground mt-1 text-sm">
-                The target is independent of working-year spending. Growth applies after the first
-                modeled year of retirement.
+                The target follows today&apos;s spending, so moving the spending lever moves both.
+                Growth applies after the first modeled year of retirement.
               </p>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <CurrencyField
-                label="First-year annual target"
-                value={p.retirementSpending}
-                onChange={(v) => updateProfile({ retirementSpending: v })}
+              <NumberField
+                label="Share of today's spending (%)"
+                value={Number((p.retirementSpendingMultiplier * 100).toFixed(0))}
+                step={1}
+                min={0}
+                max={300}
+                onChange={(v) => updateProfile({ retirementSpendingMultiplier: v / 100 })}
               />
               <NumberField
                 label="Annual real growth (%)"
@@ -215,7 +219,7 @@ export function PagePlan() {
                 Retirement spending now
               </div>
               <div className="mt-1 font-mono text-lg font-semibold">
-                {fmtCurrency(p.retirementSpending)}
+                {fmtCurrency(retirementSpending)}
               </div>
               <p className="text-muted-foreground mt-1 text-sm">
                 This plan is already retired, so the target starts in the as-of year with no
@@ -234,7 +238,7 @@ export function PagePlan() {
               />
               <SpendingPreview
                 label={`First retirement year · age ${p.retirementAge}`}
-                value={p.retirementSpending}
+                value={retirementSpending}
                 detail={retirementTransition == null
                   ? undefined
                   : `${fmtSigned(retirementTransition)}${retirementTransitionRate == null

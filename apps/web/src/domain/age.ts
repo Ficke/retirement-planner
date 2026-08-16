@@ -30,3 +30,11 @@ export function birthDateFromLegacyAge(
   // happened yet at the as-of date; Dec 31 reproduces that, Jan 1 the other case.
   return asOfYear - year === age ? `${year}-01-01` : `${year}-12-31`;
 }
+
+/** The first modeled retirement year's spending, in real dollars. */
+export function retirementSpendingOf(profile: {
+  currentSpending: number;
+  retirementSpendingMultiplier: number;
+}): number {
+  return profile.currentSpending * profile.retirementSpendingMultiplier;
+}

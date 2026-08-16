@@ -39,7 +39,7 @@ const mockPlan: RetirementPlan = {
     salaryGrowthRate: 0.03,
     currentSpending: 50000,
     workingSpendingGrowthRate: 0,
-    retirementSpending: 50000,
+    retirementSpendingMultiplier: 1,
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 90,
     asOfDate: '2024-01-01',

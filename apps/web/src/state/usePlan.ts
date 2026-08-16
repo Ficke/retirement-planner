@@ -149,7 +149,7 @@ const defaultPlan: RetirementPlan = {
     salaryGrowthRate: 0.01,
     currentSpending: 50000,
     workingSpendingGrowthRate: 0.0,
-    retirementSpending: 50000,
+    retirementSpendingMultiplier: 1,
     retirementSpendingGrowthRate: 0.0,
     lifeExpectancy: 90,
     asOfDate: new Date().toISOString().split('T')[0],
@@ -177,9 +177,10 @@ export function hydratePlan(
   type PersistedProfile = Partial<UserProfile> & {
     desiredSpending?: number;
     spendingGrowthRate?: number;
-    /** Pre-v3 fields, replaced by birthDate. */
+    /** Pre-v3 fields, replaced by birthDate and retirementSpendingMultiplier. */
     age?: number;
     birthYear?: number;
+    retirementSpending?: number;
   };
   const profileInput = profileSource && typeof profileSource === 'object'
     ? profileSource as PersistedProfile
@@ -203,6 +204,13 @@ export function hydratePlan(
   // Plans saved before 4113fbe carried this flag; plans saved after do not.
   const legacyUseBackdoorRoth = assumptionsInput.useBackdoorRoth;
   const asOfDate = profileInput.asOfDate ?? defaultPlan.profile.asOfDate;
+  const legacyWorkingSpending = profileInput.currentSpending ?? profileInput.desiredSpending;
+  const legacyTarget = profileInput.retirementSpending ?? profileInput.desiredSpending;
+  // A plan with no working-year spending has no ratio to recover.
+  const legacyRetirementMultiplier =
+    legacyTarget != null && legacyWorkingSpending != null && legacyWorkingSpending > 0
+      ? legacyTarget / legacyWorkingSpending
+      : undefined;
 
   return retirementPlanSchema.parse({
     profile: {
@@ -217,10 +225,12 @@ export function hydratePlan(
       workingSpendingGrowthRate:
         profileInput.workingSpendingGrowthRate
         ?? defaultPlan.profile.workingSpendingGrowthRate,
-      retirementSpending:
-        profileInput.retirementSpending
-        ?? profileInput.desiredSpending
-        ?? defaultPlan.profile.retirementSpending,
+      // Retirement spending used to be its own dollar figure; recover the ratio
+      // it implied so a migrated plan keeps the same target.
+      retirementSpendingMultiplier:
+        profileInput.retirementSpendingMultiplier
+        ?? legacyRetirementMultiplier
+        ?? defaultPlan.profile.retirementSpendingMultiplier,
       retirementSpendingGrowthRate:
         profileInput.retirementSpendingGrowthRate
         ?? profileInput.spendingGrowthRate

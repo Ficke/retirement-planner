@@ -91,7 +91,8 @@ describe('State Management - Simple Invalidation Logic', () => {
     expect(migrated.profile).toMatchObject({
       currentSpending: 48_000,
       workingSpendingGrowthRate: 0,
-      retirementSpending: 60_000,
+      // $60k target on $48k of working-year spending.
+      retirementSpendingMultiplier: 1.25,
       retirementSpendingGrowthRate: 0.02,
     });
     expect(migrated.profile).not.toHaveProperty('desiredSpending');

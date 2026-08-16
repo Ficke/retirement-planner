@@ -22,7 +22,7 @@ const plan: SimulationPlan = {
     salaryGrowthRate: 0.03,
     currentSpending: 60_000,
     workingSpendingGrowthRate: 0,
-    retirementSpending: 60_000,
+    retirementSpending: 50000,
     retirementSpendingGrowthRate: 0.025,
     lifeExpectancy: 90,
     asOfDate: '2026-01-01',

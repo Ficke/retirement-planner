@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
-import { ageOn } from "@/domain/age";
+import { ageOn, retirementSpendingOf } from "@/domain/age";
 import { MIN_RETIREMENT_AGE } from "@/domain/constants";
 import type { SimulationResult } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -189,7 +189,8 @@ export function PageOverview() {
     color: KIND_COLOR[k]?.color ?? "var(--color-muted-foreground)",
   }));
 
-  const monthlyRetirementSpend = plan.profile.retirementSpending / 12;
+  const retirementSpending = retirementSpendingOf(plan.profile);
+  const monthlyRetirementSpend = retirementSpending / 12;
 
   const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
   const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
@@ -260,7 +261,7 @@ export function PageOverview() {
         <Stat
           label="Retirement Spending"
           value={`${fmtCurrency(monthlyRetirementSpend, false).replace(".00", "")}/mo`}
-          trend={`First-year target · ${fmtPercent(plan.profile.retirementSpendingGrowthRate, 1)} annual real growth after`}
+          trend={`${(plan.profile.retirementSpendingMultiplier * 100).toFixed(0)}% of today's spending`}
         />
       </KPIGrid>
 
@@ -282,13 +283,13 @@ export function PageOverview() {
             xFormat={(v) => `Age ${v}`}
           />
           <LeverCard
-            label="First-year retirement spending"
-            value={plan.profile.retirementSpending}
-            display={fmtCurrency(plan.profile.retirementSpending)}
+            label="Annual spending"
+            value={plan.profile.currentSpending}
+            display={fmtCurrency(plan.profile.currentSpending)}
             min={20000}
             max={200000}
             step={1000}
-            onChange={(v) => updatePlan({ profile: { retirementSpending: v } })}
+            onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
             points={spendPts}
             xFormat={(v) => fmtCurrency(v, true)}
           />
