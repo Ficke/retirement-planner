@@ -7,9 +7,9 @@ use chrono::Datelike;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+use super::age::{age_on, birth_year_of};
 use super::historical_data;
 use super::parametric_returns;
-use super::age::{age_on, birth_year_of};
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{
@@ -17,8 +17,8 @@ use super::tax::{
 };
 
 use crate::types::{
-    Account, AccountType, AssetWeights, FilingStatus, PathProjection,
-    PathResult, RetirementPlan, State, PHASE_SPENDING_SCHEMA_VERSION,
+    Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult, RetirementPlan,
+    State, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
 const BUCKET_ORDER: [AccountType; 4] = [
@@ -957,7 +957,11 @@ mod tests {
         };
         let result =
             project_scenario(&overspending_plan(2_000_000.0), config).expect("projection succeeds");
-        let working: Vec<_> = result.projections.iter().filter(|p| !p.is_retired).collect();
+        let working: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|p| !p.is_retired)
+            .collect();
 
         // Overspending has to come out of the portfolio, so the household is
         // drawing down and saving nothing.

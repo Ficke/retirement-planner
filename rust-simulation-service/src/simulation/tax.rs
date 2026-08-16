@@ -1010,7 +1010,10 @@ mod tests {
             &FilingStatus::Single,
             &State::TX,
             &policy,
-            OtherIncome { ordinary: 40_000.0, qualified: 0.0 },
+            OtherIncome {
+                ordinary: 40_000.0,
+                qualified: 0.0,
+            },
         );
         let rmd_misclassified_as_wages = calculate_working_cash_flow(
             140_000.0,
