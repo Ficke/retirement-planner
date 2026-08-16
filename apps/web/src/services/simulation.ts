@@ -7,7 +7,7 @@
  * engines differ only in where the math runs.
  */
 
-import { runMonteCarloSimulation } from '@/engine/mc';
+import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { ageOn, retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
@@ -15,6 +15,7 @@ import type {
   RetirementPlan,
   SimulationPlan,
   SimulationResult,
+  SimulationSummary,
   SSAnalysisResult,
   SpendingAnalysisResult,
   RetirementAgeAnalysisResult
@@ -35,7 +36,16 @@ export interface SensitivityAnalysisResults {
 }
 
 const MAIN_PATHS = 5000;
-const SWEEP_PATHS = 1000; // reduced per-scenario paths for interactive sweeps
+// The headline and every sensitivity scenario share one root seed, so path i
+// draws the same market returns at every grid point. That makes sampling error
+// common-mode along a curve — the shape stays readable at path counts far
+// below what an absolute probability would need. The main simulation, not
+// these curves, is what reports the headline number.
+const SWEEP_PATHS = 300;
+
+// Sweep 60–120% of current spending. The wider downside range shows how
+// spending less during working years increases savings for retirement.
+const SPENDING_PERCENTS = [60, 70, 80, 90, 100, 110, 120];
 
 interface Scenario {
   id: string;
@@ -46,7 +56,9 @@ interface Scenario {
 
 interface BatchSimulationResponse {
   id: string;
-  result: SimulationResult;
+  successProbability?: number;
+  /** This supports rolling deployments against Rust services that predate summary responses. */
+  result?: Pick<SimulationResult, 'successProbability'>;
 }
 
 /** Build the minimal transient plan shared by both compute engines. */
@@ -65,12 +77,8 @@ function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
   };
 }
 
-/**
- * Base seed for a run. A fixed seed (Settings → Randomness) gives reproducible
- * results; otherwise each run draws a fresh sample.
- */
 function baseSeed(plan: RetirementPlan): number {
-  return plan.assumptions.randomSeed ?? Math.floor(Math.random() * 2 ** 31);
+  return plan.assumptions.randomSeed;
 }
 
 function historicalBootstrapFor(plan: RetirementPlan): boolean {
@@ -82,7 +90,7 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
   // is authoritative only at its selected claim age; without spouse/statement
   // detail, inventing nine differently adjusted benefits would be misleading.
   const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
-    ? Array.from({ length: 9 }, (_, i) => 62 + i)
+    ? [62, 64, 66, 68, 70]
     : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
@@ -93,8 +101,7 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
         socialSecurity: { ...plan.socialSecurity, claimAge },
       },
       paths: SWEEP_PATHS,
-      // Common random numbers isolate the effect of claim age from MC noise.
-      seed: seed + 1000,
+      seed,
     },
   }));
 }
@@ -102,12 +109,14 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
   // The sweep moves today's spending, not the retirement target, so each level
   // shows both consequences: saving more now, and needing less later.
-  // 11 levels centered on current spending, step ≈ 10% rounded to nearest $5k.
+  // The 100% level uses the base verbatim so the marker lands on a real grid
+  // point rather than an interpolated one.
   const base = plan.profile.currentSpending;
-  const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
   const levels = [...new Set(
-    Array.from({ length: 11 }, (_, i) => (
-      Math.max(0, Math.min(1_000_000_000, base + step * (i - 5)))
+    SPENDING_PERCENTS.map((percent) => (
+      percent === 100
+        ? base
+        : Math.max(0, Math.min(1_000_000_000, Math.round(base * percent / 100_000) * 1000))
     )),
   )];
   return levels.map((annualSpending) => ({
@@ -119,7 +128,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
         profile: { ...plan.profile, currentSpending: annualSpending },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 2000,
+      seed,
     },
   }));
 }
@@ -135,17 +144,19 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         id: `retirementAge-${center}`,
         plan,
         paths: SWEEP_PATHS,
-        seed: seed + 3000,
+        seed,
       },
     }];
   }
 
-  // ±5 years around a future retirement date, bounded by the current age and
-  // the modeled lifetime so every generated scenario remains valid.
-  const min = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), center - 5, MIN_RETIREMENT_AGE);
-  const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
-  const ages: number[] = [];
-  for (let a = min; a <= max; a++) ages.push(a);
+  // ±4 years in 2-year steps, bounded by the current age and the modeled
+  // lifetime so every generated scenario remains valid. The center is always
+  // included, so the marker lands on a real grid point.
+  const lo = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), MIN_RETIREMENT_AGE);
+  const hi = Math.min(100, plan.profile.lifeExpectancy - 1);
+  const ages = [-4, -2, 0, 2, 4]
+    .map((offset) => center + offset)
+    .filter((age) => age >= lo && age <= hi);
   return ages.map((retirementAge) => ({
     retirementAge,
     scenario: {
@@ -155,7 +166,7 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
         profile: { ...plan.profile, retirementAge },
       },
       paths: SWEEP_PATHS,
-      seed: seed + 3000,
+      seed,
     },
   }));
 }
@@ -164,8 +175,9 @@ async function runOnServer(
   scenarios: Scenario[],
   plan: RetirementPlan,
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
+): Promise<Map<string, SimulationSummary>> {
   const body = {
+    responseMode: 'summary',
     simulations: scenarios.map((s) => ({
       id: s.id,
       plan: toSimulationPlan(s.plan),
@@ -191,9 +203,13 @@ async function runOnServer(
   }
 
   const data: { results: BatchSimulationResponse[] } = await response.json();
-  const map = new Map<string, SimulationResult>();
+  const map = new Map<string, SimulationSummary>();
   for (const r of data.results) {
-    map.set(r.id, { ...r.result, source: 'server' });
+    const successProbability = r.successProbability ?? r.result?.successProbability;
+    if (successProbability == null) {
+      throw new Error(`Batch simulation omitted success probability for '${r.id}'`);
+    }
+    map.set(r.id, { successProbability, source: 'server' });
   }
   return map;
 }
@@ -201,16 +217,20 @@ async function runOnServer(
 async function runOnClient(
   scenarios: Scenario[],
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
-  const map = new Map<string, SimulationResult>();
-  for (const s of scenarios) {
-    if (signal?.aborted) throw new DOMException('Simulation aborted', 'AbortError');
-    const result = await runMonteCarloSimulation(
-      toSimulationPlan(s.plan),
-      { paths: s.paths, seed: s.seed },
-      signal,
-    );
-    map.set(s.id, { ...result, source: 'client' });
+): Promise<Map<string, SimulationSummary>> {
+  const paths = scenarios[0]?.paths ?? 0;
+  const seed = scenarios[0]?.seed ?? 0;
+  if (scenarios.some((scenario) => scenario.paths !== paths || scenario.seed !== seed)) {
+    throw new Error('Sensitivity scenarios must share one path count and root seed');
+  }
+  const summaries = await runMonteCarloSummaries(
+    scenarios.map((scenario) => ({ id: scenario.id, plan: toSimulationPlan(scenario.plan) })),
+    { paths, seed },
+    signal,
+  );
+  const map = new Map<string, SimulationSummary>();
+  for (const result of summaries) {
+    map.set(result.id, { successProbability: result.successProbability, source: 'client' });
   }
   return map;
 }
@@ -224,7 +244,7 @@ async function runScenarios(
   plan: RetirementPlan,
   useServerSide: boolean,
   signal?: AbortSignal,
-): Promise<Map<string, SimulationResult>> {
+): Promise<Map<string, SimulationSummary>> {
   if (useServerSide) {
     try {
       return await runOnServer(scenarios, plan, signal);

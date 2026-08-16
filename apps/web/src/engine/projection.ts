@@ -76,6 +76,45 @@ export interface ProjectionConfig {
   seed: number;
 }
 
+export interface PathSummary {
+  terminalWealth: number;
+  success: boolean;
+}
+
+interface SweepProjectionScenario {
+  plan: SimulationPlan;
+}
+
+/** Count successful paths for one path-index shard without retaining yearly rows. */
+export function countSweepSuccesses(
+  scenarios: readonly SweepProjectionScenario[],
+  rootSeed: number,
+  startPath: number,
+  endPath: number,
+): number[] {
+  if (
+    !Number.isSafeInteger(startPath)
+    || !Number.isSafeInteger(endPath)
+    || startPath < 0
+    || endPath < startPath
+  ) {
+    throw new RangeError('Sweep shard bounds must be safe integers with 0 <= startPath <= endPath');
+  }
+  const successCounts = new Array<number>(scenarios.length).fill(0);
+  for (let pathIndex = startPath; pathIndex < endPath; pathIndex++) {
+    const pathSeed = rootSeed + pathIndex;
+    for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
+      const result = projectScenarioSummary(
+        scenarios[scenarioIndex].plan,
+        { paths: 1, seed: pathSeed },
+      );
+      if (result.success) successCounts[scenarioIndex]++;
+    }
+  }
+  return successCounts;
+}
+
+/** Generates market returns for single-year and block bootstrapping. */
 export interface MarketReturnsGenerator {
   next(): { stockReturn: number; bondReturn: number };
 }
@@ -87,6 +126,23 @@ export interface MarketReturnsGenerator {
 export function projectScenario(
   plan: SimulationPlan,
   config: ProjectionConfig
+): PathResult {
+  return projectScenarioInternal(plan, config, true);
+}
+
+/** Run the exact projection loop without retaining yearly cash-flow rows. */
+export function projectScenarioSummary(
+  plan: SimulationPlan,
+  config: ProjectionConfig,
+): PathSummary {
+  const result = projectScenarioInternal(plan, config, false);
+  return { terminalWealth: result.terminalWealth, success: result.success };
+}
+
+function projectScenarioInternal(
+  plan: SimulationPlan,
+  config: ProjectionConfig,
+  recordProjections: boolean,
 ): PathResult {
   const { profile, accounts, socialSecurity } = plan;
 
@@ -108,6 +164,7 @@ export function projectScenario(
   const totalYears = profile.lifeExpectancy - age + 1;
 
   const yearlyProjections: PathProjection[] = [];
+  let success = true;
 
   const accountBalances: ProjectionAccount[] = toBuckets(accounts);
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
@@ -352,33 +409,33 @@ export function projectScenario(
       .filter(acc => acc.type === 'Traditional')
       .reduce((sum, acc) => sum + acc.balance, 0);
     
-    yearlyProjections.push({
-      year: currentYear + year,
-      age: currentAge,
-      portfolioValue: currentPortfolioValue,
-      income,
-      spending,
-      taxes,
-      savings,
-      socialSecurityBenefit,
-      isRetired,
-      withdrawalTaxable: withdrawalTaxableYear,
-      withdrawalTraditional: withdrawalTraditionalYear,
-      withdrawalRoth: withdrawalRothYear,
-      withdrawalHSA: withdrawalHSAYear,
-      rmdAmount,
-      depositTaxable: depositTaxableYear,
-      depositTraditional: depositTraditionalYear,
-      depositRoth: depositRothYear,
-      depositHSA: depositHSAYear,
-      insufficientFunds: insufficientFundsYear,
-    });
+    if (insufficientFundsYear) success = false;
+    if (recordProjections) {
+      yearlyProjections.push({
+        year: currentYear + year,
+        age: currentAge,
+        portfolioValue: currentPortfolioValue,
+        income,
+        spending,
+        taxes,
+        savings,
+        socialSecurityBenefit,
+        isRetired,
+        withdrawalTaxable: withdrawalTaxableYear,
+        withdrawalTraditional: withdrawalTraditionalYear,
+        withdrawalRoth: withdrawalRothYear,
+        withdrawalHSA: withdrawalHSAYear,
+        rmdAmount,
+        depositTaxable: depositTaxableYear,
+        depositTraditional: depositTraditionalYear,
+        depositRoth: depositRothYear,
+        depositHSA: depositHSAYear,
+        insufficientFunds: insufficientFundsYear,
+      });
+    }
   }
   
   const finalWealth = currentPortfolioValue;
-  const everHadInsufficientFunds = yearlyProjections.some(p => p.insufficientFunds);
-  const success = !everHadInsufficientFunds;
-
   return {
     terminalWealth: finalWealth,
     projections: yearlyProjections,

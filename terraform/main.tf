@@ -63,8 +63,11 @@ module "rust_simulation" {
   service_name = var.rust_service_name
   image        = var.rust_service_image
 
-  # No environment variables needed for Rust service
-  env_vars        = {}
+  # Pin Rayon to the CPU allocation instead of relying on host/cgroup
+  # discovery, which can otherwise expose more host cores than the container.
+  env_vars = {
+    SIMULATION_THREADS = var.rust_cpu_limit
+  }
   secret_env_vars = {}
 
   # Resource limits optimized for compute-intensive simulations

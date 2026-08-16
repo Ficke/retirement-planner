@@ -164,7 +164,9 @@ export const socialSecuritySettingsSchema = z.object({
 });
 
 export const projectionSettingsSchema = z.object({
-  randomSeed: z.number().int().min(0).optional(),
+  // Accept plans saved by older app revisions, then normalize them to the
+  // single app-wide root seed.
+  randomSeed: z.number().int().min(0).max(2 ** 32 - 1).default(42),
   simulationModel: z.enum(['historical', 'parametric'] as const),
   taxableGainRatio: z.number().min(0).max(1),
   hsaEligible: z.boolean(),

@@ -193,6 +193,7 @@ describe('Withdrawal Logic', () => {
       },
       assumptions: {
         simulationModel: 'historical' as const,
+        randomSeed: 42,
         taxableGainRatio: 0.5,
         hsaEligible: false, useBackdoorRoth: false,
       }

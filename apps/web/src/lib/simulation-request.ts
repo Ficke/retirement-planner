@@ -20,7 +20,7 @@ import { MAX_PLAN_ACCOUNTS, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 /** Hard ceiling on paths per simulation — matches what the UI ever requests. */
 export const MAX_PATHS = 5000;
-/** Max scenarios in one batch request (UI sweeps use at most ~11). */
+/** This leaves headroom above the UI's 17-scenario sweep while bounding batch fan-out. */
 export const MAX_BATCH_SIMULATIONS = 40;
 /** Max total paths across a batch request. */
 export const MAX_BATCH_TOTAL_PATHS = 40_000;
@@ -70,6 +70,7 @@ export const monteCarloRequestSchema = z.object({
 
 export const batchRequestSchema = z
   .object({
+    responseMode: z.enum(['full', 'summary']).default('full'),
     simulations: z
       .array(
         z.object({
@@ -89,14 +90,16 @@ export const batchRequestSchema = z
 
 /** Per-IP limits: generous for interactive use, hostile to scripted abuse. */
 export const SIMULATION_RATE_LIMIT = {
-  limit: 60,
+  limit: 300,
   windowMs: 60 * 1000,
 } as const;
 
 /** Per-instance backstop; production also needs a distributed quota. */
 export const SIMULATION_PATH_RATE_LIMIT = {
-  // A normal Plan page refresh costs ~36k paths (main + three curves).
-  // Allow a few interactive edits while bounding per-instance CPU exposure.
-  limit: 120_000,
+  // A complete Plan refresh costs 10,100 paths: 5,000 main paths plus 17
+  // sensitivity scenarios at 300 paths each. This budget permits 99 complete
+  // refreshes per minute, leaving headroom for debounced edits while bounding
+  // sustained automation.
+  limit: 1_000_000,
   windowMs: 60 * 1000,
 } as const;

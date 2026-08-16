@@ -81,6 +81,7 @@ describe('RMD Calculation', () => {
       },
       assumptions: {
         simulationModel: 'historical',
+        randomSeed: 42,
         taxableGainRatio: 0.5,
         hsaEligible: false, useBackdoorRoth: false,
       }

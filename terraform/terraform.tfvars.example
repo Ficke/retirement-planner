@@ -75,11 +75,10 @@ build_substitutions = {
 # Rust Simulation Service Configuration
 rust_service_name     = "rust-simulation-service"
 rust_service_image    = "us-central1-docker.pkg.dev/your-gcp-project-id/retire-plan/rust-simulation:latest"
-# 4 vCPU / 2Gi: Rayon parallelizes paths across cores, so more cores cut
-# wall-clock at roughly the same vCPU-second cost. Cloud Run requires >=2Gi at
-# 4 vCPU. Concurrency is pinned to 1 in main.tf so a request gets all cores.
-rust_memory_limit     = "2Gi"
-rust_cpu_limit        = "4"
+# 8 vCPU / 4Gi: Rayon parallelizes sweep paths across the full Cloud Run CPU
+# ceiling. Concurrency is pinned to 1 so one request owns all eight threads.
+rust_memory_limit     = "4Gi"
+rust_cpu_limit        = "8"
 rust_min_instances    = 0
 rust_max_instances    = 10
 rust_timeout_seconds  = 120

@@ -191,15 +191,20 @@ variable "rust_service_image" {
 }
 
 variable "rust_memory_limit" {
-  description = "Memory limit for Rust simulation service. Cloud Run requires >=2Gi when cpu_limit is 4."
+  description = "Memory limit for Rust simulation service. Cloud Run requires >=4Gi when cpu_limit is 8."
   type        = string
-  default     = "2Gi"
+  default     = "4Gi"
 }
 
 variable "rust_cpu_limit" {
-  description = "CPU limit for Rust simulation service. 4 vCPU lets Rayon roughly halve sim wall-clock at the same vCPU-second cost."
+  description = "CPU limit for Rust simulation service. Eight vCPU is Cloud Run's per-instance ceiling."
   type        = string
-  default     = "4"
+  default     = "8"
+
+  validation {
+    condition     = contains(["1", "2", "4", "6", "8"], var.rust_cpu_limit)
+    error_message = "rust_cpu_limit must be a supported whole-vCPU Cloud Run value: 1, 2, 4, 6, or 8."
+  }
 }
 
 variable "rust_min_instances" {

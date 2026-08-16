@@ -4,8 +4,8 @@ use warp::{Filter, Reply};
 use crate::simulation::age::age_on;
 use crate::simulation::monte_carlo;
 use crate::types::{
-    BatchRequest, BatchResponse, BatchSimulationResponse, RetirementPlan, SimulationRequest,
-    PLAN_SCHEMA_VERSION,
+    BatchRequest, BatchResponse, BatchResponseMode, BatchSimulationResponse, BatchSummaryResponse,
+    MCConfig, RetirementPlan, SimulationRequest, SimulationResult, PLAN_SCHEMA_VERSION,
 };
 
 const MAX_PATHS: u32 = 5_000;
@@ -35,7 +35,7 @@ async fn handle_simulate(request: SimulationRequest) -> Result<Box<dyn Reply>, w
         request.config.paths
     );
 
-    match monte_carlo::run_simulation(request.plan, request.config).await {
+    match run_simulation_blocking(request.plan, request.config).await {
         Ok(result) => {
             info!("Simulation completed successfully");
             Ok(Box::new(warp::reply::json(&result)))
@@ -94,8 +94,34 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
         num_sims, total_paths
     );
 
-    // Each simulation already uses Rayon across paths. Running scenarios in a
-    // bounded sequence avoids nested Tokio/Rayon oversubscription.
+    if request.response_mode == BatchResponseMode::Summary {
+        let simulations = request.simulations;
+        let result = tokio::task::spawn_blocking(move || monte_carlo::run_sweep(simulations)).await;
+        return match result {
+            Ok(Ok(results)) => {
+                info!(
+                    "Summary batch completed: all {} simulations successful",
+                    results.len()
+                );
+                Ok(Box::new(warp::reply::json(&BatchSummaryResponse {
+                    results,
+                })))
+            }
+            Ok(Err(error)) => {
+                error!("Summary batch failed: {}", error);
+                Ok(internal_error("Batch simulation failed", error.to_string()))
+            }
+            Err(error) => {
+                error!("Summary batch task failed: {}", error);
+                Ok(internal_error(
+                    "Batch simulation task failed",
+                    error.to_string(),
+                ))
+            }
+        };
+    }
+
+    // Preserve the full response shape for browser bundles deployed before summary mode.
     let mut results: Vec<Result<BatchSimulationResponse, String>> = Vec::with_capacity(num_sims);
     for sim_req in request.simulations {
         let id = sim_req.id;
@@ -103,7 +129,7 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
             "Running simulation '{}' with {} paths",
             id, sim_req.config.paths
         );
-        let result = match monte_carlo::run_simulation(sim_req.plan, sim_req.config).await {
+        let result = match run_simulation_blocking(sim_req.plan, sim_req.config).await {
             Ok(result) => Ok(BatchSimulationResponse { id, result }),
             Err(error) => {
                 error!("Simulation '{}' failed: {}", id, error);
@@ -146,6 +172,26 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
     }
 }
 
+async fn run_simulation_blocking(
+    plan: RetirementPlan,
+    config: MCConfig,
+) -> Result<SimulationResult, String> {
+    tokio::task::spawn_blocking(move || monte_carlo::run_simulation(plan, config))
+        .await
+        .map_err(|error| format!("simulation task failed: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+fn internal_error(message: &str, details: String) -> Box<dyn Reply> {
+    Box::new(warp::reply::with_status(
+        warp::reply::json(&serde_json::json!({
+            "error": message,
+            "message": details,
+        })),
+        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+    ))
+}
+
 fn bad_request(message: String) -> Box<dyn Reply> {
     Box::new(warp::reply::with_status(
         warp::reply::json(&serde_json::json!({ "error": message })),
@@ -156,6 +202,9 @@ fn bad_request(message: String) -> Box<dyn Reply> {
 fn validate_simulation_request(request: &SimulationRequest) -> Result<(), String> {
     if request.config.paths == 0 || request.config.paths > MAX_PATHS {
         return Err(format!("paths must be between 1 and {MAX_PATHS}"));
+    }
+    if request.config.seed > u32::MAX as u64 {
+        return Err("seed must be a 32-bit unsigned integer".into());
     }
     if !(1..=10).contains(&request.config.block_size) {
         return Err("blockSize must be between 1 and 10".into());
@@ -229,6 +278,9 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     }
     if plan.accounts.len() > 20 {
         return Err("plan may contain at most 20 accounts".into());
+    }
+    if plan.assumptions.random_seed > u32::MAX as u64 {
+        return Err("randomSeed must be a 32-bit unsigned integer".into());
     }
     if !plan.assumptions.taxable_gain_ratio.is_finite()
         || !(0.0..=1.0).contains(&plan.assumptions.taxable_gain_ratio)
@@ -307,5 +359,26 @@ mod tests {
         assert!(validate_plan(&current)
             .unwrap_err()
             .contains("newer than supported"));
+
+        let mut oversized_plan_seed = plan.clone();
+        oversized_plan_seed.assumptions.random_seed = u32::MAX as u64 + 1;
+        assert_eq!(
+            validate_plan(&oversized_plan_seed),
+            Err("randomSeed must be a 32-bit unsigned integer".into())
+        );
+
+        let request = SimulationRequest {
+            plan,
+            config: MCConfig {
+                paths: 1,
+                seed: u32::MAX as u64 + 1,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        };
+        assert_eq!(
+            validate_simulation_request(&request),
+            Err("seed must be a 32-bit unsigned integer".into())
+        );
     }
 }

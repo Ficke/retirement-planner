@@ -69,6 +69,14 @@ export function SensitivityChart({
           stroke="var(--color-y)"
           strokeWidth={2}
           dot={false}
+          // Keep the hover marker hollow and small so it cannot be confused
+          // with the solid marker for the plan's current value.
+          activeDot={{
+            r: 3,
+            fill: "var(--color-background)",
+            stroke: "var(--color-foreground)",
+            strokeWidth: 1.5,
+          }}
           isAnimationActive={false}
         />
         {marker && (
@@ -85,7 +93,10 @@ export function SensitivityChart({
           cursor={{ stroke: "var(--color-foreground)", strokeOpacity: 0.4 }}
           content={
             <ChartTooltipContent
-              labelFormatter={(label) => xFormat(Number(label))}
+              // The tooltip label arrives as the series config label ("Success"),
+              // not the x value, because a numeric XAxis skips ChartTooltipContent's
+              // string branch. Read x off the datum instead.
+              labelFormatter={(_, payload) => xFormat(Number(payload?.[0]?.payload?.x))}
               formatter={(value) => (
                 <span className="font-mono">Success: {fmtPercent(Number(value))}</span>
               )}

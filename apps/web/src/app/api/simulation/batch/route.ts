@@ -66,8 +66,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await rustResponse.json();
-    return NextResponse.json(result);
+    return new NextResponse(rustResponse.body, {
+      status: rustResponse.status,
+      headers: { 'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json' },
+    });
   } catch (error) {
     console.error('Batch simulation proxy error:', error);
 

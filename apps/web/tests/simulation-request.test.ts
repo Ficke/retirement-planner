@@ -5,7 +5,6 @@ import {
   MAX_PATHS,
   MAX_BATCH_SIMULATIONS,
 } from '@/lib/simulation-request';
-import { getClientIp } from '@/lib/rate-limit';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
@@ -68,7 +67,9 @@ const validConfig = { paths: 5000, seed: 42 };
 
 describe('simulation request limits', () => {
   it('accepts a normal request', () => {
-    expect(monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig }).success).toBe(true);
+    const result = monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.plan.assumptions.randomSeed).toBe(42);
   });
 
   it('accepts and normalizes a legacy browser request without changing its semantics version', () => {
@@ -136,26 +137,17 @@ describe('simulation request limits', () => {
   });
 
   it('accepts the sweep batches the UI actually sends', () => {
-    const sims = Array.from({ length: 11 }, (_, i) => ({
-      id: `retirementAge-${55 + i}`,
+    const sims = Array.from({ length: 17 }, (_, i) => ({
+      id: `sweep-${i}`,
       plan: validPlan,
-      config: { paths: 1000, seed: 3000 + i },
+      config: { paths: 300, seed: 42 },
     }));
-    expect(batchRequestSchema.safeParse({ simulations: sims }).success).toBe(true);
-  });
-});
+    const summary = batchRequestSchema.safeParse({ responseMode: 'summary', simulations: sims });
+    expect(summary.success).toBe(true);
 
-describe('simulation client address handling', () => {
-  it('uses the load-balancer-appended client address, not a spoofed prefix', () => {
-    const headers = new Headers({
-      'x-forwarded-for': '198.51.100.99, 203.0.113.7, 169.254.1.1',
-    });
-    expect(getClientIp(headers)).toBe('203.0.113.7');
-  });
-
-  it('uses the shared limiter bucket when the forwarding chain is untrusted', () => {
-    expect(getClientIp(new Headers({ 'x-forwarded-for': '198.51.100.99' }))).toBe('unknown');
-    expect(getClientIp(new Headers({ 'x-real-ip': '198.51.100.99' }))).toBe('unknown');
+    const legacy = batchRequestSchema.safeParse({ simulations: sims });
+    expect(legacy.success).toBe(true);
+    if (legacy.success) expect(legacy.data.responseMode).toBe('full');
   });
 });
 

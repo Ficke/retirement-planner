@@ -27,11 +27,14 @@ or local (Web Worker).
 - **Two engines, one set of semantics**: scenario sweeps, seeds, and the
   historical dataset are defined once (`services/simulation.ts`,
   `data/market-history-annual.ts`) and shared by both engines
+- **One root seed**: every plan has a seed (default `42`); main and sensitivity
+  path `i` both use `seed + pathIndex`. There is no random-per-run mode.
 - **Canonical dataset**: `data/market-history-annual.ts` (1928–2024, Damodaran
   S&P 500 + 10yr Treasury, BLS CPI). The Rust table is GENERATED from it —
   after editing run `node scripts/gen-rust-historical-data.mjs`
 - **Server-first**: Rust Monte Carlo service at `rust-simulation-service/`
-  (5000 paths, Rayon parallelism), client Web Worker as graceful fallback
+  (5,000 main paths, path-major Rayon sensitivity kernel); local mode uses a
+  dedicated main Worker plus a bounded sensitivity Worker pool
 - **Public endpoints are gated**: `/api/simulation/*` is unauthenticated by
   design but rate-limited per IP and clamped (`lib/simulation-request.ts`)
 - **Savings is the residual**: gross income less taxes and spending, all of it

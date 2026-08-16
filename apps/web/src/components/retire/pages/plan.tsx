@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
 import { ageOn, retirementSpendingOf } from "@/domain/age";
 import { MIN_RETIREMENT_AGE } from "@/domain/constants";
-import type { SimulationResult } from "@/domain/types";
+import type { SimulationResult, SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,7 +29,7 @@ function toPoints<T>(arr: T[] | null | undefined, xKey: keyof T): Point[] {
   return arr
     .map((item) => ({
       x: item[xKey] as unknown as number,
-      y: (item as unknown as { result: SimulationResult }).result.successProbability,
+      y: (item as unknown as { result: SimulationSummary }).result.successProbability,
     }))
     .sort((a, b) => a.x - b.x);
 }

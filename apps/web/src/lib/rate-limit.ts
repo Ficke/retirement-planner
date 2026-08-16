@@ -128,19 +128,16 @@ export async function rateLimit(
 }
 
 /**
- * Get client IP from Next.js request headers
+ * Cloud Run appends one trusted client address to `x-forwarded-for`. Reading
+ * from the right skips any prefix supplied by the caller. Increase this count
+ * if another trusted proxy is added in front of Cloud Run.
  */
+const TRUSTED_PROXY_HOPS = 1;
+
 export function getClientIp(headers: Headers): string {
   const forwardedFor = headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    const addresses = forwardedFor.split(',').map((address) => address.trim()).filter(Boolean);
-    // Google load balancers append the client and load-balancer addresses;
-    // any values before those may be user supplied. A shorter chain cannot be
-    // authenticated in this deployment and therefore uses the shared bucket.
-    return addresses.length >= 2 ? addresses[addresses.length - 2] : 'unknown';
-  }
+  if (!forwardedFor) return 'unknown';
 
-  // Do not trust x-real-ip: clients can supply it when an upstream does not
-  // overwrite it consistently.
-  return 'unknown';
+  const addresses = forwardedFor.split(',').map((address) => address.trim()).filter(Boolean);
+  return addresses[addresses.length - TRUSTED_PROXY_HOPS] ?? 'unknown';
 }
