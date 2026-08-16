@@ -201,8 +201,6 @@ export function hydratePlan(
         roth: assumptionsInput.contributions.roth ?? 0,
       }
     : null;
-  // Plans saved before 4113fbe carried this flag; plans saved after do not.
-  const legacyUseBackdoorRoth = assumptionsInput.useBackdoorRoth;
   const asOfDate = profileInput.asOfDate ?? defaultPlan.profile.asOfDate;
   const legacyWorkingSpending = profileInput.currentSpending ?? profileInput.desiredSpending;
   const legacyTarget = profileInput.retirementSpending ?? profileInput.desiredSpending;
@@ -258,8 +256,9 @@ export function hydratePlan(
       // kind of space available to fill.
       hsaEligible: assumptionsInput.hsaEligible
         ?? (legacyContributions?.hsa ?? 0) > 0,
+      // Plans saved between 4113fbe and this change carry no flag at all, so
+      // their Roth target is the only surviving evidence of the intent.
       useBackdoorRoth: assumptionsInput.useBackdoorRoth
-        ?? legacyUseBackdoorRoth
         ?? (legacyContributions ? legacyContributions.roth > 0 : true),
     },
     accounts: Array.isArray(accountsSource) ? accountsSource : [],

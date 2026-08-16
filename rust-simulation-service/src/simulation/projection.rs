@@ -18,7 +18,7 @@ use super::tax::{
 
 use crate::types::{
     Account, AccountType, AssetWeights, FilingStatus, PathProjection,
-    PathResult, RetirementPlan, State, PLAN_SCHEMA_VERSION,
+    PathResult, RetirementPlan, State, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
 const BUCKET_ORDER: [AccountType; 4] = [
@@ -277,7 +277,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             // WORKING PHASE
             let annual_salary =
                 profile.current_salary * (1.0 + profile.salary_growth_rate).powi(year as i32);
-            let annual_working_spending = if plan.schema_version >= PLAN_SCHEMA_VERSION {
+            let annual_working_spending = if plan.schema_version >= PHASE_SPENDING_SCHEMA_VERSION {
                 profile.current_spending
                     * (1.0 + profile.working_spending_growth_rate).powi(year as i32)
             } else {
@@ -430,7 +430,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             } else {
                 1.0
             };
-            let spending_growth_exponent = if plan.schema_version >= PLAN_SCHEMA_VERSION {
+            let spending_growth_exponent = if plan.schema_version >= PHASE_SPENDING_SCHEMA_VERSION {
                 let retirement_start_year = profile.retirement_age.saturating_sub(age);
                 year - retirement_start_year
             } else {
@@ -866,6 +866,7 @@ fn is_leap_year(year: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PLAN_SCHEMA_VERSION;
     use crate::types::{
         AssetWeights, ProjectionSettings, SimulationModel, SocialSecuritySettings, UserProfile,
     };
@@ -1074,7 +1075,6 @@ mod tests {
     #[test]
     fn phase_based_spending_uses_separate_growth_clocks() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1966-01-01".to_string();
         plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 63;
@@ -1103,7 +1103,6 @@ mod tests {
     #[test]
     fn already_retired_plan_starts_retirement_growth_at_zero() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.birth_date = "1957-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 69;
@@ -1125,11 +1124,42 @@ mod tests {
         assert!((result.projections[1].spending - 55_000.0).abs() < 1e-6);
     }
 
+    /// The gate is the version that introduced phase-based spending, not the
+    /// current one, so bumping the schema for an unrelated reason must not send
+    /// a still-deployed bundle back to the pre-phase math.
+    #[test]
+    fn phase_spending_applies_to_every_version_from_its_own() {
+        let mut plan = test_plan();
+        plan.schema_version = PHASE_SPENDING_SCHEMA_VERSION;
+        plan.profile.birth_date = "1965-01-01".to_string();
+        plan.profile.retirement_age = 62;
+        plan.profile.life_expectancy = 62;
+        plan.profile.current_spending = 40_000.0;
+        plan.profile.working_spending_growth_rate = 0.1;
+        plan.profile.retirement_spending = 70_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.1;
+        plan.profile.as_of_date = "2025-01-01".into();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        // Working spending compounds, and retirement growth starts at retirement.
+        assert!((result.projections[0].spending - 40_000.0).abs() < 1e-6);
+        assert!((result.projections[1].spending - 44_000.0).abs() < 1e-6);
+        assert!((result.projections[2].spending - 70_000.0).abs() < 1e-6);
+    }
+
     #[test]
     fn legacy_schema_preserves_original_spending_math() {
         let mut plan = test_plan();
         plan.schema_version = 0;
-        plan.profile.birth_date = "1966-01-01".to_string();
         plan.profile.birth_date = "1965-01-01".to_string();
         plan.profile.retirement_age = 62;
         plan.profile.life_expectancy = 62;
@@ -1157,7 +1187,6 @@ mod tests {
     #[test]
     fn current_year_retirement_cash_flows_are_prorated() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1959-01-01".to_string();
         plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 67;
         plan.profile.life_expectancy = 68;
@@ -1188,7 +1217,6 @@ mod tests {
     #[test]
     fn rmd_excess_is_reinvested_after_tax_and_cash_reconciles() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1953-01-01".to_string();
         plan.profile.birth_date = "1952-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 74;
@@ -1241,7 +1269,6 @@ mod tests {
     #[test]
     fn working_year_rmd_is_withdrawn_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1951-01-01".to_string();
         plan.profile.birth_date = "1950-01-01".to_string();
         plan.profile.retirement_age = 80;
         plan.profile.life_expectancy = 81;
@@ -1279,7 +1306,6 @@ mod tests {
     #[test]
     fn social_security_surplus_is_taxed_and_preserved() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1959-01-01".to_string();
         plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;
@@ -1317,7 +1343,6 @@ mod tests {
     #[test]
     fn high_tax_year_is_funded_when_assets_are_sufficient() {
         let mut plan = test_plan();
-        plan.profile.birth_date = "1959-01-01".to_string();
         plan.profile.birth_date = "1958-01-01".to_string();
         plan.profile.retirement_age = 65;
         plan.profile.life_expectancy = 68;

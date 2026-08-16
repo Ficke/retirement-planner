@@ -52,6 +52,18 @@ const legacyPlan = {
   },
 };
 
+/** What a v2 bundle puts on the wire: age and birth year, spending in dollars. */
+const v2Plan = {
+  ...validPlan,
+  schemaVersion: 2,
+  profile: {
+    ...validPlan.profile,
+    birthDate: undefined,
+    age: 35,
+    birthYear: 1991,
+  },
+};
+
 const validConfig = { paths: 5000, seed: 42 };
 
 describe('simulation request limits', () => {
@@ -70,6 +82,16 @@ describe('simulation request limits', () => {
       retirementSpending: 55000,
       retirementSpendingGrowthRate: 0.02,
     });
+  });
+
+  it('accepts a request from the previously deployed bundle', () => {
+    const result = monteCarloRequestSchema.safeParse({ plan: v2Plan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Preserved, not upgraded: v2 predates birthDate but already had the
+    // phase-based spending model, and the engine keys that off the version.
+    expect(result.data.plan.schemaVersion).toBe(2);
+    expect(result.data.plan.profile.birthDate).toBe('1991-01-01');
   });
 
   it('rejects a request from a newer unsupported schema', () => {

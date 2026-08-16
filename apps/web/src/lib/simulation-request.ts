@@ -16,7 +16,7 @@ import {
   simulationPlanSchema as currentSimulationPlanSchema,
   socialSecuritySettingsSchema,
 } from '@/domain/schemas';
-import { MAX_PLAN_ACCOUNTS } from '@/domain/constants';
+import { MAX_PLAN_ACCOUNTS, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 /** Hard ceiling on paths per simulation — matches what the UI ever requests. */
 export const MAX_PATHS = 5000;
@@ -38,13 +38,14 @@ const simulationConfigSchema = z.object({
  * per-path work.
  */
 /**
- * Keep accepting requests from browser bundles that were already open when
- * schema v2 deployed. They retain schemaVersion 0/1 so Rust can preserve the
- * original spending semantics during the rolling rollout.
+ * Keep accepting requests from browser bundles that were already open when the
+ * current schema deployed. Every version below the current one is accepted and
+ * forwarded unchanged, so Rust can apply the semantics that bundle was built
+ * against for the length of the rolling rollout.
  */
 const legacySimulationPlanSchema = z
   .object({
-    schemaVersion: z.number().int().min(0).max(1).optional(),
+    schemaVersion: z.number().int().min(0).max(PLAN_SCHEMA_VERSION - 1).optional(),
     profile: legacySimulationProfileSchema,
     accounts: z.array(simulationAccountSchema),
     socialSecurity: socialSecuritySettingsSchema,
