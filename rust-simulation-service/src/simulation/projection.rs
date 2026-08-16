@@ -11,7 +11,9 @@ use super::historical_data;
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
-use super::tax::{calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy};
+use super::tax::{
+    calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy, OtherIncome,
+};
 
 use crate::types::{
     Account, AccountType, AssetWeights, FilingStatus, PathProjection,
@@ -24,6 +26,46 @@ const BUCKET_ORDER: [AccountType; 4] = [
     AccountType::Roth,
     AccountType::Hsa,
 ];
+
+/// Cash tolerance, in dollars, below which a shortfall is considered funded.
+const SHORTFALL_TOLERANCE: f64 = 1.0;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct OrderedWithdrawal {
+    taxable: f64,
+    traditional: f64,
+    roth: f64,
+    hsa: f64,
+    total: f64,
+}
+
+/// Drain buckets in the withdrawal order until `amount` is raised or nothing is left.
+fn withdraw_in_order(accounts: &mut [Account], amount: f64) -> OrderedWithdrawal {
+    let mut drawn = OrderedWithdrawal::default();
+    let mut remaining = amount.max(0.0);
+    for account_type in BUCKET_ORDER {
+        if remaining <= 0.0 {
+            break;
+        }
+        let Some(bucket) = accounts
+            .iter_mut()
+            .find(|account| account.account_type == account_type && account.balance > 0.0)
+        else {
+            continue;
+        };
+        let withdrawal = remaining.min(bucket.balance);
+        bucket.balance -= withdrawal;
+        remaining -= withdrawal;
+        drawn.total += withdrawal;
+        match account_type {
+            AccountType::Taxable => drawn.taxable += withdrawal,
+            AccountType::Traditional => drawn.traditional += withdrawal,
+            AccountType::Roth => drawn.roth += withdrawal,
+            AccountType::Hsa => drawn.hsa += withdrawal,
+        }
+    }
+    drawn
+}
 
 /// Collapse accounts into one bucket per type. Splitting a balance across two
 /// accounts of the same type must not change the projection, so weights blend by
@@ -286,19 +328,65 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             }
             rmd_amount = withdrawal_traditional;
             let annualized_rmd_income = withdrawal_traditional / period_fraction;
-            let working_cash_flow = calculate_working_cash_flow(
+            let taxable_gain_ratio = plan.assumptions.taxable_gain_ratio;
+            let mut working_cash_flow = calculate_working_cash_flow(
                 annual_salary,
                 annual_working_spending,
                 current_age,
                 &profile.filing_status,
                 &profile.state,
                 &policy,
-                annualized_rmd_income,
+                OtherIncome {
+                    ordinary: annualized_rmd_income,
+                    qualified: 0.0,
+                },
             );
+
+            // Spending above after-tax income is funded from the portfolio,
+            // exactly as it is in retirement — it is a drawdown, not a failure.
+            // Traditional withdrawals are ordinary income and taxable
+            // withdrawals realize gains, so each pass re-converges the tax the
+            // withdrawal itself creates. Traditional already counts as income
+            // inside funding_gap; the other buckets are principal and have to
+            // be credited separately.
+            let mut shortfall_principal = 0.0;
+            let mut shortfall_gains = 0.0;
+            let mut unfunded = 0.0;
+            for _ in 0..4 {
+                unfunded = working_cash_flow.funding_gap * period_fraction - shortfall_principal;
+                if unfunded <= SHORTFALL_TOLERANCE {
+                    unfunded = 0.0;
+                    break;
+                }
+                let drawn = withdraw_in_order(&mut accounts, unfunded);
+                if drawn.total <= SHORTFALL_TOLERANCE {
+                    break; // portfolio exhausted
+                }
+                withdrawal_taxable += drawn.taxable;
+                withdrawal_traditional += drawn.traditional;
+                withdrawal_roth += drawn.roth;
+                withdrawal_hsa += drawn.hsa;
+                shortfall_principal += drawn.taxable + drawn.roth + drawn.hsa;
+                shortfall_gains += drawn.taxable * taxable_gain_ratio;
+                working_cash_flow = calculate_working_cash_flow(
+                    annual_salary,
+                    annual_working_spending,
+                    current_age,
+                    &profile.filing_status,
+                    &profile.state,
+                    &policy,
+                    OtherIncome {
+                        ordinary: withdrawal_traditional / period_fraction,
+                        qualified: shortfall_gains / period_fraction,
+                    },
+                );
+            }
+
             income = annual_salary * period_fraction;
-            spending = annual_working_spending * period_fraction;
+            spending = annual_working_spending * period_fraction - unfunded.max(0.0);
             taxes = working_cash_flow.tax.total_tax * period_fraction;
-            insufficient_funds = working_cash_flow.funding_gap > 1.0;
+            // Only true ruin counts as failure: the portfolio could not cover it.
+            insufficient_funds = unfunded > SHORTFALL_TOLERANCE;
 
             // The residual is fully invested, so the buckets receive all of it
             // and nothing is left unallocated. First year prorates like every
@@ -326,7 +414,10 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             );
 
             savings = deposit_taxable + deposit_traditional + deposit_roth + deposit_hsa
-                - withdrawal_traditional;
+                - withdrawal_taxable
+                - withdrawal_traditional
+                - withdrawal_roth
+                - withdrawal_hsa;
 
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
         } else {
@@ -828,6 +919,67 @@ mod tests {
                 use_backdoor_roth: false,
             },
         }
+    }
+
+    /// Overspending during working years, funded only by the portfolio.
+    fn overspending_plan(taxable_balance: f64) -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.age = 40;
+        plan.profile.retirement_age = 60;
+        plan.profile.life_expectancy = 61;
+        plan.profile.current_salary = 220_000.0;
+        plan.profile.salary_growth_rate = 0.0;
+        plan.profile.current_spending = 250_000.0;
+        plan.profile.working_spending_growth_rate = 0.0;
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.social_security.enabled = false;
+        plan.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: taxable_balance,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        plan
+    }
+
+    #[test]
+    fn working_year_shortfall_is_funded_from_the_portfolio() {
+        let config = ProjectionConfig {
+            seed: 5,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        let result =
+            project_scenario(&overspending_plan(2_000_000.0), config).expect("projection succeeds");
+        let working: Vec<_> = result.projections.iter().filter(|p| !p.is_retired).collect();
+
+        // Overspending has to come out of the portfolio, so the household is
+        // drawing down and saving nothing.
+        assert!(working[1].withdrawal_taxable > 0.0);
+        assert!(working[1].savings < 0.0);
+        // A large portfolio absorbs the gap, so this is a drawdown, not a failure.
+        assert!(!working[1].insufficient_funds);
+    }
+
+    #[test]
+    fn working_year_failure_means_the_portfolio_ran_out() {
+        let config = ProjectionConfig {
+            seed: 5,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        let rich = project_scenario(&overspending_plan(5_000_000.0), config.clone())
+            .expect("projection succeeds");
+        let poor =
+            project_scenario(&overspending_plan(20_000.0), config).expect("projection succeeds");
+
+        // Same overspending, opposite verdicts — success tracks whether the
+        // portfolio can carry it, instead of pinning to 0% for any overspender.
+        assert!(rich.success);
+        assert!(!poor.success);
     }
 
     #[test]

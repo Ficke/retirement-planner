@@ -26,6 +26,16 @@ export interface PretaxContributionTargets {
   traditional: number;
 }
 
+/**
+ * Income reaching the household from somewhere other than wages — RMDs and
+ * portfolio withdrawals. Ordinary is taxed at bracket rates; qualified is the
+ * realized-gain share of a taxable withdrawal.
+ */
+export interface OtherIncome {
+  ordinary: number;
+  qualified: number;
+}
+
 /** Household facts that decide which tax-advantaged space is actually available. */
 export interface ContributionPolicy {
   /** HDHP coverage. Without it there is no HSA contribution to deduct. */
@@ -55,16 +65,18 @@ export function calculateWorkingCashFlow(
   filingStatus: FilingStatus,
   state: string,
   policy: ContributionPolicy,
-  otherOrdinaryIncome = 0,
+  other: OtherIncome = { ordinary: 0, qualified: 0 },
 ): WorkingCashFlowResult {
   const hsaMax = policy.hsaEligible ? getHSAContributionLimit(age) : 0;
   const k401Max = getK401ContributionLimit(age);
 
-  let tax = calculateTax(grossIncome, 0, age, filingStatus, state, undefined, otherOrdinaryIncome);
+  let tax = calculateTax(
+    grossIncome, other.qualified, age, filingStatus, state, undefined, other.ordinary,
+  );
   for (let iteration = 0; iteration < 4; iteration++) {
     const availableBeforeContributions = Math.max(
       0,
-      grossIncome + otherOrdinaryIncome - tax.totalTax - annualSpending,
+      grossIncome + other.ordinary - tax.totalTax - annualSpending,
     );
     const hsa = Math.min(hsaMax, availableBeforeContributions);
     const traditional = Math.min(
@@ -73,17 +85,17 @@ export function calculateWorkingCashFlow(
     );
     tax = calculateTax(
       grossIncome,
-      0,
+      other.qualified,
       age,
       filingStatus,
       state,
       { hsa, traditional },
-      otherOrdinaryIncome,
+      other.ordinary,
     );
   }
 
   const cashAfterPretaxAndSpending = grossIncome
-    + otherOrdinaryIncome
+    + other.ordinary
     - tax.totalTax
     - annualSpending
     - tax.hsaContribution

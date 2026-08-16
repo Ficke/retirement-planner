@@ -24,6 +24,15 @@ pub struct WorkingCashFlowResult {
     pub funding_gap: f64,
 }
 
+/// Income reaching the household from somewhere other than wages — RMDs and
+/// portfolio withdrawals. Ordinary is taxed at bracket rates; qualified is the
+/// realized-gain share of a taxable withdrawal.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OtherIncome {
+    pub ordinary: f64,
+    pub qualified: f64,
+}
+
 /// Household facts that decide which tax-advantaged space is actually available.
 #[derive(Debug, Clone, Copy)]
 pub struct ContributionPolicy {
@@ -589,7 +598,7 @@ pub fn calculate_working_cash_flow(
     filing_status: &FilingStatus,
     state: &State,
     policy: &ContributionPolicy,
-    other_ordinary_income: f64,
+    other: OtherIncome,
 ) -> WorkingCashFlowResult {
     let hsa_max = if policy.hsa_eligible {
         get_hsa_contribution_limit(age)
@@ -603,31 +612,31 @@ pub fn calculate_working_cash_flow(
     };
     let mut tax = calculate_tax(
         gross_income,
-        0.0,
+        other.qualified,
         age,
         filing_status,
         state,
         &requested,
-        other_ordinary_income,
+        other.ordinary,
     );
     for _ in 0..4 {
         let available_before_contributions =
-            (gross_income + other_ordinary_income - tax.total_tax - annual_spending).max(0.0);
+            (gross_income + other.ordinary - tax.total_tax - annual_spending).max(0.0);
         let hsa = hsa_max.min(available_before_contributions);
         let traditional = k401_max.min((available_before_contributions - hsa).max(0.0));
         requested = PretaxContributionTargets { hsa, traditional };
         tax = calculate_tax(
             gross_income,
-            0.0,
+            other.qualified,
             age,
             filing_status,
             state,
             &requested,
-            other_ordinary_income,
+            other.ordinary,
         );
     }
 
-    let cash_after_pretax_and_spending = gross_income + other_ordinary_income
+    let cash_after_pretax_and_spending = gross_income + other.ordinary
         - tax.total_tax
         - annual_spending
         - tax.hsa_contribution
@@ -897,7 +906,7 @@ mod tests {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
             },
-            0.0,
+            OtherIncome::default(),
         );
 
         let total_contributions = result.contributions.hsa
@@ -920,7 +929,7 @@ mod tests {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
             },
-            0.0,
+            OtherIncome::default(),
         );
 
         assert_eq!(result.contributions.hsa, 4_300.0);
@@ -941,7 +950,7 @@ mod tests {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
             },
-            0.0,
+            OtherIncome::default(),
         );
         let ineligible = calculate_working_cash_flow(
             200_000.0,
@@ -953,7 +962,7 @@ mod tests {
                 hsa_eligible: false,
                 use_backdoor_roth: false,
             },
-            0.0,
+            OtherIncome::default(),
         );
 
         assert_eq!(ineligible.contributions.hsa, 0.0);
@@ -974,7 +983,7 @@ mod tests {
                 hsa_eligible: false,
                 use_backdoor_roth: false,
             },
-            0.0,
+            OtherIncome::default(),
         );
         assert!(underfunded.funding_gap > 10_000.0);
     }
@@ -992,7 +1001,7 @@ mod tests {
             &FilingStatus::Single,
             &State::TX,
             &policy,
-            0.0,
+            OtherIncome::default(),
         );
         let with_rmd = calculate_working_cash_flow(
             100_000.0,
@@ -1001,7 +1010,7 @@ mod tests {
             &FilingStatus::Single,
             &State::TX,
             &policy,
-            40_000.0,
+            OtherIncome { ordinary: 40_000.0, qualified: 0.0 },
         );
         let rmd_misclassified_as_wages = calculate_working_cash_flow(
             140_000.0,
@@ -1010,7 +1019,7 @@ mod tests {
             &FilingStatus::Single,
             &State::TX,
             &policy,
-            0.0,
+            OtherIncome::default(),
         );
 
         assert!(with_rmd.tax.total_tax > wages_only.tax.total_tax);

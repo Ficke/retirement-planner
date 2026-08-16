@@ -23,7 +23,7 @@ describe('Retirement Tax Calculation', () => {
       'Single',
       'TX',
       policy,
-      40_000,
+      { ordinary: 40_000, qualified: 0 },
     );
 
     expect(withRmd.tax.ficaTax).toBe(wagesOnly.tax.ficaTax);

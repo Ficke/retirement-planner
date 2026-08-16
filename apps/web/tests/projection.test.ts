@@ -458,6 +458,76 @@ describe('Projection Engine', () => {
     expect(projectScenario(split, config).terminalWealth).toBeCloseTo(mergedWealth, 6);
   });
 
+  it('funds a working-year shortfall from the portfolio instead of thin air', () => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        age: 40,
+        retirementAge: 60,
+        lifeExpectancy: 61,
+        currentSalary: 220_000,
+        salaryGrowthRate: 0,
+        currentSpending: 250_000,
+        workingSpendingGrowthRate: 0,
+        asOfDate: '2025-01-01',
+      },
+      accounts: [
+        createTestAccount({
+          type: 'Taxable',
+          balance: 2_000_000,
+          assetWeights: { stocks: 0.6, bonds: 0.4 },
+        }),
+      ],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings({ randomSeed: 5 }),
+    };
+
+    const working = projectScenario(plan, { paths: 1, seed: 5 })
+      .projections.filter((year) => !year.isRetired);
+
+    // Overspending has to come out of the portfolio, so the household is
+    // drawing down and saving nothing.
+    expect(working[1].withdrawalTaxable).toBeGreaterThan(0);
+    expect(working[1].savings).toBeLessThan(0);
+    // A large portfolio absorbs the gap, so this is a drawdown, not a failure.
+    expect(working[1].insufficientFunds).toBe(false);
+  });
+
+  it('fails only when the portfolio itself runs out mid-career', () => {
+    const overspending = {
+      ...testPlan.profile,
+      age: 40,
+      retirementAge: 60,
+      lifeExpectancy: 61,
+      currentSalary: 220_000,
+      salaryGrowthRate: 0,
+      currentSpending: 250_000,
+      workingSpendingGrowthRate: 0,
+      asOfDate: '2025-01-01',
+    };
+    const base: SimulationPlan = {
+      ...testPlan,
+      profile: overspending,
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings({ randomSeed: 5 }),
+    };
+
+    const rich = projectScenario({
+      ...base,
+      accounts: [createTestAccount({ type: 'Taxable', balance: 5_000_000 })],
+    }, { paths: 1, seed: 5 });
+    const poor = projectScenario({
+      ...base,
+      accounts: [createTestAccount({ type: 'Taxable', balance: 20_000 })],
+    }, { paths: 1, seed: 5 });
+
+    // Same overspending, opposite verdicts — success now tracks whether the
+    // portfolio can carry it, instead of pinning to 0% for anyone overspending.
+    expect(rich.success).toBe(true);
+    expect(poor.success).toBe(false);
+  });
+
   it('routes deposits to the bucket regardless of account order', () => {
     const accounts = [
       createTestAccount({

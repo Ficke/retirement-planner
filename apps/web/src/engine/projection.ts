@@ -22,6 +22,29 @@ type ProjectionAccount = SimulationAccount & { isSurplusCash: boolean };
 
 const BUCKET_ORDER: AccountType[] = ['Taxable', 'Traditional', 'Roth', 'HSA'];
 
+/** Cash tolerance, in dollars, below which a shortfall is considered funded. */
+const SHORTFALL_TOLERANCE = 1;
+
+/** Drain buckets in the withdrawal order until `amount` is raised or nothing is left. */
+function withdrawInOrder(accounts: ProjectionAccount[], amount: number) {
+  const drawn = { taxable: 0, traditional: 0, roth: 0, hsa: 0, gains: 0, total: 0 };
+  let remaining = Math.max(0, amount);
+  for (const type of BUCKET_ORDER) {
+    if (remaining <= 0) break;
+    const bucket = accounts.find((account) => account.type === type && account.balance > 0);
+    if (!bucket) continue;
+    const withdrawal = Math.min(remaining, bucket.balance);
+    bucket.balance -= withdrawal;
+    remaining -= withdrawal;
+    drawn.total += withdrawal;
+    if (type === 'Taxable') drawn.taxable += withdrawal;
+    else if (type === 'Traditional') drawn.traditional += withdrawal;
+    else if (type === 'Roth') drawn.roth += withdrawal;
+    else drawn.hsa += withdrawal;
+  }
+  return drawn;
+}
+
 /**
  * Collapse accounts into one bucket per type. Splitting a balance across two
  * accounts of the same type must not change the projection, so weights blend by
@@ -187,19 +210,59 @@ export function projectScenario(
       }
       rmdAmount = withdrawalTraditionalYear;
       const annualizedRmdIncome = withdrawalTraditionalYear / periodFraction;
-      const workingCashFlow = calculateWorkingCashFlow(
+      const taxableGainRatio = plan.assumptions.taxableGainRatio ?? 0.5;
+      let workingCashFlow = calculateWorkingCashFlow(
         annualSalary,
         annualWorkingSpending,
         currentAge,
         profile.filingStatus,
         profile.state,
         policy,
-        annualizedRmdIncome,
+        { ordinary: annualizedRmdIncome, qualified: 0 },
       );
+
+      // Spending above after-tax income is funded from the portfolio, exactly as
+      // it is in retirement — it is a drawdown, not a failure. Traditional
+      // withdrawals are ordinary income and taxable withdrawals realize gains,
+      // so each pass re-converges the tax the withdrawal itself creates.
+      // Traditional already counts as income inside fundingGap; the other
+      // buckets are principal and have to be credited separately.
+      let shortfallPrincipal = 0;
+      let shortfallGains = 0;
+      let unfunded = 0;
+      for (let pass = 0; pass < 4; pass++) {
+        unfunded = workingCashFlow.fundingGap * periodFraction - shortfallPrincipal;
+        if (unfunded <= SHORTFALL_TOLERANCE) {
+          unfunded = 0;
+          break;
+        }
+        const drawn = withdrawInOrder(accountBalances, unfunded);
+        if (drawn.total <= SHORTFALL_TOLERANCE) break; // portfolio exhausted
+        withdrawalTaxableYear += drawn.taxable;
+        withdrawalTraditionalYear += drawn.traditional;
+        withdrawalRothYear += drawn.roth;
+        withdrawalHSAYear += drawn.hsa;
+        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa;
+        shortfallGains += drawn.taxable * taxableGainRatio;
+        workingCashFlow = calculateWorkingCashFlow(
+          annualSalary,
+          annualWorkingSpending,
+          currentAge,
+          profile.filingStatus,
+          profile.state,
+          policy,
+          {
+            ordinary: withdrawalTraditionalYear / periodFraction,
+            qualified: shortfallGains / periodFraction,
+          },
+        );
+      }
+
       const taxResult = workingCashFlow.tax;
-      insufficientFundsYear = workingCashFlow.fundingGap > 1;
+      // Only true ruin counts as failure: the portfolio could not cover the gap.
+      insufficientFundsYear = unfunded > SHORTFALL_TOLERANCE;
       income = annualSalary * periodFraction;
-      spending = annualWorkingSpending * periodFraction;
+      spending = annualWorkingSpending * periodFraction - Math.max(0, unfunded);
       taxes = taxResult.totalTax * periodFraction;
 
       // The residual is fully invested, so the buckets receive all of it and
@@ -222,7 +285,10 @@ export function projectScenario(
         + depositTraditionalYear
         + depositRothYear
         + depositHSAYear
-        - withdrawalTraditionalYear;
+        - withdrawalTaxableYear
+        - withdrawalTraditionalYear
+        - withdrawalRothYear
+        - withdrawalHSAYear;
       
       // Update total portfolio value
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
