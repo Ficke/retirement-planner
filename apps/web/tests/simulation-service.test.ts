@@ -75,11 +75,10 @@ describe('SimulationService (Pure)', () => {
     expect(result.medianTerminalWealth).toBe(1000000);
   });
 
-  it('should run social security analysis', async () => {
-    const result = await service.runSocialSecurityAnalysis(mockPlan);
+  it('sweeps claim age every other year across the eligible range', async () => {
+    const result = await service.runSocialSecurityAnalysis(mockPlan, false);
 
-    expect(result).toBeDefined();
-    expect(Array.isArray(result)).toBe(true);
+    expect(result.map((r) => r.claimAge)).toEqual([62, 64, 66, 68, 70]);
   });
 
   it('does not simulate duplicate claim ages when Social Security is disabled', async () => {
@@ -111,18 +110,39 @@ describe('SimulationService (Pure)', () => {
     });
   });
 
-  it('should run spending analysis', async () => {
-    const result = await service.runSpendingAnalysis(mockPlan);
+  it('sweeps spending from 60% to 120% of plan, with the plan itself on the grid', async () => {
+    const result = await service.runSpendingAnalysis(mockPlan, false);
 
-    expect(result).toBeDefined();
-    expect(Array.isArray(result)).toBe(true);
+    expect(result.map((r) => r.annualSpending)).toEqual([
+      30_000, 35_000, 40_000, 45_000, 50_000, 55_000, 60_000,
+    ]);
+    expect(result.map((r) => r.annualSpending)).toContain(
+      mockPlan.profile.retirementSpending,
+    );
   });
 
-  it('should run retirement age analysis', async () => {
-    const result = await service.runRetirementAgeAnalysis(mockPlan);
+  it('keeps the plan spending exact when a percentage would not land on $1k', async () => {
+    const result = await service.runSpendingAnalysis({
+      ...mockPlan,
+      profile: { ...mockPlan.profile, retirementSpending: 94_500 },
+    }, false);
 
-    expect(result).toBeDefined();
-    expect(Array.isArray(result)).toBe(true);
+    expect(result.map((r) => r.annualSpending)).toContain(94_500);
+  });
+
+  it('sweeps retirement age by two years either side of the plan', async () => {
+    const result = await service.runRetirementAgeAnalysis(mockPlan, false);
+
+    expect(result.map((r) => r.retirementAge)).toEqual([61, 63, 65, 67, 69]);
+  });
+
+  it('drops swept retirement ages that fall below the minimum', async () => {
+    const result = await service.runRetirementAgeAnalysis({
+      ...mockPlan,
+      profile: { ...mockPlan.profile, age: 44, retirementAge: 46 },
+    }, false);
+
+    expect(result.map((r) => r.retirementAge)).toEqual([46, 48, 50]);
   });
 
   it('sends a valid retirement age sweep at the minimum retirement age', async () => {

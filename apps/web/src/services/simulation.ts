@@ -35,7 +35,17 @@ export interface SensitivityAnalysisResults {
 }
 
 const MAIN_PATHS = 5000;
-const SWEEP_PATHS = 1000; // reduced per-scenario paths for interactive sweeps
+// Every scenario in a sweep shares one base seed, so path i draws the same
+// market returns at every grid point. That makes the sampling error
+// common-mode along a curve — the shape stays readable at path counts far
+// below what an absolute probability would need. The main simulation, not
+// these curves, is what reports the headline number.
+const SWEEP_PATHS = 300;
+
+// 60–120% of first-year retirement spending. Asymmetric on purpose: the curve
+// bends on the downside, and spending far above plan is not a choice anyone is
+// weighing.
+const SPENDING_PERCENTS = [60, 70, 80, 90, 100, 110, 120];
 
 interface Scenario {
   id: string;
@@ -82,7 +92,7 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
   // is authoritative only at its selected claim age; without spouse/statement
   // detail, inventing nine differently adjusted benefits would be misleading.
   const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
-    ? Array.from({ length: 9 }, (_, i) => 62 + i)
+    ? [62, 64, 66, 68, 70]
     : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
@@ -102,12 +112,12 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
   // The sweep moves today's spending, not the retirement target, so each level
   // shows both consequences: saving more now, and needing less later.
-  // 11 levels centered on current spending, step ≈ 10% rounded to nearest $5k.
+  // The 100% level uses the base verbatim so the marker lands on a real grid
+  // point rather than an interpolated one.
   const base = plan.profile.currentSpending;
-  const step = Math.max(5000, Math.round(base * 0.1 / 5000) * 5000);
   const levels = [...new Set(
-    Array.from({ length: 11 }, (_, i) => (
-      Math.max(0, Math.min(1_000_000_000, base + step * (i - 5)))
+    SPENDING_PERCENTS.map((percent) => (
+      percent === 100 ? base : Math.max(0, Math.round(base * percent / 100_000) * 1000)
     )),
   )];
   return levels.map((annualSpending) => ({
@@ -140,12 +150,14 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
     }];
   }
 
-  // ±5 years around a future retirement date, bounded by the current age and
-  // the modeled lifetime so every generated scenario remains valid.
-  const min = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), center - 5, MIN_RETIREMENT_AGE);
-  const max = Math.min(100, plan.profile.lifeExpectancy - 1, center + 5);
-  const ages: number[] = [];
-  for (let a = min; a <= max; a++) ages.push(a);
+  // ±4 years in 2-year steps, bounded by the current age and the modeled
+  // lifetime so every generated scenario remains valid. The center is always
+  // included, so the marker lands on a real grid point.
+  const lo = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), MIN_RETIREMENT_AGE);
+  const hi = Math.min(100, plan.profile.lifeExpectancy - 1);
+  const ages = [-4, -2, 0, 2, 4]
+    .map((offset) => center + offset)
+    .filter((age) => age >= lo && age <= hi);
   return ages.map((retirementAge) => ({
     retirementAge,
     scenario: {
