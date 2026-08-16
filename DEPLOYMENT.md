@@ -131,10 +131,21 @@ directly, and it works locally against the container port.
 Push to `main`. The Cloud Build trigger runs `cloudbuild.yaml`:
 
 1. Build both images with Kaniko, in parallel, with layer caching
-2. Deploy the Rust service (image only)
-3. Point the web service's `RUST_SERVICE_URL` at it
-4. Deploy the web service (image only)
-5. `scripts/smoke-check.sh` — runs a real simulation end to end
+2. Deploy the Rust service with `--no-traffic`, tagged `candidate`
+3. Promote Rust to 100%
+4. Deploy the web service with `--no-traffic`, tagged `candidate`, with
+   `RUST_SERVICE_URL` set on the same revision
+5. `scripts/smoke-check.sh` against the **candidate tag URL** — a real
+   simulation, end to end, with no user traffic on it
+6. Promote the web service to 100%, only if step 5 passed
+
+Traffic moves after the check, not before it. A web revision that cannot serve
+is never reachable by users, and a failed build leaves the previous revision
+serving. Rust is promoted before the web candidate is tested because only the
+web service's SA holds `run.invoker` on it, so Cloud Build cannot call a Rust
+revision directly; deploying it `--no-traffic` first still keeps a container
+that will not start from ever taking traffic. A new Rust revision serving the
+previous web bundle is the rolling-deploy case the schema shim exists for.
 
 Steps 2 and 4 pass `--image` and identity flags but **no sizing flags**.
 `gcloud run deploy` preserves settings it is not told about, which is what keeps

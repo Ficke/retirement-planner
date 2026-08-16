@@ -1,10 +1,13 @@
 #!/bin/sh
-# Post-deploy smoke check. Usage: scripts/smoke-check.sh <service-url>
+# Smoke check. Usage: scripts/smoke-check.sh <service-url>
 #
-# Exercises the one path that matters and that no probe can reach: a real
-# simulation, end to end. Cloud Run's liveness probe already proves the
-# container is up, and `gcloud run deploy` only returns once the revision
-# serves traffic — so re-checking either of those proves nothing new.
+# In the pipeline this runs against a candidate revision's tag URL, before any
+# traffic is promoted to it, so a revision that fails here is never reachable
+# by users. Pass a service's normal URL to check whatever is currently live.
+#
+# It exercises the one path that matters and that no probe can reach: a real
+# simulation, end to end. Cloud Run's liveness probe only proves the container
+# is up, which says nothing about whether the app can compute.
 #
 # A 200 here means ingress, the Next.js server, the API route, the web
 # service's Cloud Run IAM token, the network hop to the Rust service, and the

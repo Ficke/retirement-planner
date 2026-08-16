@@ -63,9 +63,23 @@ steps:
 
   # ===== DEPLOY PHASE =====
   # Only runs if both builds above passed.
+  #
+  # The web service is deployed with --no-traffic behind a `candidate` tag and
+  # only promoted once a real simulation has run against that tag's URL. Traffic
+  # therefore moves after the check, not before it — a revision that cannot
+  # serve is never reachable by users, and a failed build leaves the previous
+  # revision serving.
+  #
+  # Rust is promoted before the web candidate is tested, because the web
+  # service's SA is the only identity with run.invoker on it, so Cloud Build
+  # cannot call a Rust revision directly. Deploying it --no-traffic first still
+  # gates the case that matters — a container that will not start never gets
+  # traffic, because the deploy fails before the promote step. A new Rust
+  # revision serving the previous web bundle is the rolling-deploy case the
+  # engine's schema shim is built for (see lib/simulation-request.ts).
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy-rust'
+    id: 'deploy-rust-candidate'
     entrypoint: gcloud
     waitFor: ['build-and-push-rust', 'build-and-push']
     args:
@@ -82,6 +96,9 @@ steps:
       - '${_RUST_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com'
       - '--port'
       - '8081'
+      - '--no-traffic'
+      - '--tag'
+      - 'candidate'
       # Service shape — CPU, memory, scaling, timeout, ingress, concurrency,
       # startup CPU boost — is owned by Terraform (terraform/variables.tf).
       # `gcloud run deploy` preserves any setting it is not told about, so this
@@ -90,9 +107,22 @@ steps:
       # Terraform-applied 4 vCPU / 2Gi on every push to main.
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'update-nextjs-env'
+    id: 'promote-rust'
+    entrypoint: gcloud
+    waitFor: ['deploy-rust-candidate']
+    args:
+      - 'run'
+      - 'services'
+      - 'update-traffic'
+      - '${_RUST_SERVICE_NAME}'
+      - '--region'
+      - '${_REGION}'
+      - '--to-latest'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-web-candidate'
     entrypoint: 'sh'
-    waitFor: ['deploy-rust']
+    waitFor: ['build-and-push', 'promote-rust']
     args:
       - '-c'
       - |
@@ -101,42 +131,52 @@ steps:
           --format 'value(status.url)')
         echo "Rust service URL: $$RUST_URL"
 
-        if gcloud run services describe ${_SERVICE_NAME} --region ${_REGION} >/dev/null 2>&1; then
-          gcloud run services update ${_SERVICE_NAME} \
-            --region ${_REGION} \
-            --update-env-vars RUST_SERVICE_URL=$$RUST_URL
-        else
-          echo "Next.js service doesn't exist yet, env var will be set on first deploy"
-        fi
+        # RUST_SERVICE_URL is set on the same revision that carries the new
+        # image, so one deploy produces one revision. Setting it separately
+        # would create a second revision and route traffic to it untested.
+        gcloud run deploy ${_SERVICE_NAME} \
+          --image ${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA \
+          --region ${_REGION} \
+          --platform managed \
+          --service-account ${_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com \
+          --update-env-vars RUST_SERVICE_URL=$$RUST_URL \
+          --no-traffic \
+          --tag candidate
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy'
-    entrypoint: gcloud
-    waitFor: ['build-and-push', 'update-nextjs-env']
-    args:
-      - 'run'
-      - 'deploy'
-      - '${_SERVICE_NAME}'
-      - '--image'
-      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
-      - '--region'
-      - '${_REGION}'
-      - '--platform'
-      - 'managed'
-      - '--service-account'
-      - '${_SERVICE_NAME}-sa@$PROJECT_ID.iam.gserviceaccount.com'
-
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'health-check'
+    id: 'smoke-check-candidate'
     entrypoint: 'sh'
-    waitFor: ['deploy']
+    waitFor: ['deploy-web-candidate']
     args:
       - '-c'
       - |
-        SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
+        CANDIDATE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
           --region ${_REGION} \
-          --format 'value(status.url)')
-        ./scripts/smoke-check.sh "$$SERVICE_URL"
+          --format 'value(status.traffic[].url)' | tr -s '[:space:]' '\n' | grep candidate | head -1)
+
+        # Refuse to pass by accidentally testing the live revision: without a
+        # candidate URL this step would otherwise smoke-check production and
+        # report success while the new revision went unverified.
+        case "$$CANDIDATE_URL" in
+          https://candidate---*) ;;
+          *) echo "No candidate tag URL found (got: $${CANDIDATE_URL:-none})"; exit 1 ;;
+        esac
+
+        echo "Smoke-checking candidate revision: $$CANDIDATE_URL"
+        ./scripts/smoke-check.sh "$$CANDIDATE_URL"
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'promote-web'
+    entrypoint: gcloud
+    waitFor: ['smoke-check-candidate']
+    args:
+      - 'run'
+      - 'services'
+      - 'update-traffic'
+      - '${_SERVICE_NAME}'
+      - '--region'
+      - '${_REGION}'
+      - '--to-latest'
 
 # Note: No 'images' section needed - Kaniko pushes images directly via --destination flags
 # Both Rust and Next.js images are built and pushed by Kaniko in one step
