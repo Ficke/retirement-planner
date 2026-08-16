@@ -154,6 +154,16 @@ steps:
           --region ${_REGION} \
           --format 'value(status.traffic[].url)' | tr -s '[:space:]' '\n' | grep candidate | head -1)
 
+        # Tag URLs are 'https://TAG---<default host>', so they can be derived
+        # when the projection above returns nothing rather than failing the
+        # deploy over a format quirk.
+        if [ -z "$$CANDIDATE_URL" ]; then
+          SERVICE_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
+            --region ${_REGION} --format 'value(status.url)')
+          CANDIDATE_URL="https://candidate---$${SERVICE_URL#https://}"
+          echo "Tag URL not reported; derived $$CANDIDATE_URL"
+        fi
+
         # Refuse to pass by accidentally testing the live revision: without a
         # candidate URL this step would otherwise smoke-check production and
         # report success while the new revision went unverified.
