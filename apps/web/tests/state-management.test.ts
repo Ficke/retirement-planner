@@ -97,4 +97,36 @@ describe('State Management - Simple Invalidation Logic', () => {
     expect(migrated.profile).not.toHaveProperty('desiredSpending');
     expect(migrated.profile).not.toHaveProperty('spendingGrowthRate');
   });
+
+  it('reads contribution intent out of legacy per-account targets', () => {
+    const base = { age: 40, birthYear: 1986, asOfDate: '2026-01-01' };
+    const legacy = {
+      simulationModel: 'historical',
+      taxableGainRatio: 0.5,
+      contributions: { hsa: 4_300, traditional: 23_500, roth: 7_000, taxable: 30_000 },
+    };
+
+    const funded = hydratePlan(base, null, legacy, []);
+    expect(funded.assumptions.hsaEligible).toBe(true);
+    expect(funded.assumptions.useBackdoorRoth).toBe(true);
+    expect(funded.assumptions).not.toHaveProperty('contributions');
+
+    // A zero target meant the household had no such space to fill.
+    const unfunded = hydratePlan(base, null, {
+      ...legacy,
+      contributions: { hsa: 0, traditional: 23_500, roth: 0, taxable: 30_000 },
+    }, []);
+    expect(unfunded.assumptions.hsaEligible).toBe(false);
+    expect(unfunded.assumptions.useBackdoorRoth).toBe(false);
+  });
+
+  it('honors the pre-4113fbe backdoor Roth flag when a plan still carries it', () => {
+    const migrated = hydratePlan(
+      { age: 40, birthYear: 1986, asOfDate: '2026-01-01' },
+      null,
+      { simulationModel: 'historical', taxableGainRatio: 0.5, useBackdoorRoth: false },
+      [],
+    );
+    expect(migrated.assumptions.useBackdoorRoth).toBe(false);
+  });
 });

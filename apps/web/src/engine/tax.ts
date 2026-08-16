@@ -26,18 +26,27 @@ export interface PretaxContributionTargets {
   traditional: number;
 }
 
+/** Household facts that decide which tax-advantaged space is actually available. */
+export interface ContributionPolicy {
+  /** HDHP coverage. Without it there is no HSA contribution to deduct. */
+  hsaEligible: boolean;
+  /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
+  useBackdoorRoth: boolean;
+}
+
 export interface WorkingCashFlowResult {
   tax: TaxResult;
   contributions: AnnualContributions;
   totalContributions: number;
-  unallocatedCash: number;
+  /** Spending above after-tax income. The portfolio covers it; it is not a failure. */
   fundingGap: number;
 }
 
 /**
- * Resolve annual contribution targets against taxes, statutory limits, and
- * available cash. The priority is explicit and identical in both engines:
- * HSA → Traditional → Roth → Taxable.
+ * Savings is the residual: whatever gross income does not lose to taxes and
+ * spending gets invested. Contributions fill statutory limits in the order
+ * HSA → Traditional → Roth, and taxable absorbs the remainder — so no cash is
+ * ever left over, and none of it disappears.
  */
 export function calculateWorkingCashFlow(
   grossIncome: number,
@@ -45,18 +54,21 @@ export function calculateWorkingCashFlow(
   age: number,
   filingStatus: FilingStatus,
   state: string,
-  targets: AnnualContributions,
+  policy: ContributionPolicy,
   otherOrdinaryIncome = 0,
 ): WorkingCashFlowResult {
+  const hsaMax = policy.hsaEligible ? getHSAContributionLimit(age) : 0;
+  const k401Max = getK401ContributionLimit(age);
+
   let tax = calculateTax(grossIncome, 0, age, filingStatus, state, undefined, otherOrdinaryIncome);
   for (let iteration = 0; iteration < 4; iteration++) {
     const availableBeforeContributions = Math.max(
       0,
       grossIncome + otherOrdinaryIncome - tax.totalTax - annualSpending,
     );
-    const hsa = Math.min(targets.hsa, availableBeforeContributions);
+    const hsa = Math.min(hsaMax, availableBeforeContributions);
     const traditional = Math.min(
-      targets.traditional,
+      k401Max,
       Math.max(0, availableBeforeContributions - hsa),
     );
     tax = calculateTax(
@@ -77,11 +89,11 @@ export function calculateWorkingCashFlow(
     - tax.hsaContribution
     - tax.k401Contribution;
   const fundingGap = Math.max(0, -cashAfterPretaxAndSpending);
-  let afterTaxBudget = Math.max(0, cashAfterPretaxAndSpending);
-  const roth = Math.min(targets.roth, getIRAContributionLimit(age), afterTaxBudget);
-  afterTaxBudget -= roth;
-  const taxable = Math.min(targets.taxable, afterTaxBudget);
-  afterTaxBudget -= taxable;
+  const afterTaxBudget = Math.max(0, cashAfterPretaxAndSpending);
+  const roth = policy.useBackdoorRoth
+    ? Math.min(getIRAContributionLimit(age), afterTaxBudget)
+    : 0;
+  const taxable = afterTaxBudget - roth;
 
   const contributions = {
     hsa: tax.hsaContribution,
@@ -93,7 +105,6 @@ export function calculateWorkingCashFlow(
     tax,
     contributions,
     totalContributions: Object.values(contributions).reduce((sum, value) => sum + value, 0),
-    unallocatedCash: afterTaxBudget,
     fundingGap,
   };
 }

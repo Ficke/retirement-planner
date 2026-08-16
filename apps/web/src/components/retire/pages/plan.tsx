@@ -55,13 +55,7 @@ export function PagePlan() {
   ) => updatePlan({ socialSecurity });
   const p = plan.profile;
   const ss = plan.socialSecurity;
-  const contributionTargets = plan.assumptions.contributions;
-  const updateContribution = (field: keyof typeof contributionTargets, value: number) =>
-    updatePlan({
-      assumptions: {
-        contributions: { ...contributionTargets, [field]: value },
-      },
-    });
+  const { hsaEligible, useBackdoorRoth } = plan.assumptions;
 
   const workingCashFlow = useMemo(() => {
     try {
@@ -71,21 +65,12 @@ export function PagePlan() {
         p.age,
         p.filingStatus,
         p.state,
-        {
-          hsa: plan.accounts.some((account) => account.type === "HSA") ? contributionTargets.hsa : 0,
-          traditional: plan.accounts.some((account) => account.type === "Traditional")
-            ? contributionTargets.traditional
-            : 0,
-          roth: plan.accounts.some((account) => account.type === "Roth") ? contributionTargets.roth : 0,
-          taxable: plan.accounts.some((account) => account.type === "Taxable")
-            ? contributionTargets.taxable
-            : 0,
-        },
+        { hsaEligible, useBackdoorRoth },
       );
     } catch {
       return null;
     }
-  }, [p.currentSalary, p.currentSpending, p.age, p.filingStatus, p.state, plan.accounts, contributionTargets]);
+  }, [p.currentSalary, p.currentSpending, p.age, p.filingStatus, p.state, hsaEligible, useBackdoorRoth]);
 
   const tax = workingCashFlow?.tax;
   const actualContributions = workingCashFlow?.contributions ?? {
@@ -97,9 +82,9 @@ export function PagePlan() {
   const totalTax = tax?.totalTax ?? 0;
   const effRate = tax?.effectiveRate ?? 0;
   const takeHome = p.currentSalary - totalTax - actualContributions.hsa - actualContributions.traditional;
-  const available = workingCashFlow?.unallocatedCash ?? 0;
+  const totalSaved = workingCashFlow?.totalContributions ?? 0;
   const fundingGap = workingCashFlow?.fundingGap ?? 0;
-  const availableRate = p.currentSalary > 0 ? available / p.currentSalary : 0;
+  const savedRate = p.currentSalary > 0 ? totalSaved / p.currentSalary : 0;
   const spendOfGross = p.currentSalary > 0 ? p.currentSpending / p.currentSalary : 0;
   const takeHomeRate = p.currentSalary > 0 ? takeHome / p.currentSalary : 0;
   const workingYears = Math.max(0, p.retirementAge - p.age);
@@ -307,34 +292,10 @@ export function PagePlan() {
       </DashboardCard>
 
       <DashboardCard
-        title="Annual contribution targets"
-        description="Targets are applied only to matching accounts and reduced when IRS limits or available cash require it. Priority: HSA, Traditional, Roth, then Taxable."
+        title="Cash flow"
+        description="Savings is what's left after taxes and spending, filled into HSA, 401(k), and Roth up to their IRS limits before the remainder goes to a taxable brokerage."
+        flush
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <CurrencyField
-            label="HSA (individual coverage)"
-            value={contributionTargets.hsa}
-            onChange={(v) => updateContribution("hsa", v)}
-          />
-          <CurrencyField
-            label="Traditional 401(k)"
-            value={contributionTargets.traditional}
-            onChange={(v) => updateContribution("traditional", v)}
-          />
-          <CurrencyField
-            label="Roth IRA"
-            value={contributionTargets.roth}
-            onChange={(v) => updateContribution("roth", v)}
-          />
-          <CurrencyField
-            label="Taxable brokerage"
-            value={contributionTargets.taxable}
-            onChange={(v) => updateContribution("taxable", v)}
-          />
-        </div>
-      </DashboardCard>
-
-      <DashboardCard title="Tax & Savings" flush>
         <Table>
           <TableHeader>
             <TableRow>
@@ -378,22 +339,21 @@ export function PagePlan() {
               indent
             />
             <FlowRow
-              label="− Roth + Taxable contributions"
-              amount={`-${fmtCurrency(actualContributions.roth + actualContributions.taxable)}`}
+              label="→ Roth + Taxable contributions"
+              amount={fmtCurrency(actualContributions.roth + actualContributions.taxable)}
               pct={fmtPercent(
                 p.currentSalary > 0
                   ? (actualContributions.roth + actualContributions.taxable) / p.currentSalary
                   : 0,
                 1,
               )}
-              tone="negative"
               indent
             />
             <FlowRow
-              label={fundingGap > 0 ? "Annual cash shortfall" : "Unallocated cash"}
-              amount={fundingGap > 0 ? `-${fmtCurrency(fundingGap)}` : fmtCurrency(available)}
+              label={fundingGap > 0 ? "Drawn from portfolio" : "Total saved"}
+              amount={fundingGap > 0 ? `-${fmtCurrency(fundingGap)}` : fmtCurrency(totalSaved)}
               pct={fmtPercent(
-                fundingGap > 0 && p.currentSalary > 0 ? -fundingGap / p.currentSalary : availableRate,
+                fundingGap > 0 && p.currentSalary > 0 ? -fundingGap / p.currentSalary : savedRate,
                 1,
               )}
               tone={fundingGap > 0 ? "negative" : undefined}

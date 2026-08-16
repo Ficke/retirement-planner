@@ -5,6 +5,7 @@ import type {
   UserProfile,
   SocialSecuritySettings,
   AssumptionSettings,
+  AnnualContributions,
   SimulationResult,
   SSAnalysisResult,
   SpendingAnalysisResult,
@@ -162,12 +163,8 @@ const defaultPlan: RetirementPlan = {
   assumptions: {
     simulationModel: 'historical',
     taxableGainRatio: 0.5,
-    contributions: {
-      hsa: 0,
-      traditional: 0,
-      roth: 0,
-      taxable: 0,
-    },
+    hsaEligible: false,
+    useBackdoorRoth: true,
   },
 };
 
@@ -187,9 +184,21 @@ export function hydratePlan(
   const socialSecurityInput = socialSecuritySource && typeof socialSecuritySource === 'object'
     ? socialSecuritySource as Partial<SocialSecuritySettings>
     : {};
+  type PersistedAssumptions = Partial<AssumptionSettings> & {
+    contributions?: Partial<AnnualContributions>;
+    useBackdoorRoth?: boolean;
+  };
   const assumptionsInput = assumptionsSource && typeof assumptionsSource === 'object'
-    ? assumptionsSource as Partial<AssumptionSettings>
+    ? assumptionsSource as PersistedAssumptions
     : {};
+  const legacyContributions = assumptionsInput.contributions
+    ? {
+        hsa: assumptionsInput.contributions.hsa ?? 0,
+        roth: assumptionsInput.contributions.roth ?? 0,
+      }
+    : null;
+  // Plans saved before 4113fbe carried this flag; plans saved after do not.
+  const legacyUseBackdoorRoth = assumptionsInput.useBackdoorRoth;
   const asOfDate = profileInput.asOfDate ?? defaultPlan.profile.asOfDate;
   const age = profileInput.age ?? defaultPlan.profile.age;
 
@@ -225,10 +234,14 @@ export function hydratePlan(
     assumptions: {
       ...defaultPlan.assumptions,
       ...assumptionsInput,
-      contributions: {
-        ...defaultPlan.assumptions.contributions,
-        ...assumptionsInput.contributions,
-      },
+      // Savings is now a residual, so the old per-account dollar targets only
+      // survive as intent: a target above zero meant the household had that
+      // kind of space available to fill.
+      hsaEligible: assumptionsInput.hsaEligible
+        ?? (legacyContributions?.hsa ?? 0) > 0,
+      useBackdoorRoth: assumptionsInput.useBackdoorRoth
+        ?? legacyUseBackdoorRoth
+        ?? (legacyContributions ? legacyContributions.roth > 0 : true),
     },
     accounts: Array.isArray(accountsSource) ? accountsSource : [],
   });
@@ -487,12 +500,6 @@ export const usePlan = create<PlanState>((set, get) => ({
           assumptions: {
             ...state.plan.assumptions,
             ...updates.assumptions,
-            ...(updates.assumptions.contributions && {
-              contributions: {
-                ...state.plan.assumptions.contributions,
-                ...updates.assumptions.contributions,
-              },
-            }),
           },
         }),
       };

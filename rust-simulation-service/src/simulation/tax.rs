@@ -20,8 +20,15 @@ pub struct TaxResult {
 pub struct WorkingCashFlowResult {
     pub tax: TaxResult,
     pub contributions: AnnualContributions,
-    pub unallocated_cash: f64,
+    /// Spending above after-tax income. The portfolio covers it; not a failure.
     pub funding_gap: f64,
+}
+
+/// Household facts that decide which tax-advantaged space is actually available.
+#[derive(Debug, Clone, Copy)]
+pub struct ContributionPolicy {
+    pub hsa_eligible: bool,
+    pub use_backdoor_roth: bool,
 }
 
 struct PretaxContributionTargets {
@@ -571,17 +578,25 @@ fn calculate_tax(
     }
 }
 
-/// Resolve explicit annual targets against taxes, statutory limits, and
-/// available cash. Priority matches TypeScript: HSA → Traditional → Roth → Taxable.
+/// Savings is the residual: whatever gross income does not lose to taxes and
+/// spending gets invested. Contributions fill statutory limits in the order
+/// HSA → Traditional → Roth, and taxable absorbs the remainder — so no cash is
+/// ever left over, and none of it disappears. Matches TypeScript.
 pub fn calculate_working_cash_flow(
     gross_income: f64,
     annual_spending: f64,
     age: u32,
     filing_status: &FilingStatus,
     state: &State,
-    targets: &AnnualContributions,
+    policy: &ContributionPolicy,
     other_ordinary_income: f64,
 ) -> WorkingCashFlowResult {
+    let hsa_max = if policy.hsa_eligible {
+        get_hsa_contribution_limit(age)
+    } else {
+        0.0
+    };
+    let k401_max = get_k401_contribution_limit(age);
     let mut requested = PretaxContributionTargets {
         hsa: 0.0,
         traditional: 0.0,
@@ -598,10 +613,8 @@ pub fn calculate_working_cash_flow(
     for _ in 0..4 {
         let available_before_contributions =
             (gross_income + other_ordinary_income - tax.total_tax - annual_spending).max(0.0);
-        let hsa = targets.hsa.min(available_before_contributions);
-        let traditional = targets
-            .traditional
-            .min((available_before_contributions - hsa).max(0.0));
+        let hsa = hsa_max.min(available_before_contributions);
+        let traditional = k401_max.min((available_before_contributions - hsa).max(0.0));
         requested = PretaxContributionTargets { hsa, traditional };
         tax = calculate_tax(
             gross_income,
@@ -620,14 +633,13 @@ pub fn calculate_working_cash_flow(
         - tax.hsa_contribution
         - tax.k401_contribution;
     let funding_gap = (-cash_after_pretax_and_spending).max(0.0);
-    let mut after_tax_budget = cash_after_pretax_and_spending.max(0.0);
-    let roth = targets
-        .roth
-        .min(get_ira_contribution_limit(age))
-        .min(after_tax_budget);
-    after_tax_budget -= roth;
-    let taxable = targets.taxable.min(after_tax_budget);
-    after_tax_budget -= taxable;
+    let after_tax_budget = cash_after_pretax_and_spending.max(0.0);
+    let roth = if policy.use_backdoor_roth {
+        get_ira_contribution_limit(age).min(after_tax_budget)
+    } else {
+        0.0
+    };
+    let taxable = after_tax_budget - roth;
 
     let contributions = AnnualContributions {
         hsa: tax.hsa_contribution,
@@ -638,7 +650,6 @@ pub fn calculate_working_cash_flow(
     WorkingCashFlowResult {
         tax,
         contributions,
-        unallocated_cash: after_tax_budget,
         funding_gap,
     }
 }
@@ -875,43 +886,93 @@ mod tests {
     }
 
     #[test]
-    fn working_cash_flow_uses_explicit_targets_and_reconciles() {
+    fn working_cash_flow_invests_the_entire_residual() {
         let result = calculate_working_cash_flow(
             100_000.0,
             50_000.0,
             40,
             &FilingStatus::Single,
             &State::TX,
-            &AnnualContributions {
-                hsa: 4_300.0,
-                traditional: 10_000.0,
-                roth: 7_000.0,
-                taxable: 5_000.0,
+            &ContributionPolicy {
+                hsa_eligible: true,
+                use_backdoor_roth: true,
+            },
+            0.0,
+        );
+
+        let total_contributions = result.contributions.hsa
+            + result.contributions.traditional
+            + result.contributions.roth
+            + result.contributions.taxable;
+        // Gross is fully accounted for: taxed, spent, or saved. No fourth bucket.
+        assert!((result.tax.total_tax + 50_000.0 + total_contributions - 100_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn working_cash_flow_fills_statutory_limits_before_taxable() {
+        let result = calculate_working_cash_flow(
+            500_000.0,
+            40_000.0,
+            40,
+            &FilingStatus::Single,
+            &State::TX,
+            &ContributionPolicy {
+                hsa_eligible: true,
+                use_backdoor_roth: true,
             },
             0.0,
         );
 
         assert_eq!(result.contributions.hsa, 4_300.0);
-        assert_eq!(result.contributions.traditional, 10_000.0);
+        assert_eq!(result.contributions.traditional, 23_500.0);
         assert_eq!(result.contributions.roth, 7_000.0);
-        assert_eq!(result.contributions.taxable, 5_000.0);
-        let total_contributions = result.contributions.hsa
-            + result.contributions.traditional
-            + result.contributions.roth
-            + result.contributions.taxable;
-        assert!(result.tax.total_tax + 50_000.0 + total_contributions <= 100_000.0);
+        assert!(result.contributions.taxable > 100_000.0);
+    }
 
+    #[test]
+    fn working_cash_flow_skips_unusable_space_without_losing_the_cash() {
+        let eligible = calculate_working_cash_flow(
+            200_000.0,
+            40_000.0,
+            40,
+            &FilingStatus::Single,
+            &State::TX,
+            &ContributionPolicy {
+                hsa_eligible: true,
+                use_backdoor_roth: true,
+            },
+            0.0,
+        );
+        let ineligible = calculate_working_cash_flow(
+            200_000.0,
+            40_000.0,
+            40,
+            &FilingStatus::Single,
+            &State::TX,
+            &ContributionPolicy {
+                hsa_eligible: false,
+                use_backdoor_roth: false,
+            },
+            0.0,
+        );
+
+        assert_eq!(ineligible.contributions.hsa, 0.0);
+        assert_eq!(ineligible.contributions.roth, 0.0);
+        // The money still gets saved — it just goes to taxable instead.
+        assert!(ineligible.contributions.taxable > eligible.contributions.taxable);
+    }
+
+    #[test]
+    fn working_cash_flow_reports_a_funding_gap() {
         let underfunded = calculate_working_cash_flow(
             50_000.0,
             60_000.0,
             40,
             &FilingStatus::Single,
             &State::TX,
-            &AnnualContributions {
-                hsa: 0.0,
-                traditional: 0.0,
-                roth: 0.0,
-                taxable: 0.0,
+            &ContributionPolicy {
+                hsa_eligible: false,
+                use_backdoor_roth: false,
             },
             0.0,
         );
@@ -920,11 +981,9 @@ mod tests {
 
     #[test]
     fn working_rmd_is_ordinary_income_but_not_wages() {
-        let targets = AnnualContributions {
-            hsa: 0.0,
-            traditional: 0.0,
-            roth: 0.0,
-            taxable: 0.0,
+        let policy = ContributionPolicy {
+            hsa_eligible: false,
+            use_backdoor_roth: false,
         };
         let wages_only = calculate_working_cash_flow(
             100_000.0,
@@ -932,7 +991,7 @@ mod tests {
             75,
             &FilingStatus::Single,
             &State::TX,
-            &targets,
+            &policy,
             0.0,
         );
         let with_rmd = calculate_working_cash_flow(
@@ -941,7 +1000,7 @@ mod tests {
             75,
             &FilingStatus::Single,
             &State::TX,
-            &targets,
+            &policy,
             40_000.0,
         );
         let rmd_misclassified_as_wages = calculate_working_cash_flow(
@@ -950,12 +1009,13 @@ mod tests {
             75,
             &FilingStatus::Single,
             &State::TX,
-            &targets,
+            &policy,
             0.0,
         );
 
         assert!(with_rmd.tax.total_tax > wages_only.tax.total_tax);
-        assert!(with_rmd.unallocated_cash > wages_only.unallocated_cash);
+        // RMD proceeds are income the household did not spend, so they land in taxable.
+        assert!(with_rmd.contributions.taxable > wages_only.contributions.taxable);
         assert!(rmd_misclassified_as_wages.tax.total_tax > with_rmd.tax.total_tax);
     }
 

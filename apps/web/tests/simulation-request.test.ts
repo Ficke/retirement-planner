@@ -35,7 +35,7 @@ const validPlan = {
   assumptions: {
     simulationModel: 'historical',
     taxableGainRatio: 0.5,
-    contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+    hsaEligible: false, useBackdoorRoth: false,
   },
 };
 

@@ -56,7 +56,7 @@ const testPlan: SimulationPlan = {
   },
   assumptions: createTestProjectionSettings({
     simulationModel: 'historical',
-    contributions: { hsa: 4_300, traditional: 23_500, roth: 7_000, taxable: 5_000 },
+    hsaEligible: true, useBackdoorRoth: true,
   }),
 };
 
@@ -473,7 +473,7 @@ describe('Projection Engine', () => {
     ];
     const withContributions = createTestProjectionSettings({
       randomSeed: 11,
-      contributions: { hsa: 0, traditional: 20000, roth: 0, taxable: 0 },
+      hsaEligible: false, useBackdoorRoth: false,
     });
     const forward: SimulationPlan = { ...testPlan, accounts, assumptions: withContributions };
     const reversed: SimulationPlan = {

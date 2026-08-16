@@ -90,12 +90,8 @@ export const projectionSettingsSchema = z.object({
   randomSeed: z.number().int().min(0).optional(),
   simulationModel: z.enum(['historical', 'parametric'] as const),
   taxableGainRatio: z.number().min(0).max(1),
-  contributions: z.object({
-    hsa: z.number().min(0).max(1_000_000),
-    traditional: z.number().min(0).max(1_000_000),
-    roth: z.number().min(0).max(1_000_000),
-    taxable: z.number().min(0).max(1_000_000),
-  }),
+  hsaEligible: z.boolean(),
+  useBackdoorRoth: z.boolean(),
 });
 
 /** @deprecated Use projectionSettingsSchema instead */

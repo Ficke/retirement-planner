@@ -88,8 +88,10 @@ export interface ProjectionSettings {
   randomSeed?: number;
   /** Portion of taxable-account withdrawals treated as long-term capital gain. */
   taxableGainRatio: number;
-  /** Annual contribution targets, reduced when statutory limits or cash flow require it. */
-  contributions: AnnualContributions;
+  /** HDHP coverage. Without it there is no HSA contribution to deduct. */
+  hsaEligible: boolean;
+  /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
+  useBackdoorRoth: boolean;
 }
 
 /** @deprecated Use ProjectionSettings instead */

@@ -11,10 +11,10 @@ use super::historical_data;
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
-use super::tax::{calculate_retirement_tax, calculate_working_cash_flow};
+use super::tax::{calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy};
 
 use crate::types::{
-    Account, AccountType, AnnualContributions, AssetWeights, FilingStatus, PathProjection,
+    Account, AccountType, AssetWeights, FilingStatus, PathProjection,
     PathResult, RetirementPlan, State, PLAN_SCHEMA_VERSION,
 };
 
@@ -222,7 +222,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
         let mut withdrawal_traditional = 0.0;
         let mut withdrawal_roth = 0.0;
         let mut withdrawal_hsa = 0.0;
-        let mut deposit_taxable = 0.0;
+        let deposit_taxable;
         let mut deposit_traditional = 0.0;
         let mut deposit_roth = 0.0;
         let mut deposit_hsa = 0.0;
@@ -240,39 +240,9 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
                 // before the phase-based spending model.
                 profile.current_spending
             };
-            let has_hsa = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Hsa));
-            let has_traditional = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Traditional));
-            let has_roth = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Roth));
-            let has_taxable = accounts
-                .iter()
-                .any(|account| matches!(account.account_type, AccountType::Taxable));
-            let eligible_targets = AnnualContributions {
-                hsa: if has_hsa {
-                    plan.assumptions.contributions.hsa
-                } else {
-                    0.0
-                },
-                traditional: if has_traditional {
-                    plan.assumptions.contributions.traditional
-                } else {
-                    0.0
-                },
-                roth: if has_roth {
-                    plan.assumptions.contributions.roth
-                } else {
-                    0.0
-                },
-                taxable: if has_taxable {
-                    plan.assumptions.contributions.taxable
-                } else {
-                    0.0
-                },
+            let policy = ContributionPolicy {
+                hsa_eligible: plan.assumptions.hsa_eligible,
+                use_backdoor_roth: plan.assumptions.use_backdoor_roth,
             };
             let period_fraction = if year == 0 {
                 remaining_year_fraction
@@ -316,95 +286,44 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
             }
             rmd_amount = withdrawal_traditional;
             let annualized_rmd_income = withdrawal_traditional / period_fraction;
-            let baseline_working_cash_flow = calculate_working_cash_flow(
+            let working_cash_flow = calculate_working_cash_flow(
                 annual_salary,
                 annual_working_spending,
                 current_age,
                 &profile.filing_status,
                 &profile.state,
-                &eligible_targets,
-                0.0,
+                &policy,
+                annualized_rmd_income,
             );
-            let working_cash_flow = if annualized_rmd_income > 0.0 {
-                calculate_working_cash_flow(
-                    annual_salary,
-                    annual_working_spending,
-                    current_age,
-                    &profile.filing_status,
-                    &profile.state,
-                    &eligible_targets,
-                    annualized_rmd_income,
-                )
-            } else {
-                baseline_working_cash_flow.clone()
-            };
             income = annual_salary * period_fraction;
             spending = annual_working_spending * period_fraction;
             taxes = working_cash_flow.tax.total_tax * period_fraction;
             insufficient_funds = working_cash_flow.funding_gap > 1.0;
 
-            // Add new savings (prorated for first year)
-            let contribution_proration = period_fraction;
-
-            // HSA contributions
-            if working_cash_flow.contributions.hsa > 0.0 {
-                if let Some(hsa_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Hsa))
-                {
-                    let deposit = working_cash_flow.contributions.hsa * contribution_proration;
-                    hsa_account.balance += deposit;
-                    deposit_hsa = deposit;
-                }
-            }
-
-            // 401k contributions
-            if working_cash_flow.contributions.traditional > 0.0 {
-                if let Some(trad_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Traditional))
-                {
-                    let deposit =
-                        working_cash_flow.contributions.traditional * contribution_proration;
-                    trad_account.balance += deposit;
-                    deposit_traditional = deposit;
-                }
-            }
-
-            // Roth contributions
-            if working_cash_flow.contributions.roth > 0.0 {
-                if let Some(roth_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Roth))
-                {
-                    let deposit = working_cash_flow.contributions.roth * contribution_proration;
-                    roth_account.balance += deposit;
-                    deposit_roth = deposit;
-                }
-            }
-
-            // Explicit after-tax savings to taxable
-            if working_cash_flow.contributions.taxable > 0.0 {
-                if let Some(taxable_account) = accounts
-                    .iter_mut()
-                    .find(|acc| matches!(acc.account_type, AccountType::Taxable))
-                {
-                    let deposit = working_cash_flow.contributions.taxable * contribution_proration;
-                    taxable_account.balance += deposit;
-                    deposit_taxable = deposit;
-                }
-            }
-
-            // Preserve only the cash forced into the budget by the RMD;
-            // ordinary wage surplus remains controlled by explicit targets.
-            let forced_surplus_deposit = (working_cash_flow.unallocated_cash
-                - baseline_working_cash_flow.unallocated_cash)
-                .max(0.0)
-                * period_fraction;
-            if forced_surplus_deposit > 0.0 {
-                deposit_taxable_cash(&mut accounts, forced_surplus_deposit);
-                deposit_taxable += forced_surplus_deposit;
-            }
+            // The residual is fully invested, so the buckets receive all of it
+            // and nothing is left unallocated. First year prorates like every
+            // other flow.
+            let contributions = &working_cash_flow.contributions;
+            deposit_hsa = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Hsa,
+                contributions.hsa * period_fraction,
+            );
+            deposit_traditional = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Traditional,
+                contributions.traditional * period_fraction,
+            );
+            deposit_roth = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Roth,
+                contributions.roth * period_fraction,
+            );
+            deposit_taxable = deposit_to_bucket(
+                &mut accounts,
+                AccountType::Taxable,
+                contributions.taxable * period_fraction,
+            );
 
             savings = deposit_taxable + deposit_traditional + deposit_roth + deposit_hsa
                 - withdrawal_traditional;
@@ -498,7 +417,7 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
 
             // Reinvest RMD excess
             if deposit_taxable > 0.0 {
-                deposit_taxable_cash(&mut accounts, deposit_taxable);
+                deposit_to_bucket(&mut accounts, AccountType::Taxable, deposit_taxable);
             }
 
             // Calculate actual spending based on available funds
@@ -591,30 +510,45 @@ struct WithdrawalContext<'a> {
     taxable_gain_ratio: f64,
 }
 
-fn deposit_taxable_cash(accounts: &mut Vec<Account>, amount: f64) {
+/// Deposit into a type's bucket, opening it when the household holds no account
+/// of that kind — funding must never depend on which accounts happen to exist.
+/// A new bucket inherits the portfolio's blend so the money is invested the way
+/// the rest of it is; with nothing to blend it stays in cash, which is also what
+/// keeps that balance out of the taxable-gain calculation.
+///
+/// Returns the amount deposited, for the caller's cash-flow row.
+fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amount: f64) -> f64 {
     if amount <= 0.0 {
-        return;
+        return 0.0;
     }
-    if let Some(taxable_account) = accounts
+    if let Some(bucket) = accounts
         .iter_mut()
-        .find(|account| matches!(account.account_type, AccountType::Taxable))
+        .find(|account| account.account_type == account_type)
     {
-        taxable_account.balance += amount;
-        return;
+        bucket.balance += amount;
+        return amount;
     }
 
-    // Internal zero-real-return cash account. It is not persisted or exposed;
-    // it prevents after-tax RMD or income surpluses from disappearing when the
-    // input plan has no brokerage account.
+    let total: f64 = accounts.iter().map(|account| account.balance).sum();
+    let stocks = if total > 0.0 {
+        accounts
+            .iter()
+            .map(|account| account.balance * account.asset_weights.stocks)
+            .sum::<f64>()
+            / total
+    } else {
+        0.0
+    };
     accounts.push(Account {
-        account_type: AccountType::Taxable,
+        account_type,
         balance: amount,
-        asset_weights: crate::types::AssetWeights {
-            stocks: 0.0,
-            bonds: 0.0,
+        asset_weights: AssetWeights {
+            stocks,
+            bonds: if total > 0.0 { 1.0 - stocks } else { 0.0 },
         },
-        is_surplus_cash: true,
+        is_surplus_cash: total == 0.0,
     });
+    amount
 }
 
 fn execute_ordered_withdrawals(
@@ -839,8 +773,7 @@ fn is_leap_year(year: i32) -> bool {
 mod tests {
     use super::*;
     use crate::types::{
-        AnnualContributions, AssetWeights, ProjectionSettings, SimulationModel,
-        SocialSecuritySettings, UserProfile,
+        AssetWeights, ProjectionSettings, SimulationModel, SocialSecuritySettings, UserProfile,
     };
 
     fn test_plan() -> RetirementPlan {
@@ -891,12 +824,8 @@ mod tests {
                 simulation_model: SimulationModel::Parametric,
                 random_seed: Some(42),
                 taxable_gain_ratio: 0.5,
-                contributions: AnnualContributions {
-                    hsa: 0.0,
-                    traditional: 0.0,
-                    roth: 0.0,
-                    taxable: 0.0,
-                },
+                hsa_eligible: false,
+                use_backdoor_roth: false,
             },
         }
     }

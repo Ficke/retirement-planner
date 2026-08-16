@@ -230,23 +230,10 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     if plan.accounts.len() > 20 {
         return Err("plan may contain at most 20 accounts".into());
     }
-    let contributions = &plan.assumptions.contributions;
     if !plan.assumptions.taxable_gain_ratio.is_finite()
         || !(0.0..=1.0).contains(&plan.assumptions.taxable_gain_ratio)
     {
         return Err("taxableGainRatio must be between 0 and 1".into());
-    }
-    let contribution_values = [
-        contributions.hsa,
-        contributions.traditional,
-        contributions.roth,
-        contributions.taxable,
-    ];
-    if !contribution_values
-        .iter()
-        .all(|value| value.is_finite() && (0.0..=1_000_000.0).contains(value))
-    {
-        return Err("contribution targets must be finite and between 0 and 1000000".into());
     }
     for (index, account) in plan.accounts.iter().enumerate() {
         let weights = &account.asset_weights;
@@ -300,12 +287,8 @@ mod tests {
                 "simulationModel": "historical",
                 "randomSeed": 42,
                 "taxableGainRatio": 0.5,
-                "contributions": {
-                    "hsa": 0.0,
-                    "traditional": 0.0,
-                    "roth": 0.0,
-                    "taxable": 0.0
-                }
+                "hsaEligible": false,
+                "useBackdoorRoth": true
             }
         }))
         .expect("test plan should deserialize");

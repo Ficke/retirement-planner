@@ -113,7 +113,12 @@ pub struct ProjectionSettings {
     pub random_seed: Option<u64>,
     #[serde(rename = "taxableGainRatio")]
     pub taxable_gain_ratio: f64,
-    pub contributions: AnnualContributions,
+    /// HDHP coverage. Without it there is no HSA contribution to deduct.
+    #[serde(rename = "hsaEligible", default)]
+    pub hsa_eligible: bool,
+    /// Without a backdoor conversion, a Roth IRA contribution is not modeled.
+    #[serde(rename = "useBackdoorRoth", default)]
+    pub use_backdoor_roth: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

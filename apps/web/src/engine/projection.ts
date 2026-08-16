@@ -6,7 +6,11 @@ import type {
   PathProjection,
   FilingStatus,
 } from '@/domain/types';
-import { calculateWorkingCashFlow, calculateRetirementTax } from './tax';
+import {
+  calculateWorkingCashFlow,
+  calculateRetirementTax,
+  type ContributionPolicy,
+} from './tax';
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
@@ -140,29 +144,14 @@ export function projectScenario(
     let insufficientFundsYear = false;
     
     if (!isRetired) {
-      // Working phase uses explicit contribution targets. Targets are only
-      // eligible when a matching account exists, and are reduced in the clear
-      // priority HSA → Traditional → Roth → Taxable when cash is insufficient.
+      // Working phase saves the residual: gross income less taxes and spending.
+      // Contributions fill statutory limits HSA → Traditional → Roth, and the
+      // taxable bucket absorbs the rest.
       const annualWorkingSpending = profile.currentSpending
         * Math.pow(1 + profile.workingSpendingGrowthRate, year);
-      // Keep direct engine callers resilient to plans saved before explicit
-      // contribution targets existed. Persistence migrates these plans, while
-      // the projection boundary treats missing targets as an intentional zero.
-      const targets = plan.assumptions.contributions ?? {
-        hsa: 0,
-        traditional: 0,
-        roth: 0,
-        taxable: 0,
-      };
-      const hasHSA = accountBalances.some((account) => account.type === 'HSA');
-      const hasTraditional = accountBalances.some((account) => account.type === 'Traditional');
-      const hasRoth = accountBalances.some((account) => account.type === 'Roth');
-      const hasTaxable = accountBalances.some((account) => account.type === 'Taxable');
-      const eligibleTargets = {
-        hsa: hasHSA ? targets.hsa : 0,
-        traditional: hasTraditional ? targets.traditional : 0,
-        roth: hasRoth ? targets.roth : 0,
-        taxable: hasTaxable ? targets.taxable : 0,
+      const policy: ContributionPolicy = {
+        hsaEligible: plan.assumptions.hsaEligible ?? false,
+        useBackdoorRoth: plan.assumptions.useBackdoorRoth ?? true,
       };
       const periodFraction = year === 0 ? remainingYearFraction : 1;
 
@@ -198,93 +187,36 @@ export function projectScenario(
       }
       rmdAmount = withdrawalTraditionalYear;
       const annualizedRmdIncome = withdrawalTraditionalYear / periodFraction;
-      const baselineWorkingCashFlow = calculateWorkingCashFlow(
+      const workingCashFlow = calculateWorkingCashFlow(
         annualSalary,
         annualWorkingSpending,
         currentAge,
         profile.filingStatus,
         profile.state,
-        eligibleTargets,
+        policy,
+        annualizedRmdIncome,
       );
-      const workingCashFlow = annualizedRmdIncome > 0
-        ? calculateWorkingCashFlow(
-            annualSalary,
-            annualWorkingSpending,
-            currentAge,
-            profile.filingStatus,
-            profile.state,
-            eligibleTargets,
-            annualizedRmdIncome,
-          )
-        : baselineWorkingCashFlow;
       const taxResult = workingCashFlow.tax;
-      const rothContribution = workingCashFlow.contributions.roth;
-      const taxableContribution = workingCashFlow.contributions.taxable;
       insufficientFundsYear = workingCashFlow.fundingGap > 1;
       income = annualSalary * periodFraction;
       spending = annualWorkingSpending * periodFraction;
       taxes = taxResult.totalTax * periodFraction;
 
-      // Add new savings to appropriate accounts based on contribution rules
-      // For first year, prorate contributions based on remaining year fraction
-      const contributionProration = periodFraction;
-
-
-      // HSA contributions go to HSA accounts first (highest tax advantage)
-      if (taxResult.hsaContribution > 0) {
-        const hsaAccount = accountBalances.find(acc => acc.type === 'HSA');
-        if (hsaAccount) {
-          const deposit = taxResult.hsaContribution * contributionProration;
-          hsaAccount.balance += deposit;
-          depositHSAYear = deposit;
-
-        }
-      }
-      
-      // 401k contributions go to Traditional accounts
-      if (taxResult.k401Contribution > 0) {
-        const traditionalAccount = accountBalances.find(acc => acc.type === 'Traditional');
-        if (traditionalAccount) {
-          const deposit = taxResult.k401Contribution * contributionProration;
-          traditionalAccount.balance += deposit;
-          depositTraditionalYear = deposit;
-
-        }
-      }
-
-      // Roth contributions go to Roth accounts
-      if (rothContribution > 0) {
-        const rothAccount = accountBalances.find(acc => acc.type === 'Roth');
-        if (rothAccount) {
-          const deposit = rothContribution * contributionProration;
-          rothAccount.balance += deposit;
-          depositRothYear = deposit;
-
-        }
-      }
-
-      // Explicit after-tax savings go to taxable accounts
-      if (taxableContribution > 0) {
-        const taxableAccount = accountBalances.find(acc => acc.type === 'Taxable');
-        if (taxableAccount) {
-          const deposit = taxableContribution * contributionProration;
-          taxableAccount.balance += deposit;
-          depositTaxableYear = deposit;
-
-        }
-      }
-
-      // Preserve only cash forced into the working-year budget by the RMD.
-      // Ordinary wage surplus remains governed by the user's explicit savings
-      // targets rather than being silently optimized by the simulator.
-      const forcedSurplusDeposit = Math.max(
-        0,
-        workingCashFlow.unallocatedCash - baselineWorkingCashFlow.unallocatedCash,
-      ) * periodFraction;
-      if (forcedSurplusDeposit > 0) {
-        depositTaxableCash(accountBalances, forcedSurplusDeposit);
-        depositTaxableYear += forcedSurplusDeposit;
-      }
+      // The residual is fully invested, so the buckets receive all of it and
+      // nothing is left unallocated. First year prorates like every other flow.
+      const { contributions } = workingCashFlow;
+      depositHSAYear = depositToBucket(
+        accountBalances, 'HSA', contributions.hsa * periodFraction,
+      );
+      depositTraditionalYear = depositToBucket(
+        accountBalances, 'Traditional', contributions.traditional * periodFraction,
+      );
+      depositRothYear = depositToBucket(
+        accountBalances, 'Roth', contributions.roth * periodFraction,
+      );
+      depositTaxableYear = depositToBucket(
+        accountBalances, 'Taxable', contributions.taxable * periodFraction,
+      );
 
       savings = depositTaxableYear
         + depositTraditionalYear
@@ -353,7 +285,7 @@ export function projectScenario(
 
       // RMD excess gets reinvested in taxable account
       if (depositTaxable > 0) {
-        depositTaxableCash(accountBalances, depositTaxable);
+        depositToBucket(accountBalances, 'Taxable', depositTaxable);
         depositTaxableYear = depositTaxable;
       }
 
@@ -693,22 +625,38 @@ export function estimateSalaryHistory(
 }
 
 /** Preserve forced cash surpluses even when no brokerage account exists. */
-function depositTaxableCash(accounts: ProjectionAccount[], amount: number): void {
-  if (amount <= 0) return;
-  const taxableAccount = accounts.find((account) => account.type === 'Taxable');
-  if (taxableAccount) {
-    taxableAccount.balance += amount;
-    return;
+/**
+ * Deposit into a type's bucket, opening it when the household holds no account
+ * of that kind — funding must never depend on which accounts happen to exist.
+ * A new bucket inherits the portfolio's blend so the money is invested the way
+ * the rest of it is; with nothing to blend it stays in cash, which is also what
+ * keeps that balance out of the taxable-gain calculation.
+ *
+ * @returns the amount deposited, for the caller's cash-flow row
+ */
+function depositToBucket(
+  accounts: ProjectionAccount[],
+  type: AccountType,
+  amount: number,
+): number {
+  if (amount <= 0) return 0;
+  const bucket = accounts.find((account) => account.type === type);
+  if (bucket) {
+    bucket.balance += amount;
+    return amount;
   }
 
-  // Internal zero-real-return cash account. It is never persisted or returned
-  // to the user; it prevents after-tax RMD or income surpluses from disappearing.
+  const total = accounts.reduce((sum, account) => sum + account.balance, 0);
+  const stocks = total > 0
+    ? accounts.reduce((sum, a) => sum + a.balance * a.assetWeights.stocks, 0) / total
+    : 0;
   accounts.push({
-    type: 'Taxable',
+    type,
     balance: amount,
-    assetWeights: { stocks: 0, bonds: 0 },
-    isSurplusCash: true,
+    assetWeights: { stocks, bonds: total > 0 ? 1 - stocks : 0 },
+    isSurplusCash: total === 0,
   });
+  return amount;
 }
 
 /**
