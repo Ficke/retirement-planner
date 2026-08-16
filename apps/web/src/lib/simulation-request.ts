@@ -20,7 +20,7 @@ import { MAX_PLAN_ACCOUNTS, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 /** Hard ceiling on paths per simulation — matches what the UI ever requests. */
 export const MAX_PATHS = 5000;
-/** Max scenarios in one batch request (UI sweeps use 17). */
+/** This leaves headroom above the UI's 17-scenario sweep while bounding batch fan-out. */
 export const MAX_BATCH_SIMULATIONS = 40;
 /** Max total paths across a batch request. */
 export const MAX_BATCH_TOTAL_PATHS = 40_000;
@@ -96,12 +96,10 @@ export const SIMULATION_RATE_LIMIT = {
 
 /** Per-instance backstop; production also needs a distributed quota. */
 export const SIMULATION_PATH_RATE_LIMIT = {
-  // A Plan refresh costs ~10k paths (5k main + 17 swept points at 300).
-  // Sized so no human reaches it: the 300ms edit debounce and the 500ms sweep
-  // delay cap a person at roughly 75 refreshes per minute even when tapping a
-  // slider and waiting exactly the settle time, so this leaves ~30% headroom
-  // above a rate nobody sustains. Scripted abuse still stops here, and
-  // max-instances bounds the total compute any one caller can provoke.
+  // A complete Plan refresh costs 10,100 paths: 5,000 main paths plus 17
+  // sensitivity scenarios at 300 paths each. This budget permits 99 complete
+  // refreshes per minute, leaving headroom for debounced edits while bounding
+  // sustained automation.
   limit: 1_000_000,
   windowMs: 60 * 1000,
 } as const;

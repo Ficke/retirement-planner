@@ -69,8 +69,8 @@ export function SensitivityChart({
           stroke="var(--color-y)"
           strokeWidth={2}
           dot={false}
-          // Hollow and small, so the hovered point never reads as the solid
-          // marker showing the plan's current value.
+          // Keep the hover marker hollow and small so it cannot be confused
+          // with the solid marker for the plan's current value.
           activeDot={{
             r: 3,
             fill: "var(--color-background)",

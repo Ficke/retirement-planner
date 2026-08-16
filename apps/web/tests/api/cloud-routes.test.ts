@@ -225,8 +225,8 @@ describe('cloud API authorization boundaries', () => {
 
 describe('simulation proxy response streaming', () => {
   const simulationPlan = {
-    schemaVersion: 2,
-    profile,
+    schemaVersion: 3,
+    profile: { ...profile, retirementSpending: 50_000 },
     accounts: [{
       type: 'Taxable',
       balance: 100_000,
@@ -237,7 +237,8 @@ describe('simulation proxy response streaming', () => {
       simulationModel: 'historical',
       randomSeed: 42,
       taxableGainRatio: 0.5,
-      contributions: { hsa: 0, traditional: 0, roth: 0, taxable: 0 },
+      hsaEligible: false,
+      useBackdoorRoth: false,
     },
   };
 

@@ -120,17 +120,32 @@ describe('SimulationService (Pure)', () => {
       30_000, 35_000, 40_000, 45_000, 50_000, 55_000, 60_000,
     ]);
     expect(result.map((r) => r.annualSpending)).toContain(
-      mockPlan.profile.retirementSpending,
+      mockPlan.profile.currentSpending,
     );
   });
 
   it('keeps the plan spending exact when a percentage would not land on $1k', async () => {
     const result = await service.runSpendingAnalysis({
       ...mockPlan,
-      profile: { ...mockPlan.profile, retirementSpending: 94_500 },
+      profile: { ...mockPlan.profile, currentSpending: 94_500 },
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toContain(94_500);
+  });
+
+  it('keeps every spending scenario within the simulation contract', async () => {
+    const result = await service.runSpendingAnalysis({
+      ...mockPlan,
+      profile: { ...mockPlan.profile, currentSpending: 1_000_000_000 },
+    }, false);
+
+    expect(result.map((r) => r.annualSpending)).toEqual([
+      600_000_000,
+      700_000_000,
+      800_000_000,
+      900_000_000,
+      1_000_000_000,
+    ]);
   });
 
   it('sweeps retirement age by two years either side of the plan', async () => {
@@ -142,7 +157,7 @@ describe('SimulationService (Pure)', () => {
   it('drops swept retirement ages that fall below the minimum', async () => {
     const result = await service.runRetirementAgeAnalysis({
       ...mockPlan,
-      profile: { ...mockPlan.profile, age: 44, retirementAge: 46 },
+      profile: { ...mockPlan.profile, birthDate: '1980-01-01', retirementAge: 46 },
     }, false);
 
     expect(result.map((r) => r.retirementAge)).toEqual([46, 48, 50]);

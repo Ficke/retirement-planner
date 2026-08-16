@@ -36,16 +36,15 @@ export interface SensitivityAnalysisResults {
 }
 
 const MAIN_PATHS = 5000;
-// Every scenario in a sweep shares one base seed, so path i draws the same
-// market returns at every grid point. That makes the sampling error
+// The headline and every sensitivity scenario share one root seed, so path i
+// draws the same market returns at every grid point. That makes sampling error
 // common-mode along a curve — the shape stays readable at path counts far
 // below what an absolute probability would need. The main simulation, not
 // these curves, is what reports the headline number.
 const SWEEP_PATHS = 300;
 
-// 60–120% of first-year retirement spending. Asymmetric on purpose: the curve
-// bends on the downside, and spending far above plan is not a choice anyone is
-// weighing.
+// Sweep 60–120% of current spending. The wider downside range shows how
+// spending less during working years increases savings for retirement.
 const SPENDING_PERCENTS = [60, 70, 80, 90, 100, 110, 120];
 
 interface Scenario {
@@ -102,8 +101,6 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
         socialSecurity: { ...plan.socialSecurity, claimAge },
       },
       paths: SWEEP_PATHS,
-      // Every app simulation uses the same root seed. Path i therefore sees
-      // the same market draws in the headline and at every sweep point.
       seed,
     },
   }));
@@ -117,7 +114,9 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
   const base = plan.profile.currentSpending;
   const levels = [...new Set(
     SPENDING_PERCENTS.map((percent) => (
-      percent === 100 ? base : Math.max(0, Math.round(base * percent / 100_000) * 1000)
+      percent === 100
+        ? base
+        : Math.max(0, Math.min(1_000_000_000, Math.round(base * percent / 100_000) * 1000))
     )),
   )];
   return levels.map((annualSpending) => ({

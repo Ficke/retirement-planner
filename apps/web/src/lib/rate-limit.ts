@@ -128,14 +128,9 @@ export async function rateLimit(
 }
 
 /**
- * Get client IP from Next.js request headers
- */
-/**
- * How many addresses this deployment's infrastructure appends to
- * x-forwarded-for. Requests reach Cloud Run directly, and it appends exactly
- * one entry — the real client address — so counting back from the end skips
- * anything a client supplied. Adding a load balancer in front adds a hop and
- * this must change with it.
+ * Cloud Run appends one trusted client address to `x-forwarded-for`. Reading
+ * from the right skips any prefix supplied by the caller. Increase this count
+ * if another trusted proxy is added in front of Cloud Run.
  */
 const TRUSTED_PROXY_HOPS = 1;
 

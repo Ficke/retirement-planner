@@ -114,9 +114,7 @@ export function countSweepSuccesses(
   return successCounts;
 }
 
-/**
- * Market returns generator interface for both single and block bootstrapping.
- */
+/** Generates market returns for single-year and block bootstrapping. */
 export interface MarketReturnsGenerator {
   next(): { stockReturn: number; bondReturn: number };
 }
