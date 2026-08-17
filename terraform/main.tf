@@ -171,6 +171,22 @@ resource "google_cloudbuild_trigger" "main_branch" {
     }
   }
 
+  # Only rebuild/redeploy when a change could affect one of the built images.
+  # Terraform is excluded deliberately: infrastructure is applied separately,
+  # and nothing under terraform/ reaches either image.
+  included_files = [
+    "apps/web/**",
+    "rust-simulation-service/**",
+    "scripts/**",
+    "Dockerfile",
+    ".dockerignore",
+    ".gcloudignore",
+    "cloudbuild.yaml",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+  ]
+
   filename = "cloudbuild.yaml"
 
   # Build-time substitutions passed as Kaniko --build-arg.

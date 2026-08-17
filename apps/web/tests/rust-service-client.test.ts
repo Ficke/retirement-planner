@@ -11,7 +11,7 @@ vi.mock('google-auth-library', () => ({
   })),
 }));
 
-import { fetchRustService } from '@/lib/rust-service-client';
+import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
 
 describe('fetchRustService', () => {
   const originalServiceUrl = process.env.RUST_SERVICE_URL;
@@ -53,6 +53,59 @@ describe('fetchRustService', () => {
     );
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(request.headers).get('authorization')).toBeNull();
+  });
+
+  it('uses unauthenticated requests for a non-localhost http host', async () => {
+    process.env.RUST_SERVICE_URL = 'http://rust-simulation:8081';
+
+    await fetchRustService('/api/simulate', { method: 'POST' });
+
+    expect(authMocks.getIdTokenClient).not.toHaveBeenCalled();
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(request.headers).get('authorization')).toBeNull();
+  });
+
+  // The ID-token client cache is module-level and outlives each test, so every
+  // case below needs its own host to stay independent of the others.
+  it('reports a failed token mint as an unavailable service', async () => {
+    process.env.RUST_SERVICE_URL = 'https://rust-mint-failure.example.run.app';
+    authMocks.getIdTokenClient.mockRejectedValue(
+      new Error('Could not load the default credentials'),
+    );
+
+    await expect(fetchRustService('/api/simulate', { method: 'POST' })).rejects.toBeInstanceOf(
+      RustServiceUnavailableError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retries the token mint after a failure instead of caching the rejection', async () => {
+    process.env.RUST_SERVICE_URL = 'https://rust-mint-retry.example.run.app';
+    authMocks.getIdTokenClient.mockRejectedValueOnce(new Error('transient'));
+
+    await expect(fetchRustService('/api/simulate', { method: 'POST' })).rejects.toBeInstanceOf(
+      RustServiceUnavailableError,
+    );
+    await expect(fetchRustService('/api/simulate', { method: 'POST' })).resolves.toBeDefined();
+    expect(authMocks.getIdTokenClient).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves an aborted request distinguishable from an unreachable service', async () => {
+    process.env.RUST_SERVICE_URL = 'http://localhost:8081';
+    const aborted = new Error('The operation was aborted');
+    aborted.name = 'AbortError';
+    fetchMock.mockRejectedValue(aborted);
+
+    await expect(fetchRustService('/api/simulate', { method: 'POST' })).rejects.toBe(aborted);
+  });
+
+  it('wraps a transport failure as an unavailable service', async () => {
+    process.env.RUST_SERVICE_URL = 'http://localhost:8081';
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(fetchRustService('/api/simulate', { method: 'POST' })).rejects.toBeInstanceOf(
+      RustServiceUnavailableError,
+    );
   });
 
   it('uses a cached ID-token client for Cloud Run requests', async () => {
