@@ -218,6 +218,40 @@ pub struct IncomeSourcesRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutcomeCashFlowRow {
+    pub age: u32,
+    #[serde(rename = "isRetired")]
+    pub is_retired: bool,
+    pub income: f64,
+    pub spending: f64,
+    pub taxes: f64,
+    pub savings: f64,
+    #[serde(rename = "socialSecurityBenefit")]
+    pub social_security_benefit: f64,
+    #[serde(rename = "withdrawalTaxable")]
+    pub withdrawal_taxable: f64,
+    #[serde(rename = "withdrawalTraditional")]
+    pub withdrawal_traditional: f64,
+    #[serde(rename = "withdrawalRoth")]
+    pub withdrawal_roth: f64,
+    #[serde(rename = "withdrawalHSA")]
+    pub withdrawal_hsa: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutcomeBucket {
+    #[serde(rename = "centerPercentile")]
+    pub center_percentile: u32,
+    #[serde(rename = "lowerPercentile")]
+    pub lower_percentile: u32,
+    #[serde(rename = "upperPercentile")]
+    pub upper_percentile: u32,
+    #[serde(rename = "successProbability")]
+    pub success_probability: f64,
+    pub projections: Vec<OutcomeCashFlowRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationResult {
     /// Fraction of paths that fully fund every modeled working and retirement year.
     #[serde(rename = "successProbability")]
@@ -241,6 +275,12 @@ pub struct SimulationResult {
         default
     )]
     pub income_sources_path: Vec<IncomeSourcesRow>,
+    #[serde(
+        rename = "outcomeBuckets",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
+    pub outcome_buckets: Vec<OutcomeBucket>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

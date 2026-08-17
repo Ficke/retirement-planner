@@ -1,16 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Smoke coverage for the 5-page sidebar IA: knobs on Plan, outputs on
- * Projections, portfolio on Accounts, set-and-forget facts on Profile, app and
- * model configuration on Settings.
+ * Smoke coverage for the 4-page sidebar IA: plan knobs and projections on
+ * Plan, portfolio on Accounts, set-and-forget facts on Profile, and app/model
+ * configuration on Settings.
  *
  * These run signed out, which is the app's LOCAL data mode: profile and
  * accounts live in localStorage, and no database or Firebase session is
  * involved. That keeps the suite runnable in CI without secrets.
  */
 
-const PAGES = ['Plan', 'Projections', 'Accounts', 'Profile', 'Settings'] as const;
+const PAGES = ['Plan', 'Accounts', 'Profile', 'Settings'] as const;
 
 /** Navigate and wait past the bootstrap spinner. */
 async function gotoApp(page: Page) {
@@ -23,20 +23,32 @@ function navItem(page: Page, name: string) {
   return page.getByRole('complementary').getByRole('button', { name, exact: true });
 }
 
-/**
- * A KPI tile by its label. Values also appear in charts and legends, so
- * assertions have to be scoped to the card rather than matched page-wide.
- */
-function statCard(page: Page, label: string) {
-  return page.locator('[data-slot="card"]').filter({ hasText: label });
-}
-
 test('boots into Plan with the KPI row', async ({ page }) => {
   await gotoApp(page);
 
-  for (const label of ['Chance of success', 'Net Worth', 'Retirement Year', 'Retirement Spending']) {
+  for (const label of ['Chance of success', 'Typical outcome', 'Poor markets', 'Strong markets']) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
+  await expect(page.getByText('Levers', { exact: true })).toBeVisible();
+  await expect(page.getByText('Wealth over time', { exact: true })).toBeVisible();
+});
+
+test('Plan includes income outcome cohorts', async ({ page }) => {
+  await gotoApp(page);
+
+  // Exercise the worker response directly; a separately deployed cloud engine
+  // may still be on the previous additive response shape during rollout.
+  await navItem(page, 'Settings').click();
+  await page.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'Local (never leaves device)' }).click();
+  await navItem(page, 'Plan').click();
+
+  await page.getByRole('tab', { name: 'Income', exact: true }).click();
+  const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
+  await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });
+  await expect(outcomeSelectors.first()).toContainText(
+    'Median · 45th–55th',
+  );
 });
 
 test('every sidebar page is reachable', async ({ page }) => {
@@ -59,7 +71,7 @@ test('signed out, the app runs in local mode and offers sign-in', async ({ page 
   await expect(page.getByText('This browser', { exact: true })).toBeVisible();
 });
 
-test('an account added locally reaches the Plan net worth', async ({ page }) => {
+test('an account can be added locally and Plan remains reachable', async ({ page }) => {
   await gotoApp(page);
   await navItem(page, 'Accounts').click();
 
@@ -72,7 +84,7 @@ test('an account added locally reaches the Plan net worth', async ({ page }) => 
   await expect(page.getByText('Test Brokerage')).toBeVisible();
 
   await navItem(page, 'Plan').click();
-  await expect(statCard(page, 'Net Worth').getByText('$250k')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible();
 });
 
 test('accounts survive a reload in local mode', async ({ page }) => {

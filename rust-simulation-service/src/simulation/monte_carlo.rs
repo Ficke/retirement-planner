@@ -4,9 +4,12 @@ use tracing::info;
 
 use crate::simulation::projection::{project_scenario, project_scenario_summary, ProjectionConfig};
 use crate::types::{
-    BatchSimulationRequest, BatchSimulationSummaryResponse, IncomeSourcesRow, MCConfig, PathResult,
-    RetirementPlan, SimulationResult, YearlyProjection,
+    BatchSimulationRequest, BatchSimulationSummaryResponse, IncomeSourcesRow, MCConfig,
+    OutcomeBucket, OutcomeCashFlowRow, PathResult, RetirementPlan, SimulationResult,
+    YearlyProjection,
 };
+
+const OUTCOME_CENTERS: [u32; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
 
 /// The aggregation phase only needs one value per path and year. Keeping the
 /// complete cash-flow object for every Monte Carlo path multiplies memory use
@@ -14,6 +17,7 @@ use crate::types::{
 struct PathSummary {
     terminal_wealth: f64,
     portfolio_values: Vec<f64>,
+    cash_flows: Vec<OutcomeCashFlowRow>,
     success: bool,
 }
 
@@ -35,14 +39,31 @@ pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<Simulati
                 config.use_historical_bootstrap,
                 config.block_size,
             )?;
+            let terminal_wealth = result.terminal_wealth;
+            let success = result.success;
+            let mut portfolio_values = Vec::with_capacity(result.projections.len());
+            let mut cash_flows = Vec::with_capacity(result.projections.len());
+            for projection in result.projections {
+                portfolio_values.push(projection.portfolio_value);
+                cash_flows.push(OutcomeCashFlowRow {
+                    age: projection.age,
+                    is_retired: projection.is_retired,
+                    income: projection.income,
+                    spending: projection.spending,
+                    taxes: projection.taxes,
+                    savings: projection.savings,
+                    social_security_benefit: projection.social_security_benefit,
+                    withdrawal_taxable: projection.withdrawal_taxable,
+                    withdrawal_traditional: projection.withdrawal_traditional,
+                    withdrawal_roth: projection.withdrawal_roth,
+                    withdrawal_hsa: projection.withdrawal_hsa,
+                });
+            }
             Ok(PathSummary {
-                terminal_wealth: result.terminal_wealth,
-                portfolio_values: result
-                    .projections
-                    .into_iter()
-                    .map(|projection| projection.portfolio_value)
-                    .collect(),
-                success: result.success,
+                terminal_wealth,
+                portfolio_values,
+                cash_flows,
+                success,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -223,6 +244,71 @@ fn aggregate_results(
         })
         .collect();
 
+    let outcome_buckets = OUTCOME_CENTERS
+        .into_iter()
+        .map(|center_percentile| {
+            let lower_percentile = center_percentile - 5;
+            let upper_percentile = center_percentile + 5;
+            let start = ((path_count * lower_percentile as usize) / 100).min(path_count - 1);
+            let end = ((path_count * upper_percentile as usize) / 100)
+                .max(start + 1)
+                .min(path_count);
+            let cohort = &terminal_outcomes[start..end];
+            let count = cohort.len() as f64;
+            let projections = (0..year_count)
+                .map(|year_index| {
+                    let first = &path_summaries[cohort[0].1].cash_flows[year_index];
+                    let mut mean = OutcomeCashFlowRow {
+                        age: first.age,
+                        is_retired: first.is_retired,
+                        income: 0.0,
+                        spending: 0.0,
+                        taxes: 0.0,
+                        savings: 0.0,
+                        social_security_benefit: 0.0,
+                        withdrawal_taxable: 0.0,
+                        withdrawal_traditional: 0.0,
+                        withdrawal_roth: 0.0,
+                        withdrawal_hsa: 0.0,
+                    };
+                    for (_, path_index) in cohort {
+                        let row = &path_summaries[*path_index].cash_flows[year_index];
+                        mean.income += row.income;
+                        mean.spending += row.spending;
+                        mean.taxes += row.taxes;
+                        mean.savings += row.savings;
+                        mean.social_security_benefit += row.social_security_benefit;
+                        mean.withdrawal_taxable += row.withdrawal_taxable;
+                        mean.withdrawal_traditional += row.withdrawal_traditional;
+                        mean.withdrawal_roth += row.withdrawal_roth;
+                        mean.withdrawal_hsa += row.withdrawal_hsa;
+                    }
+                    mean.income /= count;
+                    mean.spending /= count;
+                    mean.taxes /= count;
+                    mean.savings /= count;
+                    mean.social_security_benefit /= count;
+                    mean.withdrawal_taxable /= count;
+                    mean.withdrawal_traditional /= count;
+                    mean.withdrawal_roth /= count;
+                    mean.withdrawal_hsa /= count;
+                    mean
+                })
+                .collect();
+            let bucket_successes = cohort
+                .iter()
+                .filter(|(_, path_index)| path_summaries[*path_index].success)
+                .count();
+            OutcomeBucket {
+                center_percentile,
+                lower_percentile,
+                upper_percentile,
+                success_probability: bucket_successes as f64 / count,
+                projections,
+            }
+        })
+        .collect();
+
     Ok(SimulationResult {
         success_probability,
         median_terminal_wealth: terminal_outcomes[p50_index].0,
@@ -232,6 +318,7 @@ fn aggregate_results(
         yearly_projections,
         risk_of_ruin: 1.0 - success_probability,
         income_sources_path,
+        outcome_buckets,
     })
 }
 
@@ -310,5 +397,42 @@ mod tests {
             assert_eq!(summary.id, simulation.id);
             assert_eq!(summary.success_probability, full.success_probability);
         }
+    }
+
+    #[test]
+    fn full_simulation_returns_centered_outcome_buckets() {
+        let result = run_simulation(
+            plan(60_000.0),
+            MCConfig {
+                paths: 100,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.outcome_buckets.len(), 9);
+        for (bucket, center) in result.outcome_buckets.iter().zip(OUTCOME_CENTERS) {
+            assert_eq!(bucket.center_percentile, center);
+            assert_eq!(bucket.lower_percentile, center - 5);
+            assert_eq!(bucket.upper_percentile, center + 5);
+            assert_eq!(bucket.projections.len(), result.yearly_projections.len());
+            assert!((0.0..=1.0).contains(&bucket.success_probability));
+            assert!(bucket.projections.iter().all(|row| {
+                row.income.is_finite()
+                    && row.spending.is_finite()
+                    && row.taxes.is_finite()
+                    && row.savings.is_finite()
+                    && row.social_security_benefit.is_finite()
+                    && row.withdrawal_taxable.is_finite()
+                    && row.withdrawal_traditional.is_finite()
+                    && row.withdrawal_roth.is_finite()
+                    && row.withdrawal_hsa.is_finite()
+            }));
+        }
+
+        let median = &result.outcome_buckets[4];
+        assert_eq!((median.lower_percentile, median.upper_percentile), (45, 55));
     }
 }

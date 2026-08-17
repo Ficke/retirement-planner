@@ -1,5 +1,13 @@
 import * as Comlink from 'comlink';
-import type { SimulationPlan, SimulationResult, YearlyProjection, IncomeSourcesRow } from '@/domain/types';
+import type {
+  IncomeSourcesRow,
+  OutcomeBucket,
+  OutcomeCashFlowRow,
+  PathProjection,
+  SimulationPlan,
+  SimulationResult,
+  YearlyProjection,
+} from '@/domain/types';
 import { countSweepSuccesses, projectScenario } from '@/engine/projection';
 
 /**
@@ -18,6 +26,20 @@ export interface WorkerSweepScenario {
   plan: SimulationPlan;
 }
 
+const OUTCOME_CENTERS = [10, 20, 30, 40, 50, 60, 70, 80, 90] as const;
+const CASH_FLOW_KEYS = [
+  'income',
+  'spending',
+  'taxes',
+  'savings',
+  'socialSecurityBenefit',
+  'withdrawalTaxable',
+  'withdrawalTraditional',
+  'withdrawalRoth',
+  'withdrawalHSA',
+] as const;
+type CashFlowKey = typeof CASH_FLOW_KEYS[number];
+
 function runSweepShard(
   scenarios: WorkerSweepScenario[],
   seed: number,
@@ -35,6 +57,9 @@ async function runSimulation(
 
   const terminalOutcomes: Array<{ wealth: number; pathIndex: number }> = [];
   let portfolioByPathAndYear: Float64Array | null = null;
+  let cashFlowByPathAndYear: Record<CashFlowKey, Float64Array> | null = null;
+  let timeline: Array<Pick<PathProjection, 'age' | 'isRetired'>> = [];
+  const successByPath = new Uint8Array(paths);
   let numYears = 0;
   let successCount = 0;
 
@@ -44,15 +69,26 @@ async function runSimulation(
       numYears = result.projections.length;
       if (numYears === 0) throw new Error('Simulation produced no projections');
       portfolioByPathAndYear = new Float64Array(paths * numYears);
+      cashFlowByPathAndYear = Object.fromEntries(
+        CASH_FLOW_KEYS.map((key) => [key, new Float64Array(paths * numYears)]),
+      ) as Record<CashFlowKey, Float64Array>;
+      timeline = result.projections.map(({ age, isRetired }) => ({ age, isRetired }));
     } else if (result.projections.length !== numYears) {
       throw new Error('Simulation paths produced inconsistent projection lengths');
     }
     for (let yearIndex = 0; yearIndex < numYears; yearIndex++) {
-      portfolioByPathAndYear![pathIndex * numYears + yearIndex] =
-        result.projections[yearIndex].portfolioValue;
+      const offset = pathIndex * numYears + yearIndex;
+      const projection = result.projections[yearIndex];
+      portfolioByPathAndYear![offset] = projection.portfolioValue;
+      for (const key of CASH_FLOW_KEYS) {
+        cashFlowByPathAndYear![key][offset] = projection[key];
+      }
     }
     terminalOutcomes.push({ wealth: result.terminalWealth, pathIndex });
-    if (result.success) successCount++;
+    if (result.success) {
+      successByPath[pathIndex] = 1;
+      successCount++;
+    }
   }
 
   terminalOutcomes.sort((a, b) => a.wealth - b.wealth);
@@ -106,6 +142,45 @@ async function runSimulation(
     withdrawalHSA: row.withdrawalHSA,
   }));
 
+  const outcomeBuckets: OutcomeBucket[] = OUTCOME_CENTERS.map((centerPercentile) => {
+    const lowerPercentile = centerPercentile - 5;
+    const upperPercentile = centerPercentile + 5;
+    const start = Math.min(Math.floor(paths * lowerPercentile / 100), paths - 1);
+    const end = Math.min(paths, Math.max(start + 1, Math.floor(paths * upperPercentile / 100)));
+    const cohort = terminalOutcomes.slice(start, end);
+    const projections: OutcomeCashFlowRow[] = timeline.map((period, yearIndex) => {
+      const sums = Object.fromEntries(CASH_FLOW_KEYS.map((key) => [key, 0])) as Record<CashFlowKey, number>;
+      for (const { pathIndex } of cohort) {
+        const offset = pathIndex * numYears + yearIndex;
+        for (const key of CASH_FLOW_KEYS) sums[key] += cashFlowByPathAndYear![key][offset];
+      }
+      const count = cohort.length;
+      return {
+        ...period,
+        income: sums.income / count,
+        spending: sums.spending / count,
+        taxes: sums.taxes / count,
+        savings: sums.savings / count,
+        socialSecurityBenefit: sums.socialSecurityBenefit / count,
+        withdrawalTaxable: sums.withdrawalTaxable / count,
+        withdrawalTraditional: sums.withdrawalTraditional / count,
+        withdrawalRoth: sums.withdrawalRoth / count,
+        withdrawalHSA: sums.withdrawalHSA / count,
+      };
+    });
+    const bucketSuccesses = cohort.reduce(
+      (total, { pathIndex }) => total + successByPath[pathIndex],
+      0,
+    );
+    return {
+      centerPercentile,
+      lowerPercentile,
+      upperPercentile,
+      successProbability: bucketSuccesses / cohort.length,
+      projections,
+    };
+  });
+
   const successProbability = successCount / paths;
 
   return {
@@ -116,6 +191,7 @@ async function runSimulation(
     percentile90TerminalWealth: terminalOutcomes[p90Index].wealth,
     yearlyProjections,
     incomeSourcesPath,
+    outcomeBuckets,
     riskOfRuin: 1 - successProbability,
   };
 }

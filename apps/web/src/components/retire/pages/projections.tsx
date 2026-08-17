@@ -12,9 +12,16 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
-import type { YearlyProjection } from "@/domain/types";
+import type { SimulationResult, YearlyProjection } from "@/domain/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -26,8 +33,6 @@ import {
 import {
   DashboardCard,
   KPIGrid,
-  PageHeader,
-  PageShell,
   SegmentedTabs,
   Stat,
 } from "@/components/retire/ui";
@@ -209,13 +214,52 @@ function YearlyTable({ data }: { data: Row[] }) {
   );
 }
 
-export function PageProjections() {
+const OUTCOME_PERCENTILES = [10, 20, 30, 40, 50, 60, 70, 80, 90] as const;
+
+function OutcomeSelect({
+  value,
+  onValueChange,
+}: {
+  value: number;
+  onValueChange: (value: number) => void;
+}) {
+  return (
+    <Select value={String(value)} onValueChange={(next) => onValueChange(Number(next))}>
+      <SelectTrigger size="sm" className="w-[172px]" aria-label="Outcome percentile">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {OUTCOME_PERCENTILES.map((percentile) => (
+          <SelectItem key={percentile} value={String(percentile)}>
+            {percentile === 50
+              ? "Median · 45th–55th"
+              : `${percentile - 5}th–${percentile + 5}th`}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+export function ProjectionsSection({
+  result,
+  isSimulating,
+}: {
+  result: SimulationResult | null;
+  isSimulating: boolean;
+}) {
   const plan = usePlan((s) => s.plan);
-  const result = usePlan((s) => s.simulationResult);
-  const isSimulating = usePlan((s) => s.isSimulatingMain);
 
   const [view, setView] = useState<ChartView>("wealth");
   const [yearFilter, setYearFilter] = useState<YearFilter>("all");
+  const [outcomePercentile, setOutcomePercentile] = useState(50);
+
+  const selectedBucket = useMemo(
+    () => result?.outcomeBuckets?.find(
+      (bucket) => bucket.centerPercentile === outcomePercentile,
+    ),
+    [outcomePercentile, result?.outcomeBuckets],
+  );
 
   const yearly = useMemo(
     () => result?.yearlyProjections ?? [],
@@ -228,12 +272,21 @@ export function PageProjections() {
         : yearFilter === "retired"
         ? yearly.filter((p) => p.isRetired)
         : yearly;
-    return filtered.map((p) => ({
-      ...p,
-      // `income` already includes Social Security in retirement projections.
-      externalIncome: p.income,
-    }));
-  }, [yearly, yearFilter]);
+    const cashFlowsByAge = new Map(
+      selectedBucket?.projections.map((projection) => [projection.age, projection]),
+    );
+    return filtered.map((p) => {
+      const cashFlow = cashFlowsByAge.get(p.age);
+      return {
+        ...p,
+        income: cashFlow?.income ?? p.income,
+        spending: cashFlow?.spending ?? p.spending,
+        taxes: cashFlow?.taxes ?? p.taxes,
+        savings: cashFlow?.savings ?? p.savings,
+        externalIncome: cashFlow?.income ?? p.income,
+      };
+    });
+  }, [selectedBucket?.projections, yearly, yearFilter]);
 
   const successProb = result?.successProbability ?? 0;
   const median = result?.medianTerminalWealth ?? 0;
@@ -241,28 +294,7 @@ export function PageProjections() {
   const p90 = result?.percentile90TerminalWealth ?? 0;
 
   return (
-    <PageShell>
-      <PageHeader
-        title="Projections"
-        actions={
-          <Badge
-            variant="secondary"
-            className={cn(
-              "gap-1.5",
-              isSimulating ? "bg-warn/15 text-warn" : "bg-success/15 text-success",
-            )}
-          >
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                isSimulating ? "bg-warn" : "bg-success",
-              )}
-            />
-            {isSimulating ? "Recalculating" : "Up to date"}
-          </Badge>
-        }
-      />
-
+    <>
       <KPIGrid cols={4}>
         <Stat
           label="Chance of success"
@@ -291,15 +323,23 @@ export function PageProjections() {
 
       <DashboardCard
         title={view === "wealth" ? "Wealth over time" : "Where income comes from"}
+        description={view === "income" && selectedBucket
+          ? `Average annual cash flows for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
+          : undefined}
         actions={
-          <SegmentedTabs<ChartView>
-            value={view}
-            onValueChange={setView}
-            options={[
-              { value: "wealth", label: "Wealth" },
-              { value: "income", label: "Income" },
-            ]}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {view === "income" && (
+              <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
+            )}
+            <SegmentedTabs<ChartView>
+              value={view}
+              onValueChange={setView}
+              options={[
+                { value: "wealth", label: "Wealth" },
+                { value: "income", label: "Income" },
+              ]}
+            />
+          </div>
         }
       >
         {!yearly.length ? (
@@ -316,30 +356,37 @@ export function PageProjections() {
           />
         ) : (
           <IncomeSourcesChart
-            projections={result?.incomeSourcesPath ?? yearly}
-            height={300}
+            projections={selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly}
+            height={320}
           />
         )}
       </DashboardCard>
 
       <DashboardCard
         title="Year by year"
-        description="Cash flows follow one representative path. Portfolio and Range span all paths."
+        description={selectedBucket
+          ? `Cash flows average the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile outcome cohort. Portfolio and Range span all paths.`
+          : "Cash flows follow one representative path. Portfolio and Range span all paths."}
         actions={
-          <SegmentedTabs<YearFilter>
-            value={yearFilter}
-            onValueChange={setYearFilter}
-            options={[
-              { value: "all", label: "All years" },
-              { value: "work", label: "Working" },
-              { value: "retired", label: "Retired" },
-            ]}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectedBucket && (
+              <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
+            )}
+            <SegmentedTabs<YearFilter>
+              value={yearFilter}
+              onValueChange={setYearFilter}
+              options={[
+                { value: "all", label: "All years" },
+                { value: "work", label: "Working" },
+                { value: "retired", label: "Retired" },
+              ]}
+            />
+          </div>
         }
         flush
       >
         <YearlyTable data={filteredRows} />
       </DashboardCard>
-    </PageShell>
+    </>
   );
 }

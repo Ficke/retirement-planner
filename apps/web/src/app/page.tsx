@@ -11,12 +11,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PagePlan } from "@/components/retire/pages/plan";
 import { PageProfile } from "@/components/retire/pages/profile";
 import { PageAccounts } from "@/components/retire/pages/accounts";
-import { PageProjections } from "@/components/retire/pages/projections";
 import { PageSettings } from "@/components/retire/pages/settings";
 
 const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
   plan:        { label: "Plan",        Comp: PagePlan },
-  projections: { label: "Projections", Comp: PageProjections },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
   profile:     { label: "Profile",     Comp: PageProfile },
   settings:    { label: "Settings",    Comp: PageSettings },
@@ -33,6 +31,19 @@ export default function Home() {
 
   const [page, setPage] = useState<PageId>("plan");
   const [collapsed, setCollapsed] = useState(false);
+
+  // Preserve usable chart width on phones. The sidebar can still be expanded
+  // explicitly, but it should not consume most of the initial viewport.
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 639px)");
+    const collapseOnSmallScreens = () => {
+      if (media.matches) setCollapsed(true);
+    };
+
+    collapseOnSmallScreens();
+    media.addEventListener("change", collapseOnSmallScreens);
+    return () => media.removeEventListener("change", collapseOnSmallScreens);
+  }, []);
 
   // The app is fully usable without an account (local data mode). Bootstrap
   // re-runs on every auth change so sign-in/out swaps the data source.

@@ -160,10 +160,14 @@ export function DashboardCard({
   return (
     <Card className={className}>
       {hasHeader && (
-        <CardHeader>
+        <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
           {title && <CardTitle>{title}</CardTitle>}
           {description && <CardDescription>{description}</CardDescription>}
-          {actions && <CardAction>{actions}</CardAction>}
+          {actions && (
+            <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
+              {actions}
+            </CardAction>
+          )}
         </CardHeader>
       )}
       <CardContent className={cn(flush && "px-0", contentClassName)}>
