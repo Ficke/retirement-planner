@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -30,6 +31,7 @@ export function SensitivityChart({
   xDomain,
   xTicks,
   xFormat = (v) => String(v),
+  xTooltipFormat,
   height = 200,
 }: {
   points: { x: number; y: number }[];
@@ -38,9 +40,22 @@ export function SensitivityChart({
   xDomain: [number, number];
   xTicks: number[];
   xFormat?: (v: number) => string;
+  xTooltipFormat?: (v: number) => string;
   height?: number;
 }) {
-  if (!points || points.length === 0) {
+  const visiblePoints = useMemo(
+    () => points
+      .filter((point) => (
+        Number.isFinite(point.x)
+        && Number.isFinite(point.y)
+        && point.x >= xDomain[0]
+        && point.x <= xDomain[1]
+      ))
+      .map((point) => ({ ...point, y: Math.max(0, Math.min(1, point.y)) })),
+    [points, xDomain],
+  );
+
+  if (visiblePoints.length === 0) {
     return (
       <div className="text-muted-foreground flex items-center justify-center text-sm" style={{ height }}>
         —
@@ -51,12 +66,16 @@ export function SensitivityChart({
   return (
     <ChartContainer
       config={config}
-      className="aspect-auto w-full"
+      className="aspect-auto w-full overflow-hidden"
       style={{ height }}
       role="img"
       aria-label={`${xLabel ?? "Plan lever"} sensitivity: chance of success by ${xLabel?.toLowerCase() ?? "value"}`}
     >
-      <LineChart accessibilityLayer data={points} margin={{ top: 10, right: 12, left: 4, bottom: 2 }}>
+      <LineChart
+        accessibilityLayer
+        data={visiblePoints}
+        margin={{ top: 10, right: 20, left: 4, bottom: 24 }}
+      >
         <CartesianGrid {...chartGridProps} />
         <XAxis
           {...chartXAxisProps}
@@ -66,6 +85,14 @@ export function SensitivityChart({
           ticks={xTicks}
           allowDataOverflow
           tickFormatter={xFormat}
+          height={44}
+          label={{
+            value: xLabel,
+            position: "insideBottom",
+            offset: -10,
+            fill: "var(--color-muted-foreground)",
+            fontSize: 11,
+          }}
         />
         <YAxis
           {...chartYAxisProps}
@@ -107,7 +134,10 @@ export function SensitivityChart({
               // The tooltip label arrives as the series config label ("Success"),
               // not the x value, because a numeric XAxis skips ChartTooltipContent's
               // string branch. Read x off the datum instead.
-              labelFormatter={(_, payload) => xFormat(Number(payload?.[0]?.payload?.x))}
+              labelFormatter={(_, payload) => {
+                const x = Number(payload?.[0]?.payload?.x);
+                return xTooltipFormat?.(x) ?? xFormat(x);
+              }}
               formatter={(value) => (
                 <span className="font-mono">Success: {fmtPercent(Number(value))}</span>
               )}

@@ -43,7 +43,6 @@ import {
 import { fmtCurrency, successTone } from "../format";
 import { cn } from "@/lib/utils";
 
-type ChartView = "wealth" | "income";
 type YearFilter = "all" | "work" | "retired";
 
 type Row = YearlyProjection & { externalIncome: number };
@@ -133,11 +132,11 @@ function YearlyTable({ data }: { data: Row[] }) {
       },
       {
         id: "range",
-        header: () => <span className="block text-right">Range</span>,
+        header: () => <span className="block text-right">Middle 50%</span>,
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-muted-foreground block text-right font-mono text-xs">
-            {fmtCurrency(row.original.p10, true)} / {fmtCurrency(row.original.p90, true)}
+            {fmtCurrency(row.original.p25, true)} / {fmtCurrency(row.original.p75, true)}
           </span>
         ),
       },
@@ -225,7 +224,7 @@ function OutcomeSelect({
 }) {
   return (
     <Select value={String(value)} onValueChange={(next) => onValueChange(Number(next))}>
-      <SelectTrigger size="sm" className="w-[172px]" aria-label="Outcome percentile">
+      <SelectTrigger size="sm" className="w-[196px]" aria-label="Outcome percentile">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -241,7 +240,51 @@ function OutcomeSelect({
   );
 }
 
-export function ProjectionsSection({
+export function ProjectionSummary({
+  result,
+}: {
+  result: SimulationResult | null;
+}) {
+  const plan = usePlan((s) => s.plan);
+  const currentWealth = plan.accounts.reduce(
+    (total, account) => total + account.balance,
+    0,
+  );
+  const retirementProjection = result?.yearlyProjections.find(
+    (projection) => projection.age === plan.profile.retirementAge,
+  );
+  const successProb = result?.successProbability;
+  const retirementWealth = retirementProjection?.p50;
+  const finalWealth = result?.medianTerminalWealth;
+
+  return (
+    <KPIGrid cols={4}>
+      <Stat
+        label="Current wealth"
+        value={fmtCurrency(currentWealth, true)}
+        trend="Account balances today"
+      />
+      <Stat
+        label="Chance of success"
+        value={successProb == null ? "—" : `${(successProb * 100).toFixed(0)}%`}
+        trend={successProb == null ? "Simulation pending" : successTone(successProb).label}
+        tone={successProb == null ? undefined : successTone(successProb).tone}
+      />
+      <Stat
+        label="Projected wealth at retirement"
+        value={retirementWealth == null ? "—" : fmtCurrency(retirementWealth, true)}
+        trend={`Median projection at age ${plan.profile.retirementAge}`}
+      />
+      <Stat
+        label={`Projected wealth at age ${plan.profile.lifeExpectancy}`}
+        value={finalWealth == null ? "—" : fmtCurrency(finalWealth, true)}
+        trend="Median projection"
+      />
+    </KPIGrid>
+  );
+}
+
+export function ProjectionDetails({
   result,
   isSimulating,
 }: {
@@ -250,7 +293,6 @@ export function ProjectionsSection({
 }) {
   const plan = usePlan((s) => s.plan);
 
-  const [view, setView] = useState<ChartView>("wealth");
   const [yearFilter, setYearFilter] = useState<YearFilter>("all");
   const [outcomePercentile, setOutcomePercentile] = useState(50);
 
@@ -288,72 +330,39 @@ export function ProjectionsSection({
     });
   }, [selectedBucket?.projections, yearly, yearFilter]);
 
-  const successProb = result?.successProbability ?? 0;
-  const median = result?.medianTerminalWealth ?? 0;
-  const p10 = result?.percentile10TerminalWealth ?? 0;
-  const p90 = result?.percentile90TerminalWealth ?? 0;
-
   return (
     <>
-      <KPIGrid cols={4}>
-        <Stat
-          label="Chance of success"
-          value={`${(successProb * 100).toFixed(0)}%`}
-          trend={successTone(successProb).label}
-          tone={successTone(successProb).tone}
-        />
-        <Stat
-          label="Typical outcome"
-          value={fmtCurrency(median, true)}
-          trend={`at age ${plan.profile.lifeExpectancy}`}
-        />
-        <Stat
-          label="Poor markets"
-          value={fmtCurrency(p10, true)}
-          trend="1 in 10 end up worse"
-          tone="warn"
-        />
-        <Stat
-          label="Strong markets"
-          value={fmtCurrency(p90, true)}
-          trend="1 in 10 end up better"
-          tone="positive"
-        />
-      </KPIGrid>
-
-      <DashboardCard
-        title={view === "wealth" ? "Wealth over time" : "Where income comes from"}
-        description={view === "income" && selectedBucket
-          ? `Average annual cash flows for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
-          : undefined}
-        actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {view === "income" && (
-              <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
-            )}
-            <SegmentedTabs<ChartView>
-              value={view}
-              onValueChange={setView}
-              options={[
-                { value: "wealth", label: "Wealth" },
-                { value: "income", label: "Income" },
-              ]}
-            />
-          </div>
-        }
-      >
+      <DashboardCard title="Wealth over time">
         {!yearly.length ? (
           <div className="text-muted-foreground flex h-[340px] items-center justify-center text-sm">
             {isSimulating
               ? "Running simulation…"
               : "No projection data — adjust your plan to run."}
           </div>
-        ) : view === "wealth" ? (
+        ) : (
           <WealthFanChart
             projections={yearly}
             retirementAge={plan.profile.retirementAge}
             height={340}
           />
+        )}
+      </DashboardCard>
+
+      <DashboardCard
+        title="Retirement cash flow"
+        description={selectedBucket
+          ? `Average annual income sources for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
+          : undefined}
+        actions={selectedBucket
+          ? <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
+          : undefined}
+      >
+        {!yearly.length ? (
+          <div className="text-muted-foreground flex h-[320px] items-center justify-center text-sm">
+            {isSimulating
+              ? "Running simulation…"
+              : "No projection data — adjust your plan to run."}
+          </div>
         ) : (
           <IncomeSourcesChart
             projections={selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly}
@@ -365,8 +374,8 @@ export function ProjectionsSection({
       <DashboardCard
         title="Year by year"
         description={selectedBucket
-          ? `Cash flows average the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile outcome cohort. Portfolio and Range span all paths.`
-          : "Cash flows follow one representative path. Portfolio and Range span all paths."}
+          ? `Cash flows average the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile outcome cohort. Portfolio is the median; Middle 50% is the 25th–75th percentile range.`
+          : "Cash flows follow one representative path. Portfolio is the median; Middle 50% is the 25th–75th percentile range."}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {selectedBucket && (

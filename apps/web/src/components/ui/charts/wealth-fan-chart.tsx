@@ -22,13 +22,12 @@ import {
 import { fmtCurrency } from "@/components/retire/format";
 import type { YearlyProjection } from "@/domain/types";
 
-type Pick4 = Pick<
+type WealthProjection = Pick<
   YearlyProjection,
-  "age" | "p10" | "p25" | "p50" | "p75" | "p90" | "isRetired"
+  "age" | "p25" | "p50" | "p75" | "isRetired"
 >;
 
 const config = {
-  band90: { label: "10th–90th", color: "var(--color-success)" },
   band75: { label: "25th–75th", color: "var(--color-success)" },
   p50: { label: "Median", color: "var(--color-success)" },
 } as const;
@@ -38,14 +37,13 @@ export function WealthFanChart({
   height = 280,
   retirementAge,
 }: {
-  projections: Pick4[];
+  projections: WealthProjection[];
   height?: number;
   retirementAge?: number;
 }) {
   const data = useMemo(() => {
     return projections.map((p) => ({
       age: p.age,
-      band90: [p.p10, p.p90] as [number, number],
       band75: [p.p25, p.p75] as [number, number],
       p50: p.p50,
       isRetired: p.isRetired,
@@ -69,7 +67,7 @@ export function WealthFanChart({
       className="aspect-auto w-full"
       style={{ height }}
       role="img"
-      aria-label="Projected wealth by age, showing median and 10th to 90th percentile ranges"
+      aria-label="Projected wealth by age, showing the median and 25th to 75th percentile range"
     >
       <ComposedChart accessibilityLayer data={data} margin={{ top: 24, right: 12, left: 8, bottom: 2 }}>
         <CartesianGrid {...chartGridProps} />
@@ -84,14 +82,6 @@ export function WealthFanChart({
           domain={[0, "auto"]}
           tickCount={5}
           tickFormatter={(v) => fmtCurrency(v, true)}
-        />
-        <Area
-          type="monotone"
-          dataKey="band90"
-          stroke="none"
-          fill="var(--color-band90)"
-          fillOpacity={0.12}
-          isAnimationActive={false}
         />
         <Area
           type="monotone"
