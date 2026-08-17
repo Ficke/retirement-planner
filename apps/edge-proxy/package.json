@@ -1,0 +1,25 @@
+{
+  "name": "@retire-plan/edge-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run types:check && pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run deploy:dry-run",
+    "deploy": "wrangler deploy --strict",
+    "deploy:dry-run": "wrangler deploy --dry-run --outdir dist --strict",
+    "dev": "wrangler dev",
+    "lint": "oxlint --deny-warnings src test vitest.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types --env-file .dev.vars.example",
+    "types:check": "wrangler types --check --env-file .dev.vars.example"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@types/node": "26.2.0",
+    "oxlint": "1.78.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}

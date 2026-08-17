@@ -1,0 +1,3 @@
+# Wrangler uses this non-secret placeholder to generate the ORIGIN_SECRET type.
+# Copy it to .dev.vars and replace the value for local end-to-end development.
+ORIGIN_SECRET=local-development-only
