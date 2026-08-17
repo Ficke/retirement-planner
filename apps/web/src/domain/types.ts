@@ -143,6 +143,8 @@ export interface SimulationResult {
    * path keeps income, taxes, spending, deposits, and withdrawals coherent.
    */
   incomeSourcesPath?: IncomeSourcesRow[];
+  /** Mean cash flows for 10%-wide outcome cohorts centered on deciles 10–90. */
+  outcomeBuckets?: OutcomeBucket[];
   /** 1 - successProbability. A path fails when any modeled year is underfunded. */
   riskOfRuin: number;
   /** Which engine produced this result. Set by the simulation service, not the engine. */
@@ -208,6 +210,21 @@ export interface IncomeSourcesRow {
   withdrawalTraditional: number;
   withdrawalRoth: number;
   withdrawalHSA: number;
+}
+
+export interface OutcomeCashFlowRow extends IncomeSourcesRow {
+  income: number;
+  spending: number;
+  taxes: number;
+  savings: number;
+}
+
+export interface OutcomeBucket {
+  centerPercentile: number;
+  lowerPercentile: number;
+  upperPercentile: number;
+  successProbability: number;
+  projections: OutcomeCashFlowRow[];
 }
 
 /** A year of the representative path, widened with the percentile fan. */

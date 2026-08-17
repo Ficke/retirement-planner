@@ -78,10 +78,10 @@ describe('SimulationService (Pure)', () => {
     expect(result.medianTerminalWealth).toBe(1000000);
   });
 
-  it('sweeps claim age every other year across the eligible range', async () => {
+  it('sweeps the standard claim ages and includes the exact plan age', async () => {
     const result = await service.runSocialSecurityAnalysis(mockPlan, false);
 
-    expect(result.map((r) => r.claimAge)).toEqual([62, 64, 66, 68, 70]);
+    expect(result.map((r) => r.claimAge)).toEqual([62, 64, 66, 67, 68, 70]);
   });
 
   it('does not simulate duplicate claim ages when Social Security is disabled', async () => {
@@ -113,24 +113,23 @@ describe('SimulationService (Pure)', () => {
     });
   });
 
-  it('sweeps spending from 60% to 120% of plan, with the plan itself on the grid', async () => {
+  it('sweeps a stable $60k–$120k spending range', async () => {
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      30_000, 35_000, 40_000, 45_000, 50_000, 55_000, 60_000,
+      60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
     ]);
-    expect(result.map((r) => r.annualSpending)).toContain(
-      mockPlan.profile.currentSpending,
-    );
   });
 
-  it('keeps the plan spending exact when a percentage would not land on $1k', async () => {
+  it('adds an exact in-range plan spending value without changing the standard range', async () => {
     const result = await service.runSpendingAnalysis({
       ...mockPlan,
       profile: { ...mockPlan.profile, currentSpending: 94_500 },
     }, false);
 
-    expect(result.map((r) => r.annualSpending)).toContain(94_500);
+    expect(result.map((r) => r.annualSpending)).toEqual([
+      60_000, 70_000, 80_000, 90_000, 94_500, 100_000, 110_000, 120_000,
+    ]);
   });
 
   it('keeps every spending scenario within the simulation contract', async () => {
@@ -140,27 +139,23 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      600_000_000,
-      700_000_000,
-      800_000_000,
-      900_000_000,
-      1_000_000_000,
+      60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
     ]);
   });
 
-  it('sweeps retirement age by two years either side of the plan', async () => {
+  it('sweeps a stable age 45–70 retirement range', async () => {
     const result = await service.runRetirementAgeAnalysis(mockPlan, false);
 
-    expect(result.map((r) => r.retirementAge)).toEqual([61, 63, 65, 67, 69]);
+    expect(result.map((r) => r.retirementAge)).toEqual([45, 50, 55, 60, 65, 70]);
   });
 
-  it('drops swept retirement ages that fall below the minimum', async () => {
+  it('adds an exact in-range plan retirement age to the standard grid', async () => {
     const result = await service.runRetirementAgeAnalysis({
       ...mockPlan,
       profile: { ...mockPlan.profile, birthDate: '1980-01-01', retirementAge: 46 },
     }, false);
 
-    expect(result.map((r) => r.retirementAge)).toEqual([46, 48, 50]);
+    expect(result.map((r) => r.retirementAge)).toEqual([45, 46, 50, 55, 60, 65, 70]);
   });
 
   it('sends a valid retirement age sweep at the minimum retirement age', async () => {

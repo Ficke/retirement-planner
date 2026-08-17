@@ -2,7 +2,6 @@
 
 import {
   ChevronLeft,
-  LineChart,
   LogIn,
   LogOut,
   Settings,
@@ -26,14 +25,12 @@ import {
 
 export type PageId =
   | "plan"
-  | "projections"
   | "accounts"
   | "profile"
   | "settings";
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
   { id: "plan", label: "Plan", icon: SlidersHorizontal },
-  { id: "projections", label: "Projections", icon: LineChart },
   { id: "accounts", label: "Accounts", icon: Wallet },
   { id: "profile", label: "Profile", icon: UserRound },
   { id: "settings", label: "Settings", icon: Settings },

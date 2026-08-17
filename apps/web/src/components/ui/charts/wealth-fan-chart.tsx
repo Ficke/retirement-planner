@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import {
   Area,
+  CartesianGrid,
   ComposedChart,
   Line,
   ReferenceLine,
@@ -10,7 +11,14 @@ import {
   YAxis,
 } from "recharts";
 
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  chartGridProps,
+  chartXAxisProps,
+  chartYAxisProps,
+} from "@/components/ui/chart";
 import { fmtCurrency } from "@/components/retire/format";
 import type { YearlyProjection } from "@/domain/types";
 
@@ -34,17 +42,14 @@ export function WealthFanChart({
   height?: number;
   retirementAge?: number;
 }) {
-  const { data, yMax } = useMemo(() => {
-    const p90Max = Math.max(1, ...projections.map((p) => p.p90 || 0));
-    const cap = p90Max * 1.05;
-    const rows = projections.map((p) => ({
+  const data = useMemo(() => {
+    return projections.map((p) => ({
       age: p.age,
       band90: [p.p10, p.p90] as [number, number],
       band75: [p.p25, p.p75] as [number, number],
       p50: p.p50,
       isRetired: p.isRetired,
     }));
-    return { data: rows, yMax: cap };
   }, [projections]);
 
   if (!projections || projections.length === 0) {
@@ -59,23 +64,26 @@ export function WealthFanChart({
   }
 
   return (
-    <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
-      <ComposedChart data={data} margin={{ top: 24, right: 12, left: 8, bottom: 0 }}>
+    <ChartContainer
+      config={config}
+      className="aspect-auto w-full"
+      style={{ height }}
+      role="img"
+      aria-label="Projected wealth by age, showing median and 10th to 90th percentile ranges"
+    >
+      <ComposedChart accessibilityLayer data={data} margin={{ top: 24, right: 12, left: 8, bottom: 2 }}>
+        <CartesianGrid {...chartGridProps} />
         <XAxis
+          {...chartXAxisProps}
           dataKey="age"
           type="number"
           domain={["dataMin", "dataMax"]}
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
         />
         <YAxis
-          domain={[0, yMax]}
+          {...chartYAxisProps}
+          domain={[0, "auto"]}
+          tickCount={5}
           tickFormatter={(v) => fmtCurrency(v, true)}
-          tickLine={false}
-          axisLine={false}
-          tickMargin={6}
-          width={56}
         />
         <Area
           type="monotone"
@@ -100,6 +108,13 @@ export function WealthFanChart({
           strokeWidth={2}
           dot={false}
           isAnimationActive={false}
+        />
+        <ReferenceLine
+          y={0}
+          stroke="var(--color-foreground)"
+          strokeOpacity={0.55}
+          strokeWidth={1.5}
+          zIndex={500}
         />
         {retirementAge != null && (
           <ReferenceLine

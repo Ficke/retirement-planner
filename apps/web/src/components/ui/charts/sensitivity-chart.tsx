@@ -9,7 +9,14 @@ import {
   YAxis,
 } from "recharts";
 
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  chartGridProps,
+  chartXAxisProps,
+  chartYAxisProps,
+} from "@/components/ui/chart";
 import { fmtPercent } from "@/components/retire/format";
 
 const config = {
@@ -20,12 +27,16 @@ export function SensitivityChart({
   points,
   marker,
   xLabel,
+  xDomain,
+  xTicks,
   xFormat = (v) => String(v),
   height = 200,
 }: {
   points: { x: number; y: number }[];
   marker?: { x: number; y: number };
   xLabel?: string;
+  xDomain: [number, number];
+  xTicks: number[];
   xFormat?: (v: number) => string;
   height?: number;
 }) {
@@ -38,37 +49,37 @@ export function SensitivityChart({
   }
 
   return (
-    <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
-      <LineChart data={points} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}>
-        <CartesianGrid vertical={false} strokeDasharray="2 3" />
+    <ChartContainer
+      config={config}
+      className="aspect-auto w-full"
+      style={{ height }}
+      role="img"
+      aria-label={`${xLabel ?? "Plan lever"} sensitivity: chance of success by ${xLabel?.toLowerCase() ?? "value"}`}
+    >
+      <LineChart accessibilityLayer data={points} margin={{ top: 10, right: 12, left: 4, bottom: 2 }}>
+        <CartesianGrid {...chartGridProps} />
         <XAxis
+          {...chartXAxisProps}
           dataKey="x"
           type="number"
-          domain={["dataMin", "dataMax"]}
+          domain={xDomain}
+          ticks={xTicks}
+          allowDataOverflow
           tickFormatter={xFormat}
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          label={
-            xLabel
-              ? { value: xLabel, position: "insideBottom", offset: -2, fontSize: 11 }
-              : undefined
-          }
         />
         <YAxis
+          {...chartYAxisProps}
           tickFormatter={(v) => fmtPercent(v)}
-          domain={[0, 1]}
-          tickLine={false}
-          axisLine={false}
-          tickMargin={6}
-          width={48}
+          domain={[0, 1.02]}
+          ticks={[0, 0.5, 1]}
+          width={44}
         />
         <Line
-          type="monotone"
+          type="linear"
           dataKey="y"
           stroke="var(--color-y)"
           strokeWidth={2}
-          dot={false}
+          dot={{ r: 2.5, fill: "var(--color-y)", strokeWidth: 0 }}
           // Keep the hover marker hollow and small so it cannot be confused
           // with the solid marker for the plan's current value.
           activeDot={{

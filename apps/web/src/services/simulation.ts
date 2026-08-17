@@ -8,7 +8,7 @@
  */
 
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
-import { ageOn, retirementSpendingOf } from '@/domain/age';
+import { retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
@@ -43,9 +43,8 @@ const MAIN_PATHS = 5000;
 // these curves, is what reports the headline number.
 const SWEEP_PATHS = 300;
 
-// Sweep 60–120% of current spending. The wider downside range shows how
-// spending less during working years increases savings for retirement.
-const SPENDING_PERCENTS = [60, 70, 80, 90, 100, 110, 120];
+const STANDARD_SPENDING_LEVELS = [60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000];
+const STANDARD_RETIREMENT_AGES = [45, 50, 55, 60, 65, 70];
 
 interface Scenario {
   id: string;
@@ -90,7 +89,7 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
   // is authoritative only at its selected claim age; without spouse/statement
   // detail, inventing nine differently adjusted benefits would be misleading.
   const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
-    ? [62, 64, 66, 68, 70]
+    ? [...new Set([62, 64, 66, 68, 70, plan.socialSecurity.claimAge])].sort((a, b) => a - b)
     : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
@@ -107,19 +106,16 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // The sweep moves today's spending, not the retirement target, so each level
-  // shows both consequences: saving more now, and needing less later.
-  // The 100% level uses the base verbatim so the marker lands on a real grid
-  // point rather than an interpolated one.
-  const base = plan.profile.currentSpending;
-  const levels = [...new Set(
-    SPENDING_PERCENTS.map((percent) => (
-      percent === 100
-        ? base
-        : Math.max(0, Math.min(1_000_000_000, Math.round(base * percent / 100_000) * 1000))
-    )),
-  )];
-  return levels.map((annualSpending) => ({
+  // Keep comparisons stable as the plan changes. Add an in-range plan value so
+  // its marker is simulated exactly without changing the displayed domain.
+  const current = plan.profile.currentSpending;
+  const levels = [...STANDARD_SPENDING_LEVELS];
+  if (current >= STANDARD_SPENDING_LEVELS[0]
+    && current <= STANDARD_SPENDING_LEVELS[STANDARD_SPENDING_LEVELS.length - 1]) {
+    levels.push(current);
+  }
+  const uniqueLevels = [...new Set(levels)].sort((a, b) => a - b);
+  return uniqueLevels.map((annualSpending) => ({
     annualSpending,
     scenario: {
       id: `spending-${annualSpending}`,
@@ -134,30 +130,17 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
 }
 
 function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
-  // For an already-retired plan, changing a historical retirement age cannot
-  // affect future cash flows, so avoid spending compute on duplicate paths.
-  const center = plan.profile.retirementAge;
-  if (center <= ageOn(plan.profile.birthDate, plan.profile.asOfDate)) {
-    return [{
-      retirementAge: center,
-      scenario: {
-        id: `retirementAge-${center}`,
-        plan,
-        paths: SWEEP_PATHS,
-        seed,
-      },
-    }];
-  }
-
-  // ±4 years in 2-year steps, bounded by the current age and the modeled
-  // lifetime so every generated scenario remains valid. The center is always
-  // included, so the marker lands on a real grid point.
-  const lo = Math.max(ageOn(plan.profile.birthDate, plan.profile.asOfDate), MIN_RETIREMENT_AGE);
+  // Keep the comparison range stable. Values beyond the modeled lifetime are
+  // omitted because they would violate the simulation contract.
   const hi = Math.min(100, plan.profile.lifeExpectancy - 1);
-  const ages = [-4, -2, 0, 2, 4]
-    .map((offset) => center + offset)
-    .filter((age) => age >= lo && age <= hi);
-  return ages.map((retirementAge) => ({
+  const ages = STANDARD_RETIREMENT_AGES.filter((age) => age >= MIN_RETIREMENT_AGE && age <= hi);
+  if (plan.profile.retirementAge >= MIN_RETIREMENT_AGE
+    && plan.profile.retirementAge <= 70
+    && plan.profile.retirementAge <= hi) {
+    ages.push(plan.profile.retirementAge);
+  }
+  const uniqueAges = [...new Set(ages)].sort((a, b) => a - b);
+  return uniqueAges.map((retirementAge) => ({
     retirementAge,
     scenario: {
       id: `retirementAge-${retirementAge}`,

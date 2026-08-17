@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2 } from "lucide-react";
 import { usePlan } from "@/state/usePlan";
-import { ageOn, retirementSpendingOf } from "@/domain/age";
 import { MIN_RETIREMENT_AGE } from "@/domain/constants";
 import type { SimulationResult, SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -12,14 +10,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
   DashboardCard,
-  KPIGrid,
   PageHeader,
   PageShell,
-  Stat,
 } from "@/components/retire/ui";
 import { SensitivityChart } from "@/components/ui/charts";
 import { CashFlowCard } from "@/components/retire/cash-flow-card";
-import { fmtCurrency, fmtPercent, successTone } from "../format";
+import { ProjectionsSection } from "@/components/retire/pages/projections";
+import { fmtCurrency, fmtPercent } from "../format";
 import { cn } from "@/lib/utils";
 
 type Point = { x: number; y: number };
@@ -47,6 +44,8 @@ function LeverCard({
   step = 1,
   onChange,
   points,
+  xDomain,
+  xTicks,
   xFormat,
 }: {
   label: string;
@@ -57,10 +56,11 @@ function LeverCard({
   step?: number;
   onChange: (v: number) => void;
   points: Point[];
+  xDomain: [number, number];
+  xTicks: number[];
   xFormat: (v: number) => string;
 }) {
-  const inRange =
-    points.length > 0 && value >= points[0].x && value <= points[points.length - 1].x;
+  const inRange = points.length > 0 && value >= xDomain[0] && value <= xDomain[1];
 
   let markerY: number | null = null;
   if (inRange) {
@@ -77,7 +77,7 @@ function LeverCard({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="border-border/70 flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex items-baseline justify-between">
         <Label className="text-foreground text-sm font-medium">{label}</Label>
         <span className="text-foreground font-mono text-sm font-semibold tabular-nums">
@@ -92,20 +92,22 @@ function LeverCard({
         onValueChange={(v) => onChange(v[0])}
       />
       {points.length === 0 ? (
-        <Skeleton className="h-[120px] w-full" />
+        <Skeleton className="h-[180px] w-full" />
       ) : (
         <div className="flex flex-col gap-1">
           <SensitivityChart
             points={points}
             marker={inRange && markerY != null ? { x: value, y: markerY } : undefined}
             xLabel={label}
+            xDomain={xDomain}
+            xTicks={xTicks}
             xFormat={xFormat}
-            height={120}
+            height={156}
           />
           <div className="text-muted-foreground text-right font-mono text-[11px]">
             {inRange && markerY != null
               ? `${fmtPercent(markerY, 0)} success at ${xFormat(value)}`
-              : "outside swept range"}
+              : "outside standard range"}
           </div>
         </div>
       )}
@@ -120,7 +122,6 @@ export function PagePlan() {
   const isSimulating = usePlan((s) => s.isSimulatingMain);
   const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
   const updatePlan = usePlan((s) => s.updatePlan);
-  const accounts = usePlan((s) => s.plan.accounts);
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
   const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
@@ -156,24 +157,12 @@ export function PagePlan() {
   }, [liveResult]);
   const result = liveResult ?? lastResultRef.current;
   const isUpdating = isSimulating || (!liveResult && !simulationError);
-  const hasEverComputed = result !== null;
-
-  const age = ageOn(plan.profile.birthDate, plan.profile.asOfDate);
-  const netWorth = accounts.reduce((s, a) => s + (a.balance || 0), 0);
-  const yearsToRetire = Math.max(0, plan.profile.retirementAge - age);
-  const asOfYear = Number(plan.profile.asOfDate.slice(0, 4));
-  const retirementYear = asOfYear + plan.profile.retirementAge - age;
-  const alreadyRetired = plan.profile.retirementAge <= age;
-  const successProb = result?.successProbability ?? 0;
-  const { label: successLabel, tone: successToneValue } = successTone(successProb);
   const usedFallback = result?.source === "client" && useServerSideCalculations;
   const engineLabel = result?.source === "server"
     ? "Cloud engine"
     : usedFallback
       ? "Local fallback"
       : "Local engine";
-
-  const monthlyRetirementSpend = retirementSpendingOf(plan.profile) / 12;
 
   const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
   const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
@@ -203,58 +192,13 @@ export function PagePlan() {
         ) : undefined}
       />
 
-      <KPIGrid cols={4}>
-        <Stat
-          label="Chance of success"
-          value={
-            isUpdating ? (
-              <span className="text-muted-foreground inline-flex h-8 items-center">
-                <Loader2 className="size-6 animate-spin" />
-              </span>
-            ) : hasEverComputed ? (
-              `${(successProb * 100).toFixed(0)}%`
-            ) : simulationError ? (
-              <span className="text-muted-foreground">Unavailable</span>
-            ) : (
-              <span className="text-muted-foreground">—</span>
-            )
-          }
-          trend={
-            isUpdating ? (
-              <span className="text-muted-foreground inline-flex items-center gap-1.5">
-                <span className="bg-muted-foreground inline-block size-1.5 animate-pulse rounded-full" />
-                Recalculating…
-              </span>
-            ) : simulationError ? (
-              "Couldn't calculate"
-            ) : (
-              successLabel
-            )
-          }
-          tone={isUpdating ? "neutral" : successToneValue}
-        />
-        <Stat label="Net Worth" value={fmtCurrency(netWorth, true)} />
-        <Stat
-          label="Retirement Year"
-          value={String(retirementYear)}
-          trend={alreadyRetired
-            ? `Age ${plan.profile.retirementAge} · already retired`
-            : `Age ${plan.profile.retirementAge} · ${yearsToRetire} years away`}
-        />
-        <Stat
-          label="Retirement Spending"
-          value={`${fmtCurrency(monthlyRetirementSpend, false).replace(".00", "")}/mo`}
-          trend={`${(plan.profile.retirementSpendingMultiplier * 100).toFixed(0)}% of today's spending`}
-        />
-      </KPIGrid>
-
       <DashboardCard
         title="Levers"
         description={plan.socialSecurity.manualOverride
           ? "Your entered Social Security benefit applies only at that claim age, so its curve stays flat."
           : undefined}
       >
-        <div className="grid grid-cols-1 gap-7 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <LeverCard
             label="Planned / actual retirement age"
             value={plan.profile.retirementAge}
@@ -263,6 +207,8 @@ export function PagePlan() {
             max={Math.min(100, plan.profile.lifeExpectancy - 1)}
             onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
             points={agePts}
+            xDomain={[45, 70]}
+            xTicks={[45, 50, 55, 60, 65, 70]}
             xFormat={(v) => `Age ${v}`}
           />
           <LeverCard
@@ -274,6 +220,8 @@ export function PagePlan() {
             step={1000}
             onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
             points={spendPts}
+            xDomain={[60_000, 120_000]}
+            xTicks={[60_000, 80_000, 100_000, 120_000]}
             xFormat={(v) => fmtCurrency(v, true)}
           />
           <LeverCard
@@ -284,10 +232,14 @@ export function PagePlan() {
             max={70}
             onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
             points={ssPts}
+            xDomain={[62, 70]}
+            xTicks={[62, 64, 66, 68, 70]}
             xFormat={(v) => `Age ${v}`}
           />
         </div>
       </DashboardCard>
+
+      <ProjectionsSection result={result} isSimulating={isUpdating} />
 
       <CashFlowCard profile={plan.profile} assumptions={plan.assumptions} />
 

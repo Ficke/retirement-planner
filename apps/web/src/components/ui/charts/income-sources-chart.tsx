@@ -1,9 +1,18 @@
 "use client";
 
 import { useMemo } from "react";
-import { Area, AreaChart, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  chartGridProps,
+  chartXAxisProps,
+  chartYAxisProps,
+} from "@/components/ui/chart";
 import { fmtCurrency } from "@/components/retire/format";
 import type { IncomeSourcesRow } from "@/domain/types";
 
@@ -38,68 +47,60 @@ export function IncomeSourcesChart({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
-        <AreaChart data={data} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
-          <XAxis
-            dataKey="age"
-            type="number"
-            domain={["dataMin", "dataMax"]}
-            tickLine={false}
-            axisLine={false}
-            tickMargin={8}
-          />
-          <YAxis
-            tickFormatter={(v) => fmtCurrency(v, true)}
-            tickLine={false}
-            axisLine={false}
-            tickMargin={6}
-            width={56}
-          />
-          {series.map((s) => (
-            <Area
-              key={s.key}
-              type="monotone"
-              dataKey={s.key}
-              stackId="1"
-              stroke={s.color}
-              fill={s.color}
-              fillOpacity={0.85}
-              isAnimationActive={false}
-            />
-          ))}
-          <ChartTooltip
-            cursor={{ stroke: "var(--color-foreground)", strokeOpacity: 0.4 }}
-            content={
-              <ChartTooltipContent
-                labelFormatter={(_label, payload) => {
-                  const age = payload?.[0]?.payload?.age;
-                  return age != null ? `Age ${age}` : "";
-                }}
-                formatter={(value, name) => (
-                  <span className="font-mono">
-                    {config[name as string]?.label ?? String(name)}: {fmtCurrency(Number(value), true)}
-                  </span>
-                )}
-              />
-            }
-          />
-        </AreaChart>
-      </ChartContainer>
-      <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 px-2 text-xs">
+    <ChartContainer
+      config={config}
+      className="aspect-auto w-full"
+      style={{ height }}
+      role="img"
+      aria-label="Average annual retirement income by source for the selected outcome range"
+    >
+      <BarChart
+        accessibilityLayer
+        data={data}
+        margin={{ top: 8, right: 12, left: 8, bottom: 0 }}
+        barCategoryGap="18%"
+      >
+        <CartesianGrid {...chartGridProps} />
+        <XAxis
+          {...chartXAxisProps}
+          dataKey="age"
+          type="category"
+          interval="preserveStartEnd"
+          minTickGap={48}
+        />
+        <YAxis
+          {...chartYAxisProps}
+          domain={[0, "auto"]}
+          tickCount={5}
+          tickFormatter={(v) => fmtCurrency(v, true)}
+        />
         {series.map((s) => (
-          <span key={s.key} className="text-muted-foreground flex items-center gap-1.5">
-            <span
-              className="inline-block size-2.5 rounded-sm"
-              style={{ background: s.color }}
-              aria-hidden
-            />
-            {s.label}
-          </span>
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            stackId="1"
+            fill={s.color}
+            isAnimationActive={false}
+          />
         ))}
-      </div>
-    </div>
+        <ChartTooltip
+          cursor={{ stroke: "var(--color-foreground)", strokeOpacity: 0.4 }}
+          content={
+            <ChartTooltipContent
+              labelFormatter={(_label, payload) => {
+                const age = payload?.[0]?.payload?.age;
+                return age != null ? `Age ${age}` : "";
+              }}
+              formatter={(value, name) => (
+                <span className="font-mono">
+                  {config[name as string]?.label ?? String(name)}: {fmtCurrency(Number(value), true)}
+                </span>
+              )}
+            />
+          }
+        />
+        <ChartLegend content={<ChartLegendContent />} />
+      </BarChart>
+    </ChartContainer>
   );
 }
-
-export const incomeSourcesLegend = series.map((s) => ({ label: s.label, color: s.color }));
