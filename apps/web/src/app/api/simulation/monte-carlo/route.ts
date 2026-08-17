@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
-import { fetchRustService } from '@/lib/rust-service-client';
+import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
 import {
   monteCarloRequestSchema,
   SIMULATION_PATH_RATE_LIMIT,
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
           { status: 504 }
         );
       }
-      if (error.message.includes('fetch')) {
+      if (error instanceof RustServiceUnavailableError) {
         return NextResponse.json(
           { error: 'Service unavailable', details: 'Cannot connect to simulation service' },
           { status: 503 }

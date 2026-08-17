@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => {
   class AccountLimitError extends Error {}
   class ProfileRevisionConflictError extends Error {}
+  class RustServiceUnavailableError extends Error {}
   const db = {
     initialize: vi.fn(),
     getAccountsForUser: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => {
     getClientIp: vi.fn(() => '127.0.0.1'),
     rateLimit: vi.fn(),
     fetchRustService: vi.fn(),
+    RustServiceUnavailableError,
   };
 });
 
@@ -38,6 +40,7 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 vi.mock('@/lib/rust-service-client', () => ({
   fetchRustService: mocks.fetchRustService,
+  RustServiceUnavailableError: mocks.RustServiceUnavailableError,
 }));
 
 import { GET as getAccounts, POST as createAccount } from '@/app/api/accounts/route';
@@ -241,6 +244,37 @@ describe('simulation proxy response streaming', () => {
       useBackdoorRoth: false,
     },
   };
+
+  function simulationRequest(path: 'monte-carlo' | 'batch', body: unknown) {
+    return new NextRequest(`http://localhost/api/simulation/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  const monteCarloBody = { plan: simulationPlan, config: { paths: 20, seed: 42 } };
+
+  it('reports an unreachable Rust service as 503 rather than a generic 500', async () => {
+    mocks.fetchRustService.mockRejectedValue(
+      new mocks.RustServiceUnavailableError('Could not reach the simulation service'),
+    );
+
+    const response = await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: 'Service unavailable' });
+  });
+
+  it('still reports an aborted upstream request as 504', async () => {
+    const aborted = new Error('The operation was aborted');
+    aborted.name = 'AbortError';
+    mocks.fetchRustService.mockRejectedValue(aborted);
+
+    const response = await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
+
+    expect(response.status).toBe(504);
+  });
 
   it('passes the successful headline response body through without parsing it', async () => {
     const firstChunk = new TextEncoder().encode('{"successProbability":0.75');
