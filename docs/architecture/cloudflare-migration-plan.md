@@ -84,7 +84,9 @@ Browser
 
 ### Caching
 
-- Enable Worker caching only for `/_next/static/*`.
+- Use the Workers Cache API explicitly for successful immutable `GET`
+  responses under `/_next/static/*`; the `run.app` origin is not itself a
+  Cloudflare-proxied cache target.
 - Preserve Next.js's content-hashed, one-year immutable asset headers.
 - Add `Cloudflare-CDN-Cache-Control: no-store` to every other response.
 - Never edge-cache HTML, `/api/*`, auth routes, simulations, redirects, or
@@ -128,9 +130,11 @@ Terraform owns:
 
 - Worker container/name
 - Worker custom-domain binding
-- All user-created DNS records in the `adamficke.dev` zone
+- All user-created DNS records in the `adamficke.dev` zone, except the generated
+  apex/staging records owned through Worker custom-domain resources
 - `www` redirect ruleset and its proxied placeholder DNS record
 - WAF rate-limit rule
+- Always Use HTTPS zone setting
 - DNSSEC state
 - Future zone-level WAF and cache rules
 
@@ -140,6 +144,7 @@ Wrangler owns:
 - Runtime compatibility configuration
 - Worker versions, deployments, and rollbacks
 - Worker secret values
+- Worker observability and `workers.dev`/preview URL settings
 
 `wrangler.jsonc` must not declare routes or custom domains because Terraform
 owns them. Neither tool may manage a resource owned by the other.
@@ -168,6 +173,9 @@ terraform/cloudflare/  Provider, imported DNS, Worker/domain, redirect, WAF,
   repository-pinned Wrangler version.
 - Use `wrangler deploy --strict` with a least-privilege Cloudflare API token.
 - Terraform plans/applies and the initial Worker deployment remain manual.
+- Gate post-merge Worker deployment on the repository variable
+  `EDGE_DEPLOY_ENABLED=true`; set it only after the initial Worker and secret
+  bootstrap succeeds.
 - Do not store the origin secret in GitHub; normal Wrangler deployments preserve
   it.
 
@@ -190,8 +198,8 @@ terraform/cloudflare/  Provider, imported DNS, Worker/domain, redirect, WAF,
 
 ### Phase 1: Audit and prerequisites
 
-- [ ] Reconfirm clean branch and current `origin/main` ancestry.
-- [ ] Retrieve current Worker types, Wrangler schema, Cloudflare provider
+- [x] Reconfirm clean branch and current `origin/main` ancestry.
+- [x] Retrieve current Worker types, Wrangler schema, Cloudflare provider
       schema, and official product limits before implementation.
 - [ ] Inventory Cloudflare account/zone IDs and all zone records via API.
 - [ ] Inventory GCP service configuration, Secret Manager, IAM, Cloud Build
@@ -205,17 +213,19 @@ and no resource proposed for deletion has another consumer.
 
 ### Phase 2: Local implementation
 
-- [ ] Add `apps/edge-proxy` with pinned Wrangler and generated Worker types.
-- [ ] Implement streaming proxy, header sanitization, secret forwarding, manual
+- [x] Add `apps/edge-proxy` with pinned Wrangler and generated Worker types.
+- [x] Implement streaming proxy, header sanitization, secret forwarding, manual
       redirects, static-only cache policy, structured failures, and correlation.
-- [ ] Add Worker tests for all methods, bodies, spoofed headers, caching,
+- [x] Add Worker tests for all methods, bodies, spoofed headers, caching,
       redirect safety, upstream failures, and long-running streamed responses.
-- [ ] Add Next.js timing-safe origin validation and trusted client-IP handling.
-- [ ] Exempt only `/healthz` from origin authentication.
-- [ ] Update Cloud Build smoke check and IAM for secret access.
-- [ ] Add canonical application metadata.
-- [ ] Add Cloudflare Terraform root and imports/configuration.
-- [ ] Add Worker CI tests and post-merge deployment.
+- [x] Add Next.js timing-safe origin validation and trusted client-IP handling.
+- [x] Exempt only `/healthz` from origin authentication.
+- [x] Update Cloud Build smoke check and IAM for secret access.
+- [x] Add canonical application metadata.
+- [x] Add the gated Cloudflare Terraform root and provider configuration.
+- [ ] Add/import all existing DNS and phase ruleset resources after completing
+      the live Cloudflare inventory.
+- [x] Add Worker CI tests and post-merge deployment.
 
 Gate: lint, typecheck, unit tests, application build, Terraform validation, and
 Wrangler dry-run all pass locally with no secret values in source, plans, logs,
@@ -229,6 +239,8 @@ or Terraform state.
 - [ ] Deploy the GCP revision with origin enforcement and a secret-aware
       candidate smoke check.
 - [ ] Create the Worker container and deploy the tested Worker version.
+- [ ] Add the narrow GitHub deployment token/account secrets and enable
+      `EDGE_DEPLOY_ENABLED` after the initial deployment succeeds.
 - [ ] Bind temporary `staging.adamficke.dev` and validate the real edge path.
 
 Gate: staging passes the full acceptance suite and direct `run.app` requests
@@ -237,8 +249,11 @@ are rejected while Cloud Build health/simulation checks pass.
 ### Phase 4: Coordinated cutover
 
 - [ ] Take a final Cloudflare and AWS inventory.
-- [ ] Apply the reviewed Terraform plan replacing legacy apex/`www` records
-      with the Worker custom domain and redirect.
+- [ ] Apply a reviewed Terraform plan removing the imported legacy apex record;
+      then apply a second plan enabling the Worker apex custom domain. The
+      custom-domain resource creates its own DNS record and certificate.
+- [ ] Replace the imported legacy `www` record with the proxied placeholder and
+      enable the canonical redirect.
 - [ ] Enable the free simulation WAF rate-limit rule.
 - [ ] Verify TLS, DNS, canonical redirects, cache behavior, security headers,
       origin blocking, and Worker/Cloud Run correlation on the apex.
@@ -325,3 +340,8 @@ and the production smoke suite remains green.
 - 2026-08-16: Keep the existing Firebase auth domain.
 - 2026-08-16: Perform cutover, AWS retirement, and DNSSEC activation in one
   coordinated migration, with a validation gate before destructive cleanup.
+- 2026-08-16: Use the Workers Cache API for immutable Next.js static GETs
+  because `run.app` is not a Cloudflare-proxied cache origin.
+- 2026-08-16: Let Worker custom-domain resources own their generated DNS records
+  and remove the legacy apex in a separate apply before enabling the apex.
+- 2026-08-16: Manage Always Use HTTPS with Terraform.
