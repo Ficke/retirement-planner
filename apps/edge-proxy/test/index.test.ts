@@ -118,6 +118,23 @@ describe('edge proxy', () => {
     expect(await response.text()).toBe('streamed response');
   });
 
+  it('returns the upstream response before its body stream closes', async () => {
+    const stream = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = stream.writable.getWriter();
+    const response = await handleRequest(
+      new Request('https://adamficke.dev/api/simulation/batch'),
+      testEnv,
+      createExecutionContext(),
+      dependencies(async () => new Response(stream.readable)),
+    );
+
+    const body = response.text();
+    await writer.write(new TextEncoder().encode('first'));
+    await writer.write(new TextEncoder().encode('-second'));
+    await writer.close();
+    expect(await body).toBe('first-second');
+  });
+
   it('rewrites only absolute redirects back to the configured origin', async () => {
     const originRedirect = dependencies(async () =>
       new Response(null, {
