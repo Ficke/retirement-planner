@@ -10,10 +10,10 @@ pnpm bootstrap        # writes apps/web/.env.local
 pnpm dev              # http://localhost:3000
 ```
 
-`pnpm bootstrap` pulls what it can from the `gcloud` and `firebase` CLIs (and
-from `terraform/terraform.tfvars` if present), then prompts for anything
-missing. `./scripts/pull-secrets.sh` does the same thing non-interactively for
-the known prod project — use whichever you prefer.
+`pnpm bootstrap` reads available values from the `gcloud` and `firebase` CLIs
+and `terraform/production.tfvars`, then prompts for anything missing.
+`./scripts/pull-secrets.sh` provides the non-interactive workflow for the
+production project.
 
 > **Note:** Don't export `DATABASE_URL` in your shell. It overrides `.env.local`.
 

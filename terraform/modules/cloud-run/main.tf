@@ -33,6 +33,17 @@ resource "google_cloud_run_v2_service" "main" {
   location = var.region
   ingress  = var.ingress_settings
 
+  # Cloud Build selects immutable application images after its candidate smoke
+  # test. Terraform owns the service shape and preserves that verified image.
+  lifecycle {
+    ignore_changes = [
+      client,
+      client_version,
+      template[0].containers[0].image,
+      template[0].revision,
+    ]
+  }
+
   template {
     service_account = google_service_account.cloud_run.email
 

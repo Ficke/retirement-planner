@@ -11,9 +11,11 @@
 crash.log
 crash.*.log
 
-# Exclude all .tfvars files (may contain sensitive data)
+# Local variable files may contain sensitive data. Production configuration is
+# intentionally versioned because it contains references and public values.
 *.tfvars
 *.tfvars.json
+!production.tfvars
 
 # Ignore override files
 override.tf
@@ -24,6 +26,3 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
-
-# Ignore lock file (or commit it if you prefer)
-.terraform.lock.hcl

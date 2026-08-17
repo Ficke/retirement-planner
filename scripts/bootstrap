@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = resolve(__dirname, '..', 'apps', 'web', '.env.local');
-const TFVARS_PATH = resolve(__dirname, '..', 'terraform', 'terraform.tfvars');
+const TFVARS_PATH = resolve(__dirname, '..', 'terraform', 'production.tfvars');
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -246,7 +246,7 @@ async function setupFromTfvars() {
   const tfvars = parseTfvars(TFVARS_PATH);
   const gcpProject = tfvars.project_id;
 
-  printInfo(`  Using terraform.tfvars (GCP project: ${gcpProject})`);
+  printInfo(`  Using production.tfvars (GCP project: ${gcpProject})`);
 
   if (hasGcloud && gcpProject) {
     try {
@@ -382,9 +382,9 @@ async function main() {
     }
   }
 
-  // 2. Try terraform.tfvars + gcloud
+  // 2. Use the versioned production configuration with gcloud.
   if (!envContent && existsSync(TFVARS_PATH)) {
-    printInfo('  Falling back to terraform.tfvars...');
+    printInfo('  Falling back to production.tfvars...');
     envContent = await setupFromTfvars();
   }
 

@@ -56,7 +56,7 @@ variable "public_env_vars" {
   description = "Public environment variables for Cloud Run"
   type        = map(string)
   default     = {}
-  # Set these in terraform.tfvars:
+  # Configure these values in the environment's variable file:
   # NEXT_PUBLIC_FIREBASE_API_KEY
   # NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
   # NEXT_PUBLIC_FIREBASE_PROJECT_ID
@@ -80,11 +80,11 @@ variable "secret_env_vars" {
   default = {
     DATABASE_URL = {
       secret_name = "DATABASE_URL"
-      version     = "latest"
+      version     = "1"
     }
     FIREBASE_PRIVATE_KEY = {
       secret_name = "FIREBASE_PRIVATE_KEY"
-      version     = "latest"
+      version     = "1"
     }
   }
 }
@@ -166,7 +166,7 @@ variable "build_substitutions" {
   description = "Cloud Build substitution variables passed as Kaniko build args (baked into client bundle)"
   type        = map(string)
   default     = {}
-  # Set in terraform.tfvars:
+  # Configure build substitutions in the environment's variable file:
   # build_substitutions = {
   #   _FIREBASE_API_KEY            = "AIza..."
   #   _FIREBASE_AUTH_DOMAIN        = "your-project.firebaseapp.com"

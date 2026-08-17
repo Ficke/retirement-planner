@@ -8,13 +8,12 @@ RetirePlan runs on Google Cloud Run as **two services**:
 | `rust-simulation-service` | Monte Carlo engine (Warp + Rayon) | Private — invokable only by the web service account |
 
 The web service proxies `/api/simulation/*` to the Rust service using a Cloud
-Run ID token (`lib/rust-service-client.ts`). If the Rust service is unreachable,
-the browser falls back to the client-side Web Worker, so a Rust outage degrades
-performance rather than breaking the app.
+Run ID token (`lib/rust-service-client.ts`). The browser engine provides the
+same simulation semantics for on-device computation.
 
-**Terraform is the source of truth for infrastructure.** Cloud Build only builds
-images and rolls them out — it does not define service shape. See
-`terraform/README.md` for the module layout.
+**Terraform is the source of truth for infrastructure.** Cloud Build owns image
+rollout and candidate promotion. See `terraform/README.md` for the ownership
+boundary and production workflow.
 
 ---
 
@@ -31,8 +30,7 @@ Prod project: `gen-lang-client-0372385774`, region `us-central1`.
 
 ## Environment variables
 
-The app reads exactly these. Anything else you find referenced in older docs or
-git history belongs to removed features.
+Production uses the following runtime and build-time configuration.
 
 ### Runtime — web service
 
@@ -45,9 +43,8 @@ git history belongs to removed features.
 | `RUST_SERVICE_URL` | Rust service base URL | Set by Terraform from the module output |
 | `NODE_ENV` | `production` | Set by Terraform |
 
-Only the two Secret Manager entries are fetched at container start, so they are
-the only ones on the cold-start path. Keep it that way — every secret added to
-`secret_env_vars` costs cold-start latency.
+The two Secret Manager entries are fetched at container start. Keeping the
+mounted set focused limits cold-start work and access permissions.
 
 ### Build-time — baked into the client bundle
 
@@ -60,7 +57,12 @@ comes from Firebase Auth rules and authorized domains.
 
 ### Runtime — Rust service
 
-`PORT` only, defaulted to 8081. It holds no credentials and touches no database.
+| Variable | Purpose | Source |
+|---|---|---|
+| `PORT` | HTTP listener, default `8081` | Cloud Run |
+| `SIMULATION_THREADS` | Rayon worker count, set to `8` | Terraform |
+
+The Rust identity carries the compute service's Cloud Run permissions.
 
 ---
 
@@ -68,8 +70,8 @@ comes from Firebase Auth rules and authorized domains.
 
 ### 1. Create the secrets
 
-Terraform creates the secret *containers*; values are never stored in Terraform
-state and must be added out of band:
+Terraform creates the secret containers. Secret values enter Secret Manager
+through an out-of-band operator workflow:
 
 ```bash
 echo -n "postgresql://…@…neon.tech/…?sslmode=require" | \
@@ -79,25 +81,21 @@ cat firebase-private-key.txt | \
   gcloud secrets versions add FIREBASE_PRIVATE_KEY --data-file=-
 ```
 
-If the secrets do not exist yet, run `terraform apply` first — or swap
-`versions add` for `create`.
+Create the containers with Terraform before adding their first versions.
 
-### 2. Fill in tfvars
+### 2. Review production inputs
 
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars   # gitignored
-```
-
-Set `project_id`, the two image URIs, `public_env_vars`, and
-`build_substitutions`. Keep a copy in a password manager — it is not in git.
+`terraform/production.tfvars` versions the production project, service shape,
+public Firebase client configuration, and Secret Manager references. Secret
+values remain in Secret Manager.
 
 ### 3. Apply
 
 ```bash
-terraform init      # wires up the GCS backend
-terraform plan      # read this before applying, every time
-terraform apply
+terraform init
+terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform show production.tfplan
+terraform apply production.tfplan
 ```
 
 This creates both Cloud Run services, both service accounts, the Artifact
@@ -117,12 +115,9 @@ the hop to the Rust service, and the wire contract between the two engines all
 work. Failures are distinguishable: `400` wire-contract mismatch, `502` Rust
 error, `503` cannot reach Rust, `504` timeout.
 
-Two paths not to check. `/` is a client-rendered shell that returns 200 whether
-or not the app can compute anything. `/healthz` cannot be probed through the
-public URL at all — Google Front End reserves that exact path on `*.run.app`
-and answers it with its own 404 before the request reaches the container. It
-still works where Cloud Run uses it, since liveness probes hit the container
-directly, and it works locally against the container port.
+The simulation smoke check is the production readiness signal. Cloud Run uses
+`/healthz` for container-level liveness, while the public check verifies the
+complete authenticated request path and computation contract.
 
 ---
 
@@ -147,14 +142,12 @@ revision directly; deploying it `--no-traffic` first still keeps a container
 that will not start from ever taking traffic. A new Rust revision serving the
 previous web bundle is the rolling-deploy case the schema shim exists for.
 
-Steps 2 and 4 pass `--image` and identity flags but **no sizing flags**.
-`gcloud run deploy` preserves settings it is not told about, which is what keeps
-Cloud Build from reverting the CPU, memory, concurrency, and probe configuration
-Terraform applied. Do not add `--cpu`/`--memory` back to `cloudbuild.yaml`; change
-`terraform/variables.tf` and `terraform apply` instead.
+Steps 2 and 4 select the image and service identity. Terraform manages CPU,
+memory, concurrency, scaling, and probes; its Cloud Run module preserves the
+commit-addressed image selected by Cloud Build.
 
 To change infrastructure — sizing, scaling, probes, env vars, secrets — edit
-Terraform and apply. Applies are currently run manually; see "Remaining work".
+Terraform, review a saved plan, and apply it manually.
 
 ---
 
@@ -169,8 +162,8 @@ docker compose up --build
 ```
 
 `docker-compose.yml` reads `DATABASE_URL` and the Firebase values from your
-shell. Without `RUST_SERVICE_URL` the app still works — it just exercises the
-Web Worker fallback instead of the server path.
+shell. Set `RUST_SERVICE_URL` to exercise the server path, or select local
+calculation to exercise Web Workers.
 
 For day-to-day development see `DEVELOPMENT.md`.
 
@@ -238,8 +231,8 @@ there is no charge between sessions.
 
 ## Security posture
 
-- Secrets live in Secret Manager, never in git or Terraform state
-- The Rust service is not publicly invokable; only the web service account can call it
+- Secret values live in Secret Manager.
+- The Rust service accepts authenticated calls from the web service account.
 - `/api/simulation/*` is deliberately unauthenticated (anonymous users may opt
   into cloud compute) and therefore rate-limited per IP and clamped on path
   count, batch size, and horizon — see `lib/simulation-request.ts`
@@ -252,11 +245,6 @@ See `SECURITY.md` for the audit history and open items.
 
 ## Remaining work
 
-- **Cloud Build still deploys with `gcloud run deploy`.** Switching it to
-  `terraform apply` makes every deploy go through one path. It needs the Cloud
-  Build service account granted `run.admin`, `iam.serviceAccountUser`,
-  `secretmanager.admin`, `artifactregistry.admin`, and `storage.objectAdmin` on
-  the state bucket first.
 - **Distroless Rust runtime image** — smaller pull, faster cold start.
 - **Region migration** `us-central1` → `us-west1`.
 
