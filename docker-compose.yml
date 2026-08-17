@@ -19,6 +19,9 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      # Local-only shared value used by the host smoke check. Production reads
+      # an independently generated value from Secret Manager.
+      - ORIGIN_SECRET=${ORIGIN_SECRET:-local-compose-origin-secret}
       # Database - use your Neon connection string from .env.local
       - DATABASE_URL=${DATABASE_URL}
       # Firebase Auth

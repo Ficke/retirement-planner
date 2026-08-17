@@ -364,6 +364,7 @@ jobs:
       - name: Smoke check the running stack
         env:
           SMOKE_ATTEMPTS: 30
+          ORIGIN_SECRET: local-compose-origin-secret
         run: ./scripts/smoke-check.sh http://localhost:3000
 
       - name: Dump container logs

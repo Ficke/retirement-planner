@@ -36,6 +36,10 @@ secret_env_vars = {
     secret_name = "FIREBASE_PRIVATE_KEY"
     version     = "2"
   }
+  ORIGIN_SECRET = {
+    secret_name = "ORIGIN_SECRET"
+    version     = "1"
+  }
 }
 
 memory_limit    = "512Mi"
@@ -60,4 +64,5 @@ build_substitutions = {
   _FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
   _FIREBASE_MESSAGING_SENDER_ID = "789638662967"
   _FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
+  _ORIGIN_SECRET_VERSION        = "1"
 }

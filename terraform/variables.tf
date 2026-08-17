@@ -48,6 +48,9 @@ variable "secrets" {
     FIREBASE_PRIVATE_KEY = {
       description = "Firebase Admin SDK private key"
     }
+    ORIGIN_SECRET = {
+      description = "Shared secret required on requests from the Cloudflare Worker"
+    }
   }
 }
 
@@ -84,6 +87,10 @@ variable "secret_env_vars" {
     }
     FIREBASE_PRIVATE_KEY = {
       secret_name = "FIREBASE_PRIVATE_KEY"
+      version     = "1"
+    }
+    ORIGIN_SECRET = {
+      secret_name = "ORIGIN_SECRET"
       version     = "1"
     }
   }
