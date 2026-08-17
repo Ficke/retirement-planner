@@ -58,6 +58,9 @@ terraform.tfvars
 # Claude Code
 .claude/
 
+# Codex CLI
+.codex/
+
 # OS / Editor
 .DS_Store
 .vscode/
