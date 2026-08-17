@@ -55,6 +55,16 @@ describe('fetchRustService', () => {
     expect(new Headers(request.headers).get('authorization')).toBeNull();
   });
 
+  it('uses unauthenticated requests for a non-localhost http host', async () => {
+    process.env.RUST_SERVICE_URL = 'http://rust-simulation:8081';
+
+    await fetchRustService('/api/simulate', { method: 'POST' });
+
+    expect(authMocks.getIdTokenClient).not.toHaveBeenCalled();
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(request.headers).get('authorization')).toBeNull();
+  });
+
   it('uses a cached ID-token client for Cloud Run requests', async () => {
     process.env.RUST_SERVICE_URL = 'https://rust.example.run.app/';
 

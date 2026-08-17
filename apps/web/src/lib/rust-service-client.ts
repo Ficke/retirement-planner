@@ -8,9 +8,12 @@ function getServiceUrl(): string {
   return (process.env.RUST_SERVICE_URL || DEFAULT_RUST_SERVICE_URL).replace(/\/+$/, '');
 }
 
+// Never send a bearer token over an unencrypted connection. Cloud Run is only
+// ever reachable over https, so this covers production; every local and
+// container-compose wiring is plain http and needs no token. Do not narrow this
+// to a hostname allowlist: any new topology not on the list silently skips auth.
 function requiresIdToken(serviceUrl: string): boolean {
-  const hostname = new URL(serviceUrl).hostname;
-  return hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '[::1]';
+  return new URL(serviceUrl).protocol === 'https:';
 }
 
 async function getAuthorizationHeader(serviceUrl: string): Promise<string> {
