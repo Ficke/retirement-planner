@@ -88,7 +88,10 @@ jobs:
           RUN_DATABASE_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/retirement_ci
 
+      # Pre-merge only. On main, Cloud Build runs the real build moments later,
+      # and a failure there leaves the previous revision serving.
       - name: Test build (same as Cloud Build)
+        if: github.event_name == 'pull_request'
         run: pnpm build
         env:
           NODE_ENV: production
@@ -333,6 +336,7 @@ jobs:
   # between the two services. Compose reproduces that wiring.
   containers:
     name: Container Smoke Test
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
