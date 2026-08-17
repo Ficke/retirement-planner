@@ -39,7 +39,7 @@ of each changed plan input.
 - The headline result runs 5,000 Monte Carlo paths.
 - Sensitivity analysis evaluates Social Security age, current spending, and
   retirement age with common random numbers.
-- Annual returns draw from the canonical 1928–2024 market history built from
+- Annual returns draw from the canonical 1928–2025 market history built from
   Damodaran equity and Treasury data with BLS inflation data.
 - Working cash flow allocates residual savings across HSA, 401(k), Roth IRA,
   and taxable accounts according to statutory limits.

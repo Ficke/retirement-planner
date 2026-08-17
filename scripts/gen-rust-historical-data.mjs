@@ -28,6 +28,19 @@ if (rows.length < 90) {
   throw new Error(`Parsed only ${rows.length} rows from ${tsPath} — parser or data problem`);
 }
 
+for (let index = 0; index < rows.length; index++) {
+  const row = rows[index];
+  const values = [row.stock, row.bond, row.inflation].map(Number);
+  if (!values.every(Number.isFinite) || values.some((value) => value <= -1)) {
+    throw new Error(`Invalid return data for ${row.year} in ${tsPath}`);
+  }
+  if (index > 0 && Number(row.year) !== Number(rows[index - 1].year) + 1) {
+    throw new Error(
+      `Historical years must be unique and consecutive; found ${rows[index - 1].year} then ${row.year}`,
+    );
+  }
+}
+
 const first = rows[0].year;
 const last = rows[rows.length - 1].year;
 
@@ -44,9 +57,9 @@ function num(s) {
   return s.includes('.') ? s : `${s}.0`;
 }
 
-const out = `// GENERATED FILE — do not edit by hand.
-// Source of truth: apps/web/src/data/market-history-annual.ts
-// Regenerate with: node scripts/gen-rust-historical-data.mjs
+const out = `// This file is generated; do not edit it by hand.
+// The source of truth is apps/web/src/data/market-history-annual.ts.
+// Regenerate it with: node scripts/gen-rust-historical-data.mjs
 //
 // Historical US market returns, ${first}-${last} (${rows.length} years).
 // Stocks: S&P 500 total return; Bonds: 10-year US Treasury total return
@@ -67,8 +80,8 @@ pub const HISTORICAL_RETURNS: &[AnnualMarketReturn] = &[
 ${rustRows}
 ];
 
-/// Get a random historical year's returns using bootstrap sampling.
-/// Returns real returns: real = (1 + nominal) / (1 + inflation) - 1
+/// Samples a random historical year's returns using bootstrap sampling.
+/// The returned values are real returns: real = (1 + nominal) / (1 + inflation) - 1.
 pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
     let random_year = &HISTORICAL_RETURNS[rng.gen_range(0..HISTORICAL_RETURNS.len())];
 
@@ -80,8 +93,8 @@ pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
     (real_stock_return, real_bond_return)
 }
 
-/// Sample a block of consecutive years for block bootstrap.
-/// Returns real returns (adjusted for inflation).
+/// Samples a block of consecutive years for block bootstrap.
+/// The returned values are adjusted for inflation.
 pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f64)> {
     let start_index = rng.gen_range(0..HISTORICAL_RETURNS.len());
     let block_size = block_size.min(HISTORICAL_RETURNS.len());

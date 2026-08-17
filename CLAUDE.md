@@ -29,7 +29,7 @@ or local (Web Worker).
   `data/market-history-annual.ts`) and shared by both engines
 - **One root seed**: every plan has a seed (default `42`); main and sensitivity
   path `i` both use `seed + pathIndex`. There is no random-per-run mode.
-- **Canonical dataset**: `data/market-history-annual.ts` (1928–2024, Damodaran
+- **Canonical dataset**: `data/market-history-annual.ts` (1928–2025, Damodaran
   S&P 500 + 10yr Treasury, BLS CPI). The Rust table is GENERATED from it —
   after editing run `node scripts/gen-rust-historical-data.mjs`
 - **Server-first**: Rust Monte Carlo service at `rust-simulation-service/`
