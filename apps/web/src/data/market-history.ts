@@ -2,7 +2,7 @@
  * Market model statistics and parametric return generation.
  *
  * All statistics are DERIVED from the canonical historical dataset
- * (market-history-annual.ts, 1928–2024) — real (inflation-adjusted) annual
+ * (market-history-annual.ts, 1928–2025) — real (inflation-adjusted) annual
  * returns. There are no hand-maintained market constants; edit the dataset
  * and every consumer (parametric model, Assumptions page) follows.
  */
@@ -60,7 +60,7 @@ export const US_INFLATION = {
 
 export const MONTE_CARLO_DEFAULTS = {
   paths: 5000,
-  // Block bootstrap preserves multi-year sequences (e.g. 2008 → 2009)
+  // Block bootstrap preserves multi-year sequences such as 2008 → 2009.
   use_historical_bootstrap: true,
   block_size: 3,
 } as const;
@@ -95,7 +95,7 @@ export function generateCorrelatedReturns(rng: SeededRNG): { stockReturn: number
   const stockShock = rng.studentT(degreesOfFreedom) / Math.sqrt(degreesOfFreedom / (degreesOfFreedom - 2));
   const bondShock = rng.normal();
 
-  // Cholesky for [[1, r], [r, 1]]: L = [[1, 0], [r, sqrt(1 - r^2)]]
+  // This is the Cholesky factor for [[1, r], [r, 1]].
   const r = STOCK_BOND_CORRELATION;
   const correlatedStock = stockShock;
   const correlatedBond = r * stockShock + Math.sqrt(1 - r * r) * bondShock;

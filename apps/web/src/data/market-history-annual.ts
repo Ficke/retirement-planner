@@ -1,5 +1,5 @@
 /**
- * Historical US Market Returns (Annual, 1928–2024)
+ * Historical US Market Returns (Annual, 1928–2025)
  *
  * CANONICAL DATASET — single source of truth for both simulation engines.
  * The Rust table (rust-simulation-service/src/simulation/historical_data.rs)
@@ -7,9 +7,17 @@
  *   node scripts/gen-rust-historical-data.mjs
  *
  * Sources:
- * - Stocks: S&P 500 total return (incl. dividends) — Damodaran data library (NYU Stern)
- * - Bonds: US 10-year Treasury total return — Damodaran data library (NYU Stern)
- * - Inflation: CPI-U December year-over-year — BLS
+ * - Stocks and bonds: Damodaran's annual returns workbook (NYU Stern), using
+ *   "S&P 500 (includes dividends)" and "US T. Bond (10-year)".
+ *   https://pages.stern.nyu.edu/~adamodar/pc/datasets/histretSP.xls
+ * - Inflation: BLS CPI-U, all items, not seasonally adjusted (CUUR0000SA0),
+ *   calculated December to December.
+ *   https://data.bls.gov/timeseries/CUUR0000SA0
+ *
+ * Store stock and bond returns to four decimal places and inflation to three,
+ * matching the precision of the existing history. After adding a year, run the
+ * generator above; CI verifies that the Rust copy is current and years are
+ * consecutive.
  *
  * Returns are NOMINAL; the engines convert to real returns per-year via
  * real = (1 + nominal) / (1 + inflation) - 1.
@@ -17,9 +25,12 @@
 
 export interface AnnualMarketReturn {
   year: number;
-  stock_return: number;   // Annual nominal total return, S&P 500
-  bond_return: number;    // Annual nominal total return, 10-year US Treasury
-  inflation_rate: number; // CPI-U Dec/Dec
+  /** Annual nominal total return for the S&P 500. */
+  stock_return: number;
+  /** Annual nominal total return for the 10-year US Treasury. */
+  bond_return: number;
+  /** CPI-U inflation from December of the previous year to December. */
+  inflation_rate: number;
 }
 
 export const HISTORICAL_RETURNS: AnnualMarketReturn[] = [
@@ -120,4 +131,5 @@ export const HISTORICAL_RETURNS: AnnualMarketReturn[] = [
   { year: 2022, stock_return: -0.1804, bond_return: -0.1783, inflation_rate: 0.065 },
   { year: 2023, stock_return: 0.2606, bond_return: 0.0388, inflation_rate: 0.034 },
   { year: 2024, stock_return: 0.2488, bond_return: -0.0164, inflation_rate: 0.029 },
+  { year: 2025, stock_return: 0.1772, bond_return: 0.078, inflation_rate: 0.027 },
 ];

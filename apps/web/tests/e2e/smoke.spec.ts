@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Smoke coverage for the 4-page sidebar IA: plan knobs and projections on
- * Plan, portfolio on Accounts, set-and-forget facts on Profile, and app/model
+ * This suite covers the four-page sidebar: plan controls and projections on
+ * Plan, portfolio data on Accounts, personal details on Profile, and model
  * configuration on Settings.
  *
  * These run signed out, which is the app's LOCAL data mode: profile and
@@ -12,25 +12,44 @@ import { test, expect, type Page } from '@playwright/test';
 
 const PAGES = ['Plan', 'Accounts', 'Profile', 'Settings'] as const;
 
-/** Navigate and wait past the bootstrap spinner. */
+/** Navigates to the app and waits for bootstrap to finish. */
 async function gotoApp(page: Page) {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible();
 }
 
-/** Sidebar nav buttons; scoped so page content with the same text can't match. */
+/** Returns a sidebar button without matching duplicate text in page content. */
 function navItem(page: Page, name: string) {
   return page.getByRole('complementary').getByRole('button', { name, exact: true });
 }
 
-test('boots into Plan with the KPI row', async ({ page }) => {
+test('boots into Plan with outcomes, controls, and projection charts in order', async ({ page }) => {
   await gotoApp(page);
 
-  for (const label of ['Chance of success', 'Typical outcome', 'Poor markets', 'Strong markets']) {
+  for (const label of [
+    'Current wealth',
+    'Chance of success',
+    'Projected wealth at retirement',
+  ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
-  await expect(page.getByText('Levers', { exact: true })).toBeVisible();
-  await expect(page.getByText('Wealth over time', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Projected wealth at age \d+/)).toBeVisible();
+  await expect(page.getByText('Levers', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Cash flow', { exact: true })).toHaveCount(0);
+
+  const sections = [
+    page.getByText('Current wealth', { exact: true }),
+    page.getByText('Retirement age', { exact: true }).first(),
+    page.getByText('Wealth over time', { exact: true }),
+    page.getByText('Retirement cash flow', { exact: true }),
+    page.getByText('Year by year', { exact: true }),
+  ];
+  const boxes = await Promise.all(sections.map((section) => section.boundingBox()));
+  const yPositions = boxes.map((box) => {
+    expect(box).not.toBeNull();
+    return box!.y;
+  });
+  expect(yPositions).toEqual([...yPositions].sort((a, b) => a - b));
 });
 
 test('Plan includes income outcome cohorts', async ({ page }) => {
@@ -43,12 +62,32 @@ test('Plan includes income outcome cohorts', async ({ page }) => {
   await page.getByRole('option', { name: 'Local (never leaves device)' }).click();
   await navItem(page, 'Plan').click();
 
-  await page.getByRole('tab', { name: 'Income', exact: true }).click();
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });
   await expect(outcomeSelectors.first()).toContainText(
     'Median · 45th–55th',
   );
+
+  await expect(page.getByRole('img', {
+    name: 'Average annual retirement income by source for the selected outcome range',
+  })).toBeVisible();
+});
+
+test('Plan labels sensitivity axes without repeating age in every tick', async ({ page }) => {
+  await gotoApp(page);
+
+  const retirementChart = page.getByRole('img', {
+    name: 'Retirement age sensitivity: chance of success by retirement age',
+  });
+  await expect(retirementChart).toBeVisible({ timeout: 15_000 });
+  await expect(retirementChart.getByText('45', { exact: true })).toBeVisible();
+  await expect(retirementChart.getByText('Age 45', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/success at Age/)).toHaveCount(0);
+
+  await expect(page.getByRole('img', {
+    name: 'Projected wealth by age, showing the median and 25th to 75th percentile range',
+  })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Middle 50%' })).toBeVisible();
 });
 
 test('every sidebar page is reachable', async ({ page }) => {

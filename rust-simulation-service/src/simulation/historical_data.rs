@@ -1,8 +1,8 @@
-// GENERATED FILE — do not edit by hand.
-// Source of truth: apps/web/src/data/market-history-annual.ts
-// Regenerate with: node scripts/gen-rust-historical-data.mjs
+// This file is generated; do not edit it by hand.
+// The source of truth is apps/web/src/data/market-history-annual.ts.
+// Regenerate it with: node scripts/gen-rust-historical-data.mjs
 //
-// Historical US market returns, 1928-2024 (97 years).
+// Historical US market returns, 1928-2025 (98 years).
 // Stocks: S&P 500 total return; Bonds: 10-year US Treasury total return
 // (Damodaran data library, NYU Stern). Inflation: CPI-U Dec/Dec (BLS).
 // Returns are NOMINAL; sampling converts to real returns per-year.
@@ -600,10 +600,16 @@ pub const HISTORICAL_RETURNS: &[AnnualMarketReturn] = &[
         bond_return: -0.0164,
         inflation_rate: 0.029,
     },
+    AnnualMarketReturn {
+        year: 2025,
+        stock_return: 0.1772,
+        bond_return: 0.078,
+        inflation_rate: 0.027,
+    },
 ];
 
-/// Get a random historical year's returns using bootstrap sampling.
-/// Returns real returns: real = (1 + nominal) / (1 + inflation) - 1
+/// Samples a random historical year's returns using bootstrap sampling.
+/// The returned values are real returns: real = (1 + nominal) / (1 + inflation) - 1.
 pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
     let random_year = &HISTORICAL_RETURNS[rng.gen_range(0..HISTORICAL_RETURNS.len())];
 
@@ -615,8 +621,8 @@ pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
     (real_stock_return, real_bond_return)
 }
 
-/// Sample a block of consecutive years for block bootstrap.
-/// Returns real returns (adjusted for inflation).
+/// Samples a block of consecutive years for block bootstrap.
+/// The returned values are adjusted for inflation.
 pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f64)> {
     let start_index = rng.gen_range(0..HISTORICAL_RETURNS.len());
     let block_size = block_size.min(HISTORICAL_RETURNS.len());
