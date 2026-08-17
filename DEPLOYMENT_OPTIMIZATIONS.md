@@ -1,6 +1,9 @@
-# Deployment Optimizations
+# Deployment optimization history
 
-Plan for reducing cold-start latency and improving simulation performance on GCP, while keeping strict scale-to-zero economics. Delivered by migrating prod from `gcloud run deploy`-in-Cloud-Build to **Terraform as the source of truth**, then applying the perf changes through the module.
+This document records the infrastructure optimization work that led to the
+current production configuration. For current operating instructions, use
+[`terraform/README.md`](terraform/README.md) and
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 **Target profile:** US West Coast solo user, occasional sessions, `min_instances=0` everywhere.
 
@@ -31,10 +34,12 @@ Plan for reducing cold-start latency and improving simulation performance on GCP
       preserves everything else. The health check also moved from `/` to
       `/healthz`.
 
-### Next
+### Remaining ideas at the time
+
 - [ ] #5 — Distroless Rust runtime image
-- [ ] Switch `cloudbuild.yaml` from `gcloud run deploy` to `terraform apply` (after a few more clean manual applies).
-      Blocked on the Cloud Build SA grants in §0.5.
+- [x] Keep Cloud Build responsible for verified application revisions while
+      Terraform manages service configuration. This superseded the proposal to
+      run `terraform apply` during every application deployment.
 - [ ] Phase 2 — `us-central1` → `us-west1` migration
 
 ### Applying the secret removal
@@ -47,11 +52,11 @@ mounts. If any of those keys is worth keeping, copy the value out first, or
 
 The mount removal alone (the cold-start win) carries no such risk.
 
-### Tfvars location note
-The active tfvars used for `terraform apply` is `terraform/terraform.tfvars` (gitignored).
-The aspirational `terraform/environments/{dev,prod}/` tree has been removed — it
-never held root module files, so `cd environments/prod && terraform init` could
-not have worked. Path references below should be read accordingly.
+### Production inputs
+
+Production applies use the versioned `terraform/production.tfvars` file.
+References to `terraform.tfvars` below describe the earlier migration process
+and are retained as historical context.
 
 ---
 
