@@ -126,9 +126,14 @@ steps:
     args:
       - '-c'
       - |
+        set -eu
+
         RUST_URL=$$(gcloud run services describe ${_RUST_SERVICE_NAME} \
           --region ${_REGION} \
           --format 'value(status.url)')
+        # An empty URL deploys a web revision that cannot reach the engine, and
+        # only surfaces later as a 503 from the smoke check.
+        : "$${RUST_URL:?could not resolve the Rust service URL}"
         echo "Rust service URL: $$RUST_URL"
 
         # RUST_SERVICE_URL is set on the same revision that carries the new
