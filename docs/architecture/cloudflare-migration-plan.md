@@ -486,3 +486,6 @@ Gate: DNSSEC validates and the production smoke suite remains green.
   free-tier request cap as the availability risk it creates.
 - 2026-08-17: Raise the zone's minimum TLS version to 1.2 at cutover, behind its
   own flag. The zone still accepts TLS 1.0.
+- 2026-08-17: Keep the Worker proxy rather than a Google load balancer, a
+  Cloudflare Tunnel, or Cloud Run domain mapping. See
+  [stack-alternatives.md](stack-alternatives.md) for the comparison and exits.
