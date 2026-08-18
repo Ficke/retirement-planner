@@ -401,13 +401,18 @@ adamficke.com is live on the shared CloudFront distribution, certificate, S3
 buckets, and API Gateway, so none of them are removable. The only resource this
 migration orphans is the Route 53 `adamficke.dev` hosted zone.
 
-- [ ] Confirm the CloudFront distribution no longer receives adamficke.dev
+- [x] Confirm the CloudFront distribution no longer receives adamficke.dev
       traffic.
-- [ ] Optionally delete Route 53 hosted zone `Z00299812665AE6YO4AB6`, which is
-      already non-authoritative. Keep the `adamficke.com` zone.
-- [ ] Remove the temporary staging route and Firebase authorization.
-- [ ] Enable DNSSEC in Cloudflare/Terraform.
-- [ ] Add the generated DS record at Squarespace.
+- [x] Delete Route 53 hosted zone `Z00299812665AE6YO4AB6`. The apex NS and SOA
+      records cannot be deleted individually, so the change batch must exclude
+      them and `delete-hosted-zone` removes them with the zone.
+- [x] Remove the temporary staging route and Firebase authorization.
+- [x] Enable DNSSEC in Cloudflare/Terraform.
+- [ ] Publish the DS record. The registration is mid-transfer to Cloudflare
+      Registrar, so this waits: a DS added at the losing registrar often does not
+      survive the transfer, and a stale DS with no matching key returns SERVFAIL
+      from every validating resolver. Cloudflare publishes it once it holds the
+      registration.
 - [ ] Verify signed delegation and successful DNSSEC validation publicly.
 - [ ] Re-run the critical production smoke checks.
 
