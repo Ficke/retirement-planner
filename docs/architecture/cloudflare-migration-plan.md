@@ -62,7 +62,13 @@ Browser
   supplies the origin secret, verified client IP, original host, scheme, and a
   request correlation identifier.
 - Next.js rejects requests without the correct secret using a timing-safe
-  comparison. Only `/healthz` is exempt for Cloud Run probes.
+  comparison. Only `/healthz` is exempt for Cloud Run probes, and that
+  exemption is load-bearing: the web service runs startup and liveness probes
+  against `/healthz` on the container port, so enforcing the secret there would
+  fail every probe and stop revisions from ever going ready. The exemption is
+  checked before the missing-secret `503` for the same reason. Google Front End
+  reserves `/healthz` on `*.run.app` and answers it with its own `404`, so the
+  path is unreachable through the Worker regardless.
 - Cloud Build's candidate smoke test supplies the secret.
 - Direct public requests to the `run.app` application URL receive `403`, while
   the URL remains technically available for Cloudflare and Cloud Build.
