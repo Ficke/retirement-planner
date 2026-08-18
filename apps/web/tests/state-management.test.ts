@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { hydratePlan, usePlan } from '@/state/usePlan';
+import { cloudComputeEnabled, hydratePlan, usePlan } from '@/state/usePlan';
 import { ageOn } from '@/domain/age';
 import type {
   RetirementAgeAnalysisResult,
@@ -157,5 +157,15 @@ describe('State Management - Simple Invalidation Logic', () => {
       [],
     );
     expect(migrated.assumptions.useBackdoorRoth).toBe(false);
+  });
+});
+
+describe('cloud compute gating', () => {
+  it('requires both the preference and a signed-in user', () => {
+    const signedIn = { id: 'firebase-uid' };
+    expect(cloudComputeEnabled({ authUser: signedIn, useServerSideCalculations: true })).toBe(true);
+    expect(cloudComputeEnabled({ authUser: signedIn, useServerSideCalculations: false })).toBe(false);
+    expect(cloudComputeEnabled({ authUser: null, useServerSideCalculations: true })).toBe(false);
+    expect(cloudComputeEnabled({ authUser: null, useServerSideCalculations: false })).toBe(false);
   });
 });

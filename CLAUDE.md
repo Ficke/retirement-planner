@@ -35,8 +35,10 @@ or local (Web Worker).
 - **Server-first**: Rust Monte Carlo service at `rust-simulation-service/`
   (5,000 main paths, path-major Rayon sensitivity kernel); local mode uses a
   dedicated main Worker plus a bounded sensitivity Worker pool
-- **Public endpoints are gated**: `/api/simulation/*` is unauthenticated by
-  design but rate-limited per IP and clamped (`lib/simulation-request.ts`)
+- **Cloud compute needs an account**: `/api/simulation/*` requires a Firebase
+  ID token, is rate-limited per account, and clamps every request
+  (`lib/simulation-request.ts`). Signed-out sessions run the Worker engine —
+  `cloudComputeEnabled` in `state/usePlan.ts` decides, so no 401 round trip
 - **Savings is the residual**: gross income less taxes and spending, all of it
   invested. Contributions fill statutory limits HSA → 401(k) → Roth IRA, and
   taxable absorbs the rest, so `gross = taxes + spending + savings` closes

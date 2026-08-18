@@ -40,6 +40,10 @@ secret_env_vars = {
     secret_name = "ORIGIN_SECRET"
     version     = "1"
   }
+  SIGNUP_INVITE_CODES = {
+    secret_name = "SIGNUP_INVITE_CODES"
+    version     = "1"
+  }
 }
 
 memory_limit    = "512Mi"

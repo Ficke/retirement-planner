@@ -19,6 +19,11 @@
 # itself. Each failure mode reports distinctly: 400 wire-contract mismatch,
 # 502 Rust error, 503 unreachable, 504 timeout.
 #
+# It targets /api/internal/, not the public simulation routes, because those
+# require a signed-in user and the pipeline holds no user credentials. That
+# path is reachable here only by going straight at the origin with
+# ORIGIN_SECRET; the edge proxy refuses to forward it.
+#
 # Do not check '/'. It is a client-rendered shell that returns 200 whether or
 # not the app can compute anything. Do not check '/healthz' through the public
 # URL either: Google Front End reserves that exact path on *.run.app and
@@ -27,7 +32,7 @@ set -eu
 
 SERVICE_URL="${1:?usage: smoke-check.sh <service-url>}"
 ATTEMPTS="${SMOKE_ATTEMPTS:-5}"
-ENDPOINT="$SERVICE_URL/api/simulation/monte-carlo"
+ENDPOINT="$SERVICE_URL/api/internal/simulation-probe"
 
 # Pinned to the current plan schema on purpose: when the wire contract moves
 # and this is not updated, the check goes red instead of shipping a web build
@@ -63,6 +68,10 @@ while [ "$attempt" -le "$ATTEMPTS" ]; do
   # A rejected request or a broken dependency will not fix itself; only a cold
   # start or a still-rolling revision is worth waiting on.
   case "$STATUS" in
+    401|403) echo "Origin rejected the probe (HTTP $STATUS) — check ORIGIN_SECRET:"
+             head -c 400 "$BODY_FILE"; echo; rm -f "$BODY_FILE"; exit 1 ;;
+    404)     echo "Probe endpoint not found (HTTP $STATUS) — is this URL behind the edge proxy?"
+             head -c 400 "$BODY_FILE"; echo; rm -f "$BODY_FILE"; exit 1 ;;
     400|413) echo "Wire contract rejected by the app (HTTP $STATUS):"
              head -c 400 "$BODY_FILE"; echo; rm -f "$BODY_FILE"; exit 1 ;;
   esac

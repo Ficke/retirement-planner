@@ -336,6 +336,17 @@ function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
 }
 
 /**
+ * The cloud engine is for signed-in users, so a signed-out session runs the
+ * Web Worker regardless of the stored preference. Checking here keeps anonymous
+ * sessions from spending a round trip on a 401 before falling back.
+ */
+export function cloudComputeEnabled(
+  state: Pick<PlanState, 'authUser' | 'useServerSideCalculations'>,
+): boolean {
+  return state.useServerSideCalculations && state.authUser !== null;
+}
+
+/**
  * Cancel obsolete work and reschedule the primary result. Results survive as
  * the last completed run, paired with the plan that produced them: reading a
  * new plan value out of an old run reports a number no simulation computed.
@@ -658,7 +669,8 @@ export const usePlan = create<PlanState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   runMainSimulation: async () => {
-    const { plan, useServerSideCalculations } = get();
+    const { plan } = get();
+    const useServerSideCalculations = cloudComputeEnabled(get());
     const generation = ++mainSimGeneration;
     const signal = activeSimulationController.signal;
     set({ isSimulatingMain: true, simulationError: null, simulationPending: true });
@@ -694,7 +706,8 @@ export const usePlan = create<PlanState>((set, get) => ({
 
   runSensitivityAnalyses: async () => {
     if (get().isSimulatingSensitivities) return;
-    const { plan, useServerSideCalculations } = get();
+    const { plan } = get();
+    const useServerSideCalculations = cloudComputeEnabled(get());
     if (!retirementPlanSchema.safeParse(plan).success) return;
     const generation = ++sensitivitySimGeneration;
     const signal = activeSimulationController.signal;

@@ -51,6 +51,9 @@ variable "secrets" {
     ORIGIN_SECRET = {
       description = "Shared secret required on requests from the Cloudflare Worker"
     }
+    SIGNUP_INVITE_CODES = {
+      description = "Comma-separated invite codes required to create an account"
+    }
   }
 }
 
@@ -71,9 +74,10 @@ variable "public_env_vars" {
 #
 # Every entry here is fetched by Cloud Run at container start, so it sits on the
 # cold-start path. Keep this list to secrets the app actually reads:
-# DATABASE_URL (services/server/database.ts) and FIREBASE_PRIVATE_KEY
-# (lib/firebase/admin.ts). The OCR-era GEMINI/POLYGON/LANGFUSE_* mounts were
-# removed with the feature — nothing in the app reads them.
+# DATABASE_URL (services/server/database.ts), FIREBASE_PRIVATE_KEY
+# (lib/firebase/admin.ts), ORIGIN_SECRET (middleware.ts) and
+# SIGNUP_INVITE_CODES (lib/invite-code.ts). The OCR-era GEMINI/POLYGON/LANGFUSE_*
+# mounts were removed with the feature — nothing in the app reads them.
 variable "secret_env_vars" {
   description = "Environment variables that reference secrets"
   type = map(object({
@@ -91,6 +95,10 @@ variable "secret_env_vars" {
     }
     ORIGIN_SECRET = {
       secret_name = "ORIGIN_SECRET"
+      version     = "1"
+    }
+    SIGNUP_INVITE_CODES = {
+      secret_name = "SIGNUP_INVITE_CODES"
       version     = "1"
     }
   }

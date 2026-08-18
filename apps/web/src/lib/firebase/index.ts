@@ -8,5 +8,12 @@
 // Client-side exports only
 export { auth } from './config';
 export { signUp, signIn, signOut, resetPassword, getIdToken } from './auth';
-export { useAuth, AuthProvider } from './auth-context';
+export {
+  useAuth,
+  AuthProvider,
+  SyncUserError,
+  syncUserRecord,
+  stashInviteCode,
+  clearInviteCode,
+} from './auth-context';
 export { authenticatedFetch } from './api-client';

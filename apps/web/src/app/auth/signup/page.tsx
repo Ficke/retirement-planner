@@ -10,7 +10,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { signUp, useAuth } from '@/lib/firebase';
+import {
+  clearInviteCode,
+  signUp,
+  stashInviteCode,
+  syncUserRecord,
+  SyncUserError,
+  useAuth,
+} from '@/lib/firebase';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -19,6 +26,7 @@ export default function SignUpPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -46,6 +54,7 @@ export default function SignUpPage() {
     }
 
     setIsLoading(true);
+    stashInviteCode(inviteCode.trim());
 
     try {
       // Create Firebase user
@@ -63,7 +72,22 @@ export default function SignUpPage() {
         return;
       }
 
-      // DB user row sync happens in AuthProvider on every auth change.
+      // The server rejects an uninvited account here, so roll the Firebase user
+      // back rather than stranding a credential that can sign in to nothing.
+      try {
+        await syncUserRecord(user);
+      } catch (syncError) {
+        await user.delete().catch(() => undefined);
+        setError(
+          syncError instanceof SyncUserError
+            ? syncError.message
+            : 'Could not finish creating your account. Please try again.'
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      clearInviteCode();
       window.location.href = '/';
     } catch (err) {
       console.error('Signup error:', err);
@@ -79,7 +103,7 @@ export default function SignUpPage() {
         <CardHeader>
           <CardTitle>Create account</CardTitle>
           <CardDescription>
-            Your plan syncs to your account and works across devices
+            Accounts are invite-only. Your plan syncs across devices
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -98,6 +122,18 @@ export default function SignUpPage() {
                 placeholder="John Doe"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="inviteCode">Invite code</Label>
+              <Input
+                id="inviteCode"
+                type="text"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                required
                 disabled={isLoading}
               />
             </div>
