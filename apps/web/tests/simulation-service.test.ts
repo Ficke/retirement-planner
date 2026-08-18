@@ -11,6 +11,12 @@ import { batchRequestSchema } from '@/lib/simulation-request';
 import { createTestProjectionSettings } from './test-helpers';
 
 // Mock the analysis and mc modules
+// The cloud engine now requires a signed-in user. These tests exercise request
+// shaping, not auth, so the token wrapper delegates straight to the fetch stub.
+vi.mock('@/lib/firebase/api-client', () => ({
+  authenticatedFetch: (url: string, options?: RequestInit) => fetch(url, options),
+}));
+
 vi.mock('@/engine/analysis', () => ({
   runSocialSecurityAnalysis: vi.fn().mockResolvedValue([]),
   runSpendingAnalysis: vi.fn().mockResolvedValue([]),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { getAuthUser } from '@/lib/firebase/server';
+import { rateLimit } from '@/lib/rate-limit';
 import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
 import {
   monteCarloRequestSchema,
@@ -11,14 +12,19 @@ import { readLimitedJson } from '@/lib/validation';
 /**
  * Proxies Monte Carlo simulation requests to the Rust service.
  *
- * Publicly reachable (anonymous mode may use cloud compute), so requests are
- * rate-limited per IP and the payload is validated/clamped before any compute
- * is spent. Nothing from the request body is persisted.
+ * Cloud compute is for signed-in users; anonymous sessions run the Web Worker
+ * engine instead. Requests are still rate-limited per account and the payload
+ * validated/clamped before any compute is spent. Nothing from the request body
+ * is persisted.
  */
 export async function POST(request: NextRequest) {
   try {
-    const ip = getClientIp(request.headers);
-    const limited = await rateLimit(`simulate:${ip}`, SIMULATION_RATE_LIMIT);
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const limited = await rateLimit(`simulate:${user.id}`, SIMULATION_RATE_LIMIT);
     if (!limited.success) {
       return NextResponse.json(
         { error: 'Too many simulation requests — slow down and retry shortly' },
@@ -35,7 +41,7 @@ export async function POST(request: NextRequest) {
       );
     }
     const pathLimit = await rateLimit(
-      `simulate-paths:${ip}`,
+      `simulate-paths:${user.id}`,
       SIMULATION_PATH_RATE_LIMIT,
       validation.data.config.paths,
     );

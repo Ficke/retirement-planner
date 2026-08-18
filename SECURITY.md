@@ -14,20 +14,37 @@ Firebase Auth, verified server-side via the Admin SDK (`lib/firebase/server-auth
 |---|---|---|
 | `/api/accounts`, `/api/accounts/[id]` | Required | Every handler re-checks `account.user_id === user.id` before reading or writing — a valid token for user A cannot touch user B's account by ID |
 | `/api/profile` | Required | Scoped to `user.id` |
-| `/api/auth/sync-user` | Token required | Verifies the bearer token before creating the user row |
-| `/api/simulation/monte-carlo`, `/api/simulation/batch` | **None, by design** | See below |
+| `/api/auth/sync-user` | Token required | Verifies the bearer token, and requires a valid invite code before creating a user row. See below |
+| `/api/simulation/monte-carlo`, `/api/simulation/batch` | Firebase ID token | See below |
 | `/healthz` | None | Returns the string `ok`, no I/O. Reachable from inside Cloud Run only — GFE intercepts the path externally |
 
 The app is fully usable signed out. In LOCAL data mode nothing is written
 server-side at all, so there is no data to protect for anonymous users.
 
-### The unauthenticated simulation endpoints
+### Invite-only signup
 
-`/api/simulation/*` is deliberately public: anonymous users can opt into cloud
-compute. That makes it the main abuse surface, since every request fans out to
-CPU-bound work on the Rust service. Mitigations in `lib/simulation-request.ts`:
+The Firebase web API key ships in the client bundle, so anyone holding it can
+mint an account against Firebase directly — a check in the signup form would be
+decoration. `/api/auth/sync-user` is the only writer of the `users` table, so
+that is where signup is closed: creating a row requires a code from
+`SIGNUP_INVITE_CODES` (comma-separated, compared timing-safely in
+`lib/invite-code.ts`), while updating an existing row does not, leaving sign-in
+untouched. No codes configured closes signup in every environment.
 
-- Per-IP rate limit: 60 requests / 60s
+Attempts that need a code are rate-limited to 10/hour per IP, so a valid
+Firebase token cannot be used to enumerate codes. When the server rejects an
+account the signup form deletes the Firebase user, so a rejected signup leaves
+no credential that can sign in to nothing.
+
+### The simulation endpoints
+
+`/api/simulation/*` fans every request out to CPU-bound work on the Rust
+service, which makes it the main abuse surface. Signing in is the first gate:
+anonymous sessions run the Web Worker engine instead, and the client decides
+that up front rather than eating a 401. Mitigations in
+`lib/simulation-request.ts`:
+
+- Per-account rate limit: 60 requests / 60s
 - `paths` ≤ 5,000 per simulation
 - ≤ 40 scenarios per batch, ≤ 40,000 total paths per batch
 - ≤ 20 accounts per plan
@@ -35,6 +52,9 @@ CPU-bound work on the Rust service. Mitigations in `lib/simulation-request.ts`:
 
 Nothing from these request bodies is persisted. Plans sent for cloud compute are
 processed in memory and discarded.
+
+Since accounts are invite-only (`lib/invite-code.ts`), the caller set is bounded
+by codes you hand out rather than by who finds the URL.
 
 **Known limitation:** the rate limiter is in-process (`lib/rate-limit.ts`), so
 each Cloud Run instance keeps its own counters. At `max_instances = 10` the

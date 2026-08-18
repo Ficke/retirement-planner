@@ -255,6 +255,51 @@ describe('simulation proxy response streaming', () => {
 
   const monteCarloBody = { plan: simulationPlan, config: { paths: 20, seed: 42 } };
 
+  const batchBody = {
+    responseMode: 'summary',
+    simulations: [{ id: 'base', plan: simulationPlan, config: { paths: 20, seed: 42 } }],
+  };
+
+  beforeEach(() => {
+    mocks.getAuthUser.mockResolvedValue(owner);
+  });
+
+  it('rejects an anonymous Monte Carlo request before spending Rust compute', async () => {
+    mocks.getAuthUser.mockResolvedValue(null);
+
+    const response = await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
+
+    expect(response.status).toBe(401);
+    expect(mocks.fetchRustService).not.toHaveBeenCalled();
+    expect(mocks.rateLimit).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anonymous batch request before spending Rust compute', async () => {
+    mocks.getAuthUser.mockResolvedValue(null);
+
+    const response = await runBatch(simulationRequest('batch', batchBody));
+
+    expect(response.status).toBe(401);
+    expect(mocks.fetchRustService).not.toHaveBeenCalled();
+    expect(mocks.rateLimit).not.toHaveBeenCalled();
+  });
+
+  it('meters simulation quota per account rather than per IP', async () => {
+    mocks.fetchRustService.mockResolvedValue(
+      new Response(JSON.stringify({ successProbability: 0.9 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
+
+    expect(mocks.rateLimit.mock.calls.map((call) => call[0])).toEqual([
+      `simulate:${owner.id}`,
+      `simulate-paths:${owner.id}`,
+    ]);
+  });
+
   it('reports an unreachable Rust service as 503 rather than a generic 500', async () => {
     mocks.fetchRustService.mockRejectedValue(
       new mocks.RustServiceUnavailableError('Could not reach the simulation service'),

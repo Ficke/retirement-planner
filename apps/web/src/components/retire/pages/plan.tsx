@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePlan } from "@/state/usePlan";
+import { cloudComputeEnabled, usePlan } from "@/state/usePlan";
 import { leverRange, type LeverKey } from "@/domain/levers";
 import type { SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -119,7 +119,7 @@ export function PagePlan() {
   const result = usePlan((s) => s.simulationResult);
   const resultPlan = usePlan((s) => s.simulationPlan);
   const isCalculating = usePlan((s) => s.isSimulatingMain || s.simulationPending);
-  const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
+  const cloudCompute = usePlan(cloudComputeEnabled);
   const updatePlan = usePlan((s) => s.updatePlan);
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
@@ -148,7 +148,7 @@ export function PagePlan() {
     runSensitivityAnalyses,
   ]);
 
-  const usedFallback = result?.source === "client" && useServerSideCalculations;
+  const usedFallback = result?.source === "client" && cloudCompute;
   const engineLabel = result?.source === "server"
     ? "Cloud engine"
     : usedFallback

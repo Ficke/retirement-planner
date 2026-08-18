@@ -5,7 +5,7 @@ import { useId } from "react";
 import { LogIn, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { usePlan } from "@/state/usePlan";
+import { cloudComputeEnabled, usePlan } from "@/state/usePlan";
 import { useAuth } from "@/lib/firebase";
 import type { SimulationModel } from "@/domain/types";
 import {
@@ -54,6 +54,7 @@ export function PageSettings() {
     authUser,
     bootstrap,
   } = usePlan();
+  const cloudCompute = usePlan(cloudComputeEnabled);
   const { user, cloudReady } = useAuth();
   const router = useRouter();
   const updateAssumptions = (
@@ -137,14 +138,28 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Where simulations run"
-            helper="Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device."
+            helper={
+              cloudCompute || !useServerSideCalculations
+                ? "Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device."
+                : "The cloud engine needs an account. Sign in to use it — until then simulations run on this device."
+            }
             badge={
               <Badge
                 variant="secondary"
-                className="bg-success/15 text-success gap-1.5"
+                className={
+                  cloudCompute || !useServerSideCalculations
+                    ? "bg-success/15 text-success gap-1.5"
+                    : "bg-warn/15 text-warn gap-1.5"
+                }
               >
-                <span className="bg-success size-1.5 rounded-full" />
-                {useServerSideCalculations ? "Cloud" : "Local"}
+                <span
+                  className={
+                    cloudCompute || !useServerSideCalculations
+                      ? "bg-success size-1.5 rounded-full"
+                      : "bg-warn size-1.5 rounded-full"
+                  }
+                />
+                {cloudCompute ? "Cloud" : "Local"}
               </Badge>
             }
           >
