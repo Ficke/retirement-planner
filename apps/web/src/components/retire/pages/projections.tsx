@@ -240,6 +240,26 @@ function OutcomeSelect({
   );
 }
 
+function YearFilterTabs({
+  value,
+  onValueChange,
+}: {
+  value: YearFilter;
+  onValueChange: (value: YearFilter) => void;
+}) {
+  return (
+    <SegmentedTabs<YearFilter>
+      value={value}
+      onValueChange={onValueChange}
+      options={[
+        { value: "all", label: "All years" },
+        { value: "work", label: "Working" },
+        { value: "retired", label: "Retired" },
+      ]}
+    />
+  );
+}
+
 export function ProjectionSummary({
   result,
 }: {
@@ -307,13 +327,18 @@ export function ProjectionDetails({
     () => result?.yearlyProjections ?? [],
     [result?.yearlyProjections],
   );
+  const inFilter = useMemo(
+    () => (row: { isRetired: boolean }) => (
+      yearFilter === "work" ? !row.isRetired : yearFilter === "retired" ? row.isRetired : true
+    ),
+    [yearFilter],
+  );
+  const cashFlowRows = useMemo(
+    () => (selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly).filter(inFilter),
+    [inFilter, result?.incomeSourcesPath, selectedBucket?.projections, yearly],
+  );
   const filteredRows = useMemo<Row[]>(() => {
-    const filtered =
-      yearFilter === "work"
-        ? yearly.filter((p) => !p.isRetired)
-        : yearFilter === "retired"
-        ? yearly.filter((p) => p.isRetired)
-        : yearly;
+    const filtered = yearly.filter(inFilter);
     const cashFlowsByAge = new Map(
       selectedBucket?.projections.map((projection) => [projection.age, projection]),
     );
@@ -328,7 +353,7 @@ export function ProjectionDetails({
         externalIncome: cashFlow?.income ?? p.income,
       };
     });
-  }, [selectedBucket?.projections, yearly, yearFilter]);
+  }, [selectedBucket?.projections, yearly, inFilter]);
 
   return (
     <>
@@ -349,13 +374,18 @@ export function ProjectionDetails({
       </DashboardCard>
 
       <DashboardCard
-        title="Retirement cash flow"
+        title="Cash flow"
         description={selectedBucket
           ? `Average annual income sources for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
           : undefined}
-        actions={selectedBucket
-          ? <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
-          : undefined}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectedBucket && (
+              <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
+            )}
+            <YearFilterTabs value={yearFilter} onValueChange={setYearFilter} />
+          </div>
+        }
       >
         {!yearly.length ? (
           <div className="text-muted-foreground flex h-[320px] items-center justify-center text-sm">
@@ -364,10 +394,7 @@ export function ProjectionDetails({
               : "No projection data — adjust your plan to run."}
           </div>
         ) : (
-          <IncomeSourcesChart
-            projections={selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly}
-            height={320}
-          />
+          <IncomeSourcesChart projections={cashFlowRows} height={320} />
         )}
       </DashboardCard>
 
@@ -381,15 +408,7 @@ export function ProjectionDetails({
             {selectedBucket && (
               <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
             )}
-            <SegmentedTabs<YearFilter>
-              value={yearFilter}
-              onValueChange={setYearFilter}
-              options={[
-                { value: "all", label: "All years" },
-                { value: "work", label: "Working" },
-                { value: "retired", label: "Retired" },
-              ]}
-            />
+            <YearFilterTabs value={yearFilter} onValueChange={setYearFilter} />
           </div>
         }
         flush

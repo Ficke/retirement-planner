@@ -218,6 +218,8 @@ function ChartTooltipContent({
   color,
   nameKey,
   labelKey,
+  hideZeroValues = false,
+  footer,
 }: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
   React.ComponentProps<"div"> & {
     hideLabel?: boolean
@@ -225,6 +227,8 @@ function ChartTooltipContent({
     indicator?: "line" | "dot" | "dashed"
     nameKey?: string
     labelKey?: string
+    hideZeroValues?: boolean
+    footer?: (payload: readonly { value?: TooltipValueType }[]) => React.ReactNode
   } & Omit<
     RechartsPrimitive.DefaultTooltipContentProps<
       TooltipValueType,
@@ -287,6 +291,7 @@ function ChartTooltipContent({
       <div className="grid gap-1.5">
         {payload
           .filter((item) => item.type !== "none")
+          .filter((item) => !hideZeroValues || Number(item.value) !== 0)
           .map((item, index) => {
             const key = `${nameKey ?? item.name ?? item.dataKey ?? "value"}`
             const itemConfig = getPayloadConfigFromPayload(config, item, key)
@@ -354,6 +359,9 @@ function ChartTooltipContent({
             )
           })}
       </div>
+      {footer && (
+        <div className="border-border/50 mt-0.5 border-t pt-1.5">{footer(payload)}</div>
+      )}
     </div>
   )
 }

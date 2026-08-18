@@ -35,13 +35,12 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
   }
   await expect(page.getByText(/Projected wealth at age \d+/)).toBeVisible();
   await expect(page.getByText('Levers', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('Cash flow', { exact: true })).toHaveCount(0);
 
   const sections = [
     page.getByText('Current wealth', { exact: true }),
     page.getByText('Retirement age', { exact: true }).first(),
     page.getByText('Wealth over time', { exact: true }),
-    page.getByText('Retirement cash flow', { exact: true }),
+    page.getByText('Cash flow', { exact: true }),
     page.getByText('Year by year', { exact: true }),
   ];
   const boxes = await Promise.all(sections.map((section) => section.boundingBox()));
@@ -69,7 +68,7 @@ test('Plan includes income outcome cohorts', async ({ page }) => {
   );
 
   await expect(page.getByRole('img', {
-    name: 'Average annual retirement income by source for the selected outcome range',
+    name: 'Average annual income by source for the selected outcome range',
   })).toBeVisible();
 });
 
