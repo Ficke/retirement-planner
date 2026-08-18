@@ -345,9 +345,11 @@ export function ProjectionDetails({
     ),
     [yearFilter],
   );
+  // Without cohorts, the representative path's projections carry the same
+  // sources plus the salary that funds the working years.
   const cashFlowRows = useMemo(
-    () => (selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly).filter(inFilter),
-    [inFilter, result?.incomeSourcesPath, selectedBucket?.projections, yearly],
+    () => (selectedBucket?.projections ?? yearly).filter(inFilter),
+    [inFilter, selectedBucket?.projections, yearly],
   );
   const filteredRows = useMemo<Row[]>(() => {
     const filtered = yearly.filter(inFilter);
