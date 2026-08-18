@@ -144,7 +144,7 @@ export interface SimulationResult {
    */
   incomeSourcesPath?: IncomeSourcesRow[];
   /** Mean cash flows for 10%-wide outcome cohorts centered on deciles 10–90. */
-  outcomeBuckets?: OutcomeBucket[];
+  outcomeBuckets: OutcomeBucket[];
   /** 1 - successProbability. A path fails when any modeled year is underfunded. */
   riskOfRuin: number;
   /** Which engine produced this result. Set by the simulation service, not the engine. */

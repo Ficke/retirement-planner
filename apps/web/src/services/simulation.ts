@@ -248,6 +248,12 @@ class SimulationServiceImpl implements SimulationService {
           throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
         }
         const result: SimulationResult = await response.json();
+        // An engine deployed behind this build answers without cohorts. Reject
+        // it so the fallback below produces a complete result, rather than
+        // rendering a cash flow chart with no cohort to average.
+        if (!result.outcomeBuckets?.length) {
+          throw new Error('Server-side simulation omitted outcome cohorts');
+        }
         return { ...result, source: 'server' };
       } catch (error) {
         if (signal?.aborted) throw error;

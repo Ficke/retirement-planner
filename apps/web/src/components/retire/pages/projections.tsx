@@ -329,7 +329,7 @@ export function ProjectionDetails({
   const [outcomePercentile, setOutcomePercentile] = useState(50);
 
   const selectedBucket = useMemo(
-    () => result?.outcomeBuckets?.find(
+    () => result?.outcomeBuckets.find(
       (bucket) => bucket.centerPercentile === outcomePercentile,
     ),
     [outcomePercentile, result?.outcomeBuckets],
@@ -345,11 +345,9 @@ export function ProjectionDetails({
     ),
     [yearFilter],
   );
-  // Without cohorts, the representative path's projections carry the same
-  // sources plus the salary that funds the working years.
   const cashFlowRows = useMemo(
-    () => (selectedBucket?.projections ?? yearly).filter(inFilter),
-    [inFilter, selectedBucket?.projections, yearly],
+    () => (selectedBucket?.projections ?? []).filter(inFilter),
+    [inFilter, selectedBucket?.projections],
   );
   const filteredRows = useMemo<Row[]>(() => {
     const filtered = yearly.filter(inFilter);
