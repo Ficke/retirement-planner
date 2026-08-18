@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { usePlan } from "@/state/usePlan";
 import { leverRange, type LeverKey } from "@/domain/levers";
-import type { SimulationResult, SimulationSummary } from "@/domain/types";
+import type { SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -43,6 +43,7 @@ function LeverCard({
   xFormat,
   xTooltipFormat,
   note,
+  isCalculating,
 }: {
   lever: LeverKey;
   label: string;
@@ -53,6 +54,7 @@ function LeverCard({
   xFormat: (v: number) => string;
   xTooltipFormat: (v: number) => string;
   note?: string;
+  isCalculating?: boolean;
 }) {
   const plan = usePlan((s) => s.plan);
   const { min, max, step, ticks } = leverRange(lever, plan);
@@ -91,7 +93,10 @@ function LeverCard({
       {points.length === 0 ? (
         <Skeleton className="h-[180px] w-full" />
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className={cn(
+          "flex flex-col gap-1 transition-opacity",
+          isCalculating && "opacity-50",
+        )}>
           <SensitivityChart
             points={points}
             marker={inRange && markerY != null ? { x: value, y: markerY } : undefined}
@@ -111,46 +116,38 @@ function LeverCard({
 
 export function PagePlan() {
   const plan = usePlan((s) => s.plan);
-  const liveResult = usePlan((s) => s.simulationResult);
-  const simulationError = usePlan((s) => s.simulationError);
-  const isSimulating = usePlan((s) => s.isSimulatingMain);
+  const result = usePlan((s) => s.simulationResult);
+  const resultPlan = usePlan((s) => s.simulationPlan);
+  const isCalculating = usePlan((s) => s.isSimulatingMain || s.simulationPending);
   const useServerSideCalculations = usePlan((s) => s.useServerSideCalculations);
   const updatePlan = usePlan((s) => s.updatePlan);
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
   const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
   const isSimulatingSensitivities = usePlan((s) => s.isSimulatingSensitivities);
+  const sensitivityPending = usePlan((s) => s.sensitivityPending);
   const runSensitivityAnalyses = usePlan((s) => s.runSensitivityAnalyses);
 
   // Sensitivity sweeps are expensive and only this page displays them. Load
   // the three curves together so cloud mode uses one bounded batch request.
   useEffect(() => {
-    if (
-      !isSimulatingSensitivities
-      && ssAnalysisResult === null
+    const missingCurves = ssAnalysisResult === null
       && spendingAnalysisResult === null
-      && retirementAgeAnalysisResult === null
-    ) {
+      && retirementAgeAnalysisResult === null;
+    if (!isSimulatingSensitivities && (sensitivityPending || missingCurves)) {
       const timeout = window.setTimeout(() => void runSensitivityAnalyses(), 500);
       return () => window.clearTimeout(timeout);
     }
   }, [
     plan,
     isSimulatingSensitivities,
+    sensitivityPending,
     ssAnalysisResult,
     spendingAnalysisResult,
     retirementAgeAnalysisResult,
     runSensitivityAnalyses,
   ]);
 
-  // Keep the last completed result visible while a new simulation runs,
-  // so slider drags don't flash "0% / Off track" between recomputes.
-  const lastResultRef = useRef<SimulationResult | null>(null);
-  useEffect(() => {
-    if (liveResult) lastResultRef.current = liveResult;
-  }, [liveResult]);
-  const result = liveResult ?? lastResultRef.current;
-  const isUpdating = isSimulating || (!liveResult && !simulationError);
   const usedFallback = result?.source === "client" && useServerSideCalculations;
   const engineLabel = result?.source === "server"
     ? "Cloud engine"
@@ -186,7 +183,7 @@ export function PagePlan() {
         ) : undefined}
       />
 
-      <ProjectionSummary result={result} />
+      <ProjectionSummary result={result} resultPlan={resultPlan} isCalculating={isCalculating} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <LeverCard
@@ -196,6 +193,7 @@ export function PagePlan() {
           display={`Age ${plan.profile.retirementAge}`}
           onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
           points={agePts}
+          isCalculating={isSimulatingSensitivities}
           xFormat={String}
           xTooltipFormat={(v) => `Retirement age: ${v}`}
         />
@@ -206,6 +204,7 @@ export function PagePlan() {
           display={fmtCurrency(plan.profile.currentSpending)}
           onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
           points={spendPts}
+          isCalculating={isSimulatingSensitivities}
           xFormat={(v) => fmtCurrency(v, true)}
           xTooltipFormat={(v) => `Annual spending: ${fmtCurrency(v)}`}
         />
@@ -216,6 +215,7 @@ export function PagePlan() {
           display={`Age ${plan.socialSecurity.claimAge}`}
           onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
           points={ssPts}
+          isCalculating={isSimulatingSensitivities}
           xFormat={String}
           xTooltipFormat={(v) => `Social Security claim age: ${v}`}
           note={plan.socialSecurity.manualOverride
@@ -224,7 +224,7 @@ export function PagePlan() {
         />
       </div>
 
-      <ProjectionDetails result={result} isSimulating={isUpdating} />
+      <ProjectionDetails result={result} isSimulating={isCalculating} />
 
     </PageShell>
   );

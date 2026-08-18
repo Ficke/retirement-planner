@@ -12,7 +12,7 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
-import type { SimulationResult, YearlyProjection } from "@/domain/types";
+import type { RetirementPlan, SimulationResult, YearlyProjection } from "@/domain/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -262,16 +262,23 @@ function YearFilterTabs({
 
 export function ProjectionSummary({
   result,
+  resultPlan,
+  isCalculating = false,
 }: {
   result: SimulationResult | null;
+  resultPlan: RetirementPlan | null;
+  isCalculating?: boolean;
 }) {
   const plan = usePlan((s) => s.plan);
   const currentWealth = plan.accounts.reduce(
     (total, account) => total + account.balance,
     0,
   );
+  // Ages come from the plan the result was computed from. Reading the live
+  // plan's ages out of an older run reports a year it never projected.
+  const retirementAge = resultPlan?.profile.retirementAge;
   const retirementProjection = result?.yearlyProjections.find(
-    (projection) => projection.age === plan.profile.retirementAge,
+    (projection) => projection.age === retirementAge,
   );
   const successProb = result?.successProbability;
   const retirementWealth = retirementProjection?.p50;
@@ -289,16 +296,21 @@ export function ProjectionSummary({
         value={successProb == null ? "—" : `${(successProb * 100).toFixed(0)}%`}
         trend={successProb == null ? "Simulation pending" : successTone(successProb).label}
         tone={successProb == null ? undefined : successTone(successProb).tone}
+        pending={isCalculating}
       />
       <Stat
         label="Projected wealth at retirement"
         value={retirementWealth == null ? "—" : fmtCurrency(retirementWealth, true)}
-        trend={`Median projection at age ${plan.profile.retirementAge}`}
+        trend={retirementAge == null
+          ? "Median projection"
+          : `Median projection at age ${retirementAge}`}
+        pending={isCalculating}
       />
       <Stat
-        label={`Projected wealth at age ${plan.profile.lifeExpectancy}`}
+        label={`Projected wealth at age ${(resultPlan ?? plan).profile.lifeExpectancy}`}
         value={finalWealth == null ? "—" : fmtCurrency(finalWealth, true)}
         trend="Median projection"
+        pending={isCalculating}
       />
     </KPIGrid>
   );
