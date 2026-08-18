@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePlan } from "@/state/usePlan";
-import { MIN_RETIREMENT_AGE } from "@/domain/constants";
+import { leverRange, type LeverKey } from "@/domain/levers";
 import type { SimulationResult, SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -34,35 +34,30 @@ function toPoints<T>(arr: T[] | null | undefined, xKey: keyof T): Point[] {
  * identifies the plan's current value.
  */
 function LeverCard({
+  lever,
   label,
   value,
   display,
-  min,
-  max,
-  step = 1,
   onChange,
   points,
-  xDomain,
-  xTicks,
   xFormat,
   xTooltipFormat,
   note,
 }: {
+  lever: LeverKey;
   label: string;
   value: number;
   display: string;
-  min: number;
-  max: number;
-  step?: number;
   onChange: (v: number) => void;
   points: Point[];
-  xDomain: [number, number];
-  xTicks: number[];
   xFormat: (v: number) => string;
   xTooltipFormat: (v: number) => string;
   note?: string;
 }) {
-  const inRange = points.length > 0 && value >= xDomain[0] && value <= xDomain[1];
+  const plan = usePlan((s) => s.plan);
+  const { min, max, step, ticks } = leverRange(lever, plan);
+  const xDomain: [number, number] = [min, max];
+  const inRange = points.length > 0 && value >= min && value <= max;
 
   let markerY: number | null = null;
   if (inRange) {
@@ -102,7 +97,7 @@ function LeverCard({
             marker={inRange && markerY != null ? { x: value, y: markerY } : undefined}
             xLabel={label}
             xDomain={xDomain}
-            xTicks={xTicks}
+            xTicks={ticks}
             xFormat={xFormat}
             xTooltipFormat={xTooltipFormat}
             height={176}
@@ -195,42 +190,32 @@ export function PagePlan() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <LeverCard
+          lever="retirementAge"
           label="Retirement age"
           value={plan.profile.retirementAge}
           display={`Age ${plan.profile.retirementAge}`}
-          min={MIN_RETIREMENT_AGE}
-          max={Math.min(100, plan.profile.lifeExpectancy - 1)}
           onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
           points={agePts}
-          xDomain={[45, 70]}
-          xTicks={[45, 50, 55, 60, 65, 70]}
           xFormat={String}
           xTooltipFormat={(v) => `Retirement age: ${v}`}
         />
         <LeverCard
+          lever="spending"
           label="Annual spending"
           value={plan.profile.currentSpending}
           display={fmtCurrency(plan.profile.currentSpending)}
-          min={20000}
-          max={200000}
-          step={1000}
           onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
           points={spendPts}
-          xDomain={[60_000, 120_000]}
-          xTicks={[60_000, 80_000, 100_000, 120_000]}
           xFormat={(v) => fmtCurrency(v, true)}
           xTooltipFormat={(v) => `Annual spending: ${fmtCurrency(v)}`}
         />
         <LeverCard
+          lever="socialSecurityClaimAge"
           label="Social Security claim age"
           value={plan.socialSecurity.claimAge}
           display={`Age ${plan.socialSecurity.claimAge}`}
-          min={62}
-          max={70}
           onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
           points={ssPts}
-          xDomain={[62, 70]}
-          xTicks={[62, 64, 66, 68, 70]}
           xFormat={String}
           xTooltipFormat={(v) => `Social Security claim age: ${v}`}
           note={plan.socialSecurity.manualOverride
