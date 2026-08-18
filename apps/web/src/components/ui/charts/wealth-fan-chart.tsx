@@ -18,8 +18,10 @@ import {
   chartGridProps,
   chartXAxisProps,
   chartYAxisProps,
+  niceLinearScale,
+  ageTicks,
 } from "@/components/ui/chart";
-import { fmtCurrency } from "@/components/retire/format";
+import { fmtAxisCurrency, fmtCurrency } from "@/components/retire/format";
 import type { YearlyProjection } from "@/domain/types";
 
 type WealthProjection = Pick<
@@ -50,6 +52,15 @@ export function WealthFanChart({
     }));
   }, [projections]);
 
+  const yScale = useMemo(
+    () => niceLinearScale(Math.max(0, ...data.map((d) => d.band75[1]))),
+    [data],
+  );
+  const xTicks = useMemo(
+    () => ageTicks(data[0]?.age ?? 0, data[data.length - 1]?.age ?? 0),
+    [data],
+  );
+
   if (!projections || projections.length === 0) {
     return (
       <div
@@ -76,12 +87,13 @@ export function WealthFanChart({
           dataKey="age"
           type="number"
           domain={["dataMin", "dataMax"]}
+          ticks={xTicks}
         />
         <YAxis
           {...chartYAxisProps}
-          domain={[0, "auto"]}
-          tickCount={5}
-          tickFormatter={(v) => fmtCurrency(v, true)}
+          domain={yScale.domain}
+          ticks={yScale.ticks}
+          tickFormatter={fmtAxisCurrency}
         />
         <Area
           type="monotone"

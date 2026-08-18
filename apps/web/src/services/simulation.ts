@@ -1,16 +1,18 @@
 /**
  * Simulation orchestration.
  *
- * Scenario construction (which claim ages / spending levels / retirement ages
- * to sweep, which seeds to use) lives HERE and only here, so the server (Rust)
- * and client (Web Worker) engines always compute the same scenarios. The
+ * Scenario construction (which seeds to use, how many paths, which plan fields
+ * each sweep varies) lives HERE and only here, so the server (Rust) and client
+ * (Web Worker) engines always compute the same scenarios. The values swept come
+ * from domain/levers.ts, which the Plan page's sliders and curves share. The
  * engines differ only in where the math runs.
  */
 
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
-import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { leverRange } from '@/domain/levers';
 import type {
   RetirementPlan,
   SimulationPlan,
@@ -42,9 +44,6 @@ const MAIN_PATHS = 5000;
 // below what an absolute probability would need. The main simulation, not
 // these curves, is what reports the headline number.
 const SWEEP_PATHS = 300;
-
-const STANDARD_SPENDING_LEVELS = [60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000];
-const STANDARD_RETIREMENT_AGES = [45, 50, 55, 60, 65, 70];
 
 interface Scenario {
   id: string;
@@ -87,9 +86,9 @@ function historicalBootstrapFor(plan: RetirementPlan): boolean {
 function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; scenario: Scenario }[] {
   // Disabled benefits make every path identical. A manual household benefit
   // is authoritative only at its selected claim age; without spouse/statement
-  // detail, inventing nine differently adjusted benefits would be misleading.
+  // detail, inventing an adjusted benefit per age would be misleading.
   const ages = plan.socialSecurity.enabled && !plan.socialSecurity.manualOverride
-    ? [...new Set([62, 64, 66, 68, 70, plan.socialSecurity.claimAge])].sort((a, b) => a - b)
+    ? leverRange('socialSecurityClaimAge', plan).sweepValues
     : [plan.socialSecurity.claimAge];
   return ages.map((claimAge) => ({
     claimAge,
@@ -106,16 +105,7 @@ function ssScenarios(plan: RetirementPlan, seed: number): { claimAge: number; sc
 }
 
 function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending: number; scenario: Scenario }[] {
-  // Keep comparisons stable as the plan changes. Add an in-range plan value so
-  // its marker is simulated exactly without changing the displayed domain.
-  const current = plan.profile.currentSpending;
-  const levels = [...STANDARD_SPENDING_LEVELS];
-  if (current >= STANDARD_SPENDING_LEVELS[0]
-    && current <= STANDARD_SPENDING_LEVELS[STANDARD_SPENDING_LEVELS.length - 1]) {
-    levels.push(current);
-  }
-  const uniqueLevels = [...new Set(levels)].sort((a, b) => a - b);
-  return uniqueLevels.map((annualSpending) => ({
+  return leverRange('spending', plan).sweepValues.map((annualSpending) => ({
     annualSpending,
     scenario: {
       id: `spending-${annualSpending}`,
@@ -130,17 +120,7 @@ function spendingScenarios(plan: RetirementPlan, seed: number): { annualSpending
 }
 
 function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retirementAge: number; scenario: Scenario }[] {
-  // Keep the comparison range stable. Values beyond the modeled lifetime are
-  // omitted because they would violate the simulation contract.
-  const hi = Math.min(100, plan.profile.lifeExpectancy - 1);
-  const ages = STANDARD_RETIREMENT_AGES.filter((age) => age >= MIN_RETIREMENT_AGE && age <= hi);
-  if (plan.profile.retirementAge >= MIN_RETIREMENT_AGE
-    && plan.profile.retirementAge <= 70
-    && plan.profile.retirementAge <= hi) {
-    ages.push(plan.profile.retirementAge);
-  }
-  const uniqueAges = [...new Set(ages)].sort((a, b) => a - b);
-  return uniqueAges.map((retirementAge) => ({
+  return leverRange('retirementAge', plan).sweepValues.map((retirementAge) => ({
     retirementAge,
     scenario: {
       id: `retirementAge-${retirementAge}`,
@@ -268,6 +248,12 @@ class SimulationServiceImpl implements SimulationService {
           throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
         }
         const result: SimulationResult = await response.json();
+        // An engine deployed behind this build answers without cohorts. Reject
+        // it so the fallback below produces a complete result, rather than
+        // rendering a cash flow chart with no cohort to average.
+        if (!result.outcomeBuckets?.length) {
+          throw new Error('Server-side simulation omitted outcome cohorts');
+        }
         return { ...result, source: 'server' };
       } catch (error) {
         if (signal?.aborted) throw error;

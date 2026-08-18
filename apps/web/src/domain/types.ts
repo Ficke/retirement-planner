@@ -138,13 +138,8 @@ export interface SimulationResult {
   percentile10TerminalWealth: number;
   percentile90TerminalWealth: number;
   yearlyProjections: YearlyProjection[];
-  /**
-   * Cash flows from the median-terminal-wealth path. A single representative
-   * path keeps income, taxes, spending, deposits, and withdrawals coherent.
-   */
-  incomeSourcesPath?: IncomeSourcesRow[];
   /** Mean cash flows for 10%-wide outcome cohorts centered on deciles 10–90. */
-  outcomeBuckets?: OutcomeBucket[];
+  outcomeBuckets: OutcomeBucket[];
   /** 1 - successProbability. A path fails when any modeled year is underfunded. */
   riskOfRuin: number;
   /** Which engine produced this result. Set by the simulation service, not the engine. */
@@ -202,21 +197,19 @@ export interface PathResult {
   success: boolean; // Whether every modeled year was fully funded
 }
 
-export interface IncomeSourcesRow {
+/** One year of a cohort's mean cash flows. */
+export interface OutcomeCashFlowRow {
   age: number;
   isRetired: boolean;
+  income: number;
+  spending: number;
+  taxes: number;
+  savings: number;
   socialSecurityBenefit: number;
   withdrawalTaxable: number;
   withdrawalTraditional: number;
   withdrawalRoth: number;
   withdrawalHSA: number;
-}
-
-export interface OutcomeCashFlowRow extends IncomeSourcesRow {
-  income: number;
-  spending: number;
-  taxes: number;
-  savings: number;
 }
 
 export interface OutcomeBucket {

@@ -12,7 +12,7 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
-import type { SimulationResult, YearlyProjection } from "@/domain/types";
+import type { RetirementPlan, SimulationResult, YearlyProjection } from "@/domain/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -240,18 +240,45 @@ function OutcomeSelect({
   );
 }
 
+function YearFilterTabs({
+  value,
+  onValueChange,
+}: {
+  value: YearFilter;
+  onValueChange: (value: YearFilter) => void;
+}) {
+  return (
+    <SegmentedTabs<YearFilter>
+      value={value}
+      onValueChange={onValueChange}
+      options={[
+        { value: "all", label: "All years" },
+        { value: "work", label: "Working" },
+        { value: "retired", label: "Retired" },
+      ]}
+    />
+  );
+}
+
 export function ProjectionSummary({
   result,
+  resultPlan,
+  isCalculating = false,
 }: {
   result: SimulationResult | null;
+  resultPlan: RetirementPlan | null;
+  isCalculating?: boolean;
 }) {
   const plan = usePlan((s) => s.plan);
   const currentWealth = plan.accounts.reduce(
     (total, account) => total + account.balance,
     0,
   );
+  // Ages come from the plan the result was computed from. Reading the live
+  // plan's ages out of an older run reports a year it never projected.
+  const retirementAge = resultPlan?.profile.retirementAge;
   const retirementProjection = result?.yearlyProjections.find(
-    (projection) => projection.age === plan.profile.retirementAge,
+    (projection) => projection.age === retirementAge,
   );
   const successProb = result?.successProbability;
   const retirementWealth = retirementProjection?.p50;
@@ -269,16 +296,21 @@ export function ProjectionSummary({
         value={successProb == null ? "—" : `${(successProb * 100).toFixed(0)}%`}
         trend={successProb == null ? "Simulation pending" : successTone(successProb).label}
         tone={successProb == null ? undefined : successTone(successProb).tone}
+        pending={isCalculating}
       />
       <Stat
         label="Projected wealth at retirement"
         value={retirementWealth == null ? "—" : fmtCurrency(retirementWealth, true)}
-        trend={`Median projection at age ${plan.profile.retirementAge}`}
+        trend={retirementAge == null
+          ? "Median projection"
+          : `Median projection at age ${retirementAge}`}
+        pending={isCalculating}
       />
       <Stat
-        label={`Projected wealth at age ${plan.profile.lifeExpectancy}`}
+        label={`Projected wealth at age ${(resultPlan ?? plan).profile.lifeExpectancy}`}
         value={finalWealth == null ? "—" : fmtCurrency(finalWealth, true)}
         trend="Median projection"
+        pending={isCalculating}
       />
     </KPIGrid>
   );
@@ -297,7 +329,7 @@ export function ProjectionDetails({
   const [outcomePercentile, setOutcomePercentile] = useState(50);
 
   const selectedBucket = useMemo(
-    () => result?.outcomeBuckets?.find(
+    () => result?.outcomeBuckets.find(
       (bucket) => bucket.centerPercentile === outcomePercentile,
     ),
     [outcomePercentile, result?.outcomeBuckets],
@@ -307,13 +339,18 @@ export function ProjectionDetails({
     () => result?.yearlyProjections ?? [],
     [result?.yearlyProjections],
   );
+  const inFilter = useMemo(
+    () => (row: { isRetired: boolean }) => (
+      yearFilter === "work" ? !row.isRetired : yearFilter === "retired" ? row.isRetired : true
+    ),
+    [yearFilter],
+  );
+  const cashFlowRows = useMemo(
+    () => (selectedBucket?.projections ?? []).filter(inFilter),
+    [inFilter, selectedBucket?.projections],
+  );
   const filteredRows = useMemo<Row[]>(() => {
-    const filtered =
-      yearFilter === "work"
-        ? yearly.filter((p) => !p.isRetired)
-        : yearFilter === "retired"
-        ? yearly.filter((p) => p.isRetired)
-        : yearly;
+    const filtered = yearly.filter(inFilter);
     const cashFlowsByAge = new Map(
       selectedBucket?.projections.map((projection) => [projection.age, projection]),
     );
@@ -328,7 +365,7 @@ export function ProjectionDetails({
         externalIncome: cashFlow?.income ?? p.income,
       };
     });
-  }, [selectedBucket?.projections, yearly, yearFilter]);
+  }, [selectedBucket?.projections, yearly, inFilter]);
 
   return (
     <>
@@ -349,13 +386,18 @@ export function ProjectionDetails({
       </DashboardCard>
 
       <DashboardCard
-        title="Retirement cash flow"
+        title="Cash flow"
         description={selectedBucket
           ? `Average annual income sources for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
           : undefined}
-        actions={selectedBucket
-          ? <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
-          : undefined}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectedBucket && (
+              <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
+            )}
+            <YearFilterTabs value={yearFilter} onValueChange={setYearFilter} />
+          </div>
+        }
       >
         {!yearly.length ? (
           <div className="text-muted-foreground flex h-[320px] items-center justify-center text-sm">
@@ -364,10 +406,7 @@ export function ProjectionDetails({
               : "No projection data — adjust your plan to run."}
           </div>
         ) : (
-          <IncomeSourcesChart
-            projections={selectedBucket?.projections ?? result?.incomeSourcesPath ?? yearly}
-            height={320}
-          />
+          <IncomeSourcesChart projections={cashFlowRows} height={320} />
         )}
       </DashboardCard>
 
@@ -381,15 +420,7 @@ export function ProjectionDetails({
             {selectedBucket && (
               <OutcomeSelect value={outcomePercentile} onValueChange={setOutcomePercentile} />
             )}
-            <SegmentedTabs<YearFilter>
-              value={yearFilter}
-              onValueChange={setYearFilter}
-              options={[
-                { value: "all", label: "All years" },
-                { value: "work", label: "Working" },
-                { value: "retired", label: "Retired" },
-              ]}
-            />
+            <YearFilterTabs value={yearFilter} onValueChange={setYearFilter} />
           </div>
         }
         flush

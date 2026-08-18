@@ -103,6 +103,7 @@ export function Stat({
   unit,
   trend,
   tone = "neutral",
+  pending = false,
   children,
   className,
 }: {
@@ -111,6 +112,8 @@ export function Stat({
   unit?: React.ReactNode;
   trend?: React.ReactNode;
   tone?: StatTone;
+  /** The value is one edit behind while a new one computes. */
+  pending?: boolean;
   children?: React.ReactNode;
   className?: string;
 }) {
@@ -122,7 +125,13 @@ export function Stat({
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4">
-        <div className="flex items-baseline gap-1.5">
+        <div
+          className={cn(
+            "flex items-baseline gap-1.5 transition-opacity",
+            pending && "opacity-40",
+          )}
+          aria-busy={pending || undefined}
+        >
           <span className="text-foreground text-2xl font-semibold tabular-nums">
             {value}
           </span>
@@ -130,7 +139,11 @@ export function Stat({
             <span className="text-muted-foreground text-sm font-medium">{unit}</span>
           )}
         </div>
-        {trend && <div className={statTrendVariants({ tone })}>{trend}</div>}
+        {(trend || pending) && (
+          <div className={statTrendVariants({ tone: pending ? "neutral" : tone })}>
+            {pending ? "Calculating…" : trend}
+          </div>
+        )}
         {children}
       </CardContent>
     </Card>

@@ -64,7 +64,7 @@ function scheduleSimulations(get: () => PlanState, set: PlanSetter) {
     const validation = retirementPlanSchema.safeParse(get().plan);
     if (!validation.success) {
       const message = `Projection could not run: ${validation.error.issues[0]?.message ?? 'invalid plan'}`;
-      set({ error: message, simulationError: message });
+      set({ error: message, simulationError: message, simulationPending: false });
       simulationTimeoutId = null;
       return;
     }
@@ -284,13 +284,19 @@ interface PlanState {
   profileRevision: number | null;
   dataMode: () => DataMode;
 
+  /** The last completed run. Kept while a new one computes. */
   simulationResult: SimulationResult | null;
+  /** The plan `simulationResult` was computed from. */
+  simulationPlan: RetirementPlan | null;
   simulationError: string | null;
   ssAnalysisResult: SSAnalysisResult[] | null;
   spendingAnalysisResult: SpendingAnalysisResult[] | null;
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
+  /** A plan change is waiting on the debounce, so results are one edit behind. */
+  simulationPending: boolean;
+  sensitivityPending: boolean;
 
   bootstrapped: boolean;
   error: string | null;
@@ -329,7 +335,11 @@ function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
   return state.authUser?.id ?? null;
 }
 
-/** Cancel obsolete work, clear results, and reschedule the primary result. */
+/**
+ * Cancel obsolete work and reschedule the primary result. Results survive as
+ * the last completed run, paired with the plan that produced them: reading a
+ * new plan value out of an old run reports a number no simulation computed.
+ */
 function invalidateResults(get: () => PlanState, set: PlanSetter) {
   activeSimulationController.abort();
   activeSimulationController = new AbortController();
@@ -337,11 +347,9 @@ function invalidateResults(get: () => PlanState, set: PlanSetter) {
   sensitivitySimGeneration++;
   scheduleSimulations(get, set);
   return {
-    simulationResult: null as SimulationResult | null,
     simulationError: null as string | null,
-    ssAnalysisResult: null as SSAnalysisResult[] | null,
-    spendingAnalysisResult: null as SpendingAnalysisResult[] | null,
-    retirementAgeAnalysisResult: null as RetirementAgeAnalysisResult[] | null,
+    simulationPending: true,
+    sensitivityPending: true,
     isSimulatingMain: false,
     isSimulatingSensitivities: false,
   };
@@ -365,12 +373,15 @@ export const usePlan = create<PlanState>((set, get) => ({
   ),
 
   simulationResult: null,
+  simulationPlan: null,
   simulationError: null,
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
   isSimulatingMain: false,
   isSimulatingSensitivities: false,
+  simulationPending: false,
+  sensitivityPending: false,
 
   bootstrapped: false,
   error: null,
@@ -650,7 +661,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     const { plan, useServerSideCalculations } = get();
     const generation = ++mainSimGeneration;
     const signal = activeSimulationController.signal;
-    set({ isSimulatingMain: true, simulationError: null });
+    set({ isSimulatingMain: true, simulationError: null, simulationPending: true });
     try {
       const result = await getSimulationService().runMainSimulation(
         plan,
@@ -658,7 +669,13 @@ export const usePlan = create<PlanState>((set, get) => ({
         signal,
       );
       if (generation !== mainSimGeneration) return;
-      set({ simulationResult: result, simulationError: null, isSimulatingMain: false });
+      set({
+        simulationResult: result,
+        simulationPlan: plan,
+        simulationError: null,
+        isSimulatingMain: false,
+        simulationPending: false,
+      });
     } catch (error) {
       if (generation !== mainSimGeneration) return;
       if (signal.aborted) return;
@@ -666,7 +683,9 @@ export const usePlan = create<PlanState>((set, get) => ({
       const message = error instanceof Error ? error.message : 'Projection failed';
       set({
         isSimulatingMain: false,
+        simulationPending: false,
         simulationResult: null,
+        simulationPlan: null,
         simulationError: message,
         error: `Projection could not be updated: ${message}`,
       });
@@ -679,7 +698,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     if (!retirementPlanSchema.safeParse(plan).success) return;
     const generation = ++sensitivitySimGeneration;
     const signal = activeSimulationController.signal;
-    set({ isSimulatingSensitivities: true });
+    set({ isSimulatingSensitivities: true, sensitivityPending: true });
     try {
       const results = await getSimulationService().runSensitivityAnalyses(
         plan,
@@ -692,6 +711,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         spendingAnalysisResult: results.spending,
         retirementAgeAnalysisResult: results.retirementAge,
         isSimulatingSensitivities: false,
+        sensitivityPending: false,
       });
     } catch (error) {
       if (generation !== sensitivitySimGeneration) return;
@@ -699,6 +719,7 @@ export const usePlan = create<PlanState>((set, get) => ({
       console.error('Sensitivity analysis failed:', error);
       set({
         isSimulatingSensitivities: false,
+        sensitivityPending: false,
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,

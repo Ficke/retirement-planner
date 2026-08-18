@@ -22,6 +22,9 @@ describe('State Management - Simple Invalidation Logic', () => {
       cloudSyncEnabled: true,
       error: null,
       simulationResult: null,
+      simulationPlan: null,
+      simulationPending: false,
+      sensitivityPending: false,
       ssAnalysisResult: null,
       spendingAnalysisResult: null,
       retirementAgeAnalysisResult: null,
@@ -37,28 +40,33 @@ describe('State Management - Simple Invalidation Logic', () => {
     });
   }
 
-  function expectAllCleared() {
-    expect(usePlan.getState().retirementAgeAnalysisResult).toBeNull();
-    expect(usePlan.getState().spendingAnalysisResult).toBeNull();
-    expect(usePlan.getState().ssAnalysisResult).toBeNull();
+  /** Results outlive the edit that obsoleted them, so the UI can keep the last
+   * completed run on screen while the next one computes. */
+  function expectMarkedStale() {
+    const state = usePlan.getState();
+    expect(state.simulationPending).toBe(true);
+    expect(state.sensitivityPending).toBe(true);
+    expect(state.retirementAgeAnalysisResult).not.toBeNull();
+    expect(state.spendingAnalysisResult).not.toBeNull();
+    expect(state.ssAnalysisResult).not.toBeNull();
   }
 
-  it('should clear all analysis results when profile changes', () => {
+  it('should mark analysis results stale when profile changes', () => {
     seedMockResults();
     usePlan.getState().updatePlan({ profile: { retirementAge: 58 } });
-    expectAllCleared();
+    expectMarkedStale();
   });
 
-  it('should clear all analysis results when social security settings change', () => {
+  it('should mark analysis results stale when social security settings change', () => {
     seedMockResults();
     usePlan.getState().updatePlan({ socialSecurity: { claimAge: 65 } });
-    expectAllCleared();
+    expectMarkedStale();
   });
 
-  it('should clear all analysis results when assumptions change', () => {
+  it('should mark analysis results stale when assumptions change', () => {
     seedMockResults();
     usePlan.getState().updatePlan({ assumptions: { randomSeed: 123 } });
-    expectAllCleared();
+    expectMarkedStale();
   });
 
   it('enters cloud mode only after both identity setup and cloud reads succeed', () => {

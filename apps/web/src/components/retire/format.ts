@@ -9,6 +9,11 @@ export function fmtCurrency(n: number | null | undefined, compact = false): stri
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 }
 
+/** Axis ticks are round by construction, so trailing zeros only add noise. */
+export function fmtAxisCurrency(n: number): string {
+  return fmtCurrency(n, true).replace(/(\.\d*?)0+(?=[Mk]$)/, '$1').replace(/\.(?=[Mk]$)/, '');
+}
+
 export function fmtPercent(n: number | null | undefined, decimals = 0): string {
   if (n == null || isNaN(n)) return '—';
   return (n * 100).toFixed(decimals) + '%';

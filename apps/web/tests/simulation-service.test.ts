@@ -113,15 +113,15 @@ describe('SimulationService (Pure)', () => {
     });
   });
 
-  it('sweeps a stable $60k–$120k spending range', async () => {
+  it('widens the standard spending range to cover a plan below it', async () => {
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
+      40_000, 50_000, 60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
     ]);
   });
 
-  it('adds an exact in-range plan spending value without changing the standard range', async () => {
+  it('adds an exact in-range plan spending value to the standard range', async () => {
     const result = await service.runSpendingAnalysis({
       ...mockPlan,
       profile: { ...mockPlan.profile, currentSpending: 94_500 },
@@ -138,9 +138,9 @@ describe('SimulationService (Pure)', () => {
       profile: { ...mockPlan.profile, currentSpending: 1_000_000_000 },
     }, false);
 
-    expect(result.map((r) => r.annualSpending)).toEqual([
-      60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
-    ]);
+    const levels = result.map((r) => r.annualSpending);
+    expect(levels.length).toBeLessThanOrEqual(9);
+    expect(levels.every((level) => level >= 20_000 && level <= 250_000)).toBe(true);
   });
 
   it('sweeps a stable age 45–70 retirement range', async () => {
@@ -229,7 +229,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(7);
+    expect(results).toHaveLength(9);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'

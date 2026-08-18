@@ -83,7 +83,9 @@ export function SensitivityChart({
           type="number"
           domain={xDomain}
           ticks={xTicks}
-          allowDataOverflow
+          // allowDataOverflow would clip the plot rect, halving the dots and
+          // the current-value marker at the domain edges.
+          padding={{ left: 10, right: 10 }}
           tickFormatter={xFormat}
           height={44}
           label={{
