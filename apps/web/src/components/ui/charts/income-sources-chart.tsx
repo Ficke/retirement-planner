@@ -12,8 +12,10 @@ import {
   chartGridProps,
   chartXAxisProps,
   chartYAxisProps,
+  niceLinearScale,
+  ageTicks,
 } from "@/components/ui/chart";
-import { fmtCurrency } from "@/components/retire/format";
+import { fmtAxisCurrency, fmtCurrency } from "@/components/retire/format";
 import type { IncomeSourcesRow } from "@/domain/types";
 
 type Pick6 = IncomeSourcesRow;
@@ -38,6 +40,17 @@ export function IncomeSourcesChart({
   height?: number;
 }) {
   const data = useMemo(() => projections.filter((p) => p.isRetired), [projections]);
+
+  const yScale = useMemo(
+    () => niceLinearScale(Math.max(0, ...data.map((row) => series.reduce(
+      (total, s) => total + (row[s.key] ?? 0), 0,
+    )))),
+    [data],
+  );
+  const xTicks = useMemo(
+    () => ageTicks(data[0]?.age ?? 0, data[data.length - 1]?.age ?? 0),
+    [data],
+  );
   if (data.length === 0) {
     return (
       <div className="text-muted-foreground flex items-center justify-center text-sm" style={{ height }}>
@@ -65,14 +78,14 @@ export function IncomeSourcesChart({
           {...chartXAxisProps}
           dataKey="age"
           type="category"
-          interval="preserveStartEnd"
-          minTickGap={48}
+          ticks={xTicks}
+          interval={0}
         />
         <YAxis
           {...chartYAxisProps}
-          domain={[0, "auto"]}
-          tickCount={5}
-          tickFormatter={(v) => fmtCurrency(v, true)}
+          domain={yScale.domain}
+          ticks={yScale.ticks}
+          tickFormatter={fmtAxisCurrency}
         />
         {series.map((s) => (
           <Bar

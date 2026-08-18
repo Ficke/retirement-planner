@@ -28,8 +28,77 @@ const chartYAxisProps = {
   axisLine: false,
   tickMargin: 6,
   width: 56,
-  niceTicks: "snap125",
 } as const
+
+type LinearScale = { domain: [number, number]; ticks: number[] }
+
+const TICK_STEP_MANTISSAS = [1, 2, 2.5, 5] as const
+// Beyond this, a nice round top leaves a visible stripe of empty plot.
+const MAX_TOP_OVERSHOOT = 0.1
+const HEADROOM = 1.04
+
+function candidateSteps(dataMax: number): number[] {
+  const magnitude = 10 ** Math.floor(Math.log10(dataMax))
+  return [magnitude / 10, magnitude, magnitude * 10]
+    .flatMap((scale) => TICK_STEP_MANTISSAS.map((mantissa) => mantissa * scale))
+    .sort((a, b) => a - b)
+}
+
+function ticksUpTo(step: number, count: number): number[] {
+  return Array.from({ length: count + 1 }, (_, i) => Number((step * i).toPrecision(12)))
+}
+
+/**
+ * A zero-based value axis sized to the data. Recharts' own nice ticks snap the
+ * step to a 1/2/5 ladder, which turns $135M of data into a $200M axis.
+ */
+function niceLinearScale(
+  dataMax: number,
+  { targetTicks = 5 }: { targetTicks?: number } = {},
+): LinearScale {
+  if (!Number.isFinite(dataMax) || dataMax <= 0) return { domain: [0, 1], ticks: [0, 1] }
+
+  const minIntervals = Math.max(2, targetTicks - 2)
+  const maxIntervals = targetTicks + 1
+  const steps = candidateSteps(dataMax)
+
+  let best: { step: number; intervals: number; overshoot: number } | null = null
+  for (const step of steps) {
+    const intervals = Math.ceil(dataMax / step)
+    if (intervals < minIntervals || intervals > maxIntervals) continue
+    const overshoot = (intervals * step - dataMax) / dataMax
+    if (!best || overshoot < best.overshoot) best = { step, intervals, overshoot }
+  }
+
+  if (best && best.overshoot <= MAX_TOP_OVERSHOOT) {
+    return {
+      domain: [0, best.step * best.intervals],
+      ticks: ticksUpTo(best.step, best.intervals),
+    }
+  }
+
+  const top = dataMax * HEADROOM
+  const fitted = steps
+    .map((step) => ({ step, intervals: Math.floor(top / step) }))
+    .filter(({ intervals }) => intervals >= minIntervals && intervals <= maxIntervals)
+    .sort((a, b) =>
+      Math.abs(a.intervals - (targetTicks - 1)) - Math.abs(b.intervals - (targetTicks - 1)))[0]
+
+  return {
+    domain: [0, top],
+    ticks: fitted ? ticksUpTo(fitted.step, fitted.intervals) : [0, top],
+  }
+}
+
+/** Round age ticks — decades over a long span, tighter as the span shrinks. */
+function ageTicks(minAge: number, maxAge: number): number[] {
+  if (!Number.isFinite(minAge) || !Number.isFinite(maxAge) || maxAge < minAge) return []
+  const span = maxAge - minAge
+  const step = span > 40 ? 10 : span > 16 ? 5 : span > 8 ? 2 : 1
+  const ticks: number[] = []
+  for (let age = Math.ceil(minAge / step) * step; age <= maxAge; age += step) ticks.push(age)
+  return ticks
+}
 
 export type ChartConfig = Record<
   string,
@@ -393,4 +462,6 @@ export {
   chartGridProps,
   chartXAxisProps,
   chartYAxisProps,
+  niceLinearScale,
+  ageTicks,
 }
