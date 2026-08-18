@@ -380,13 +380,15 @@ are rejected while Cloud Build health/simulation checks pass.
 
 ### Phase 4: Coordinated cutover
 
-- [ ] Take a final Cloudflare and AWS inventory.
-- [ ] Apply one reviewed Terraform plan that replaces the imported legacy apex
+- [x] Take a final Cloudflare and AWS inventory.
+- [x] Apply one reviewed Terraform plan that replaces the imported legacy apex
       record with the proxied placeholder and attaches the apex Worker route.
-- [ ] Replace the imported legacy `www` record with the proxied placeholder and
+- [x] Replace the imported legacy `www` record with the proxied placeholder and
       enable the canonical redirect.
-- [ ] Enable the free simulation WAF rate-limit rule.
-- [ ] Verify TLS, DNS, canonical redirects, cache behavior, security headers,
+- [ ] Enable the free simulation WAF rate-limit rule. A sweep is one batched
+      request, but rapid slider changes at the 300ms debounce could approach 60
+      requests in 10 seconds, so this needs its own apply and observation.
+- [x] Verify TLS, DNS, canonical redirects, cache behavior, security headers,
       origin blocking, and Worker/Cloud Run correlation on the apex.
 - [ ] Run the full application acceptance suite on `adamficke.dev`.
 
@@ -399,13 +401,18 @@ adamficke.com is live on the shared CloudFront distribution, certificate, S3
 buckets, and API Gateway, so none of them are removable. The only resource this
 migration orphans is the Route 53 `adamficke.dev` hosted zone.
 
-- [ ] Confirm the CloudFront distribution no longer receives adamficke.dev
+- [x] Confirm the CloudFront distribution no longer receives adamficke.dev
       traffic.
-- [ ] Optionally delete Route 53 hosted zone `Z00299812665AE6YO4AB6`, which is
-      already non-authoritative. Keep the `adamficke.com` zone.
-- [ ] Remove the temporary staging route and Firebase authorization.
-- [ ] Enable DNSSEC in Cloudflare/Terraform.
-- [ ] Add the generated DS record at Squarespace.
+- [x] Delete Route 53 hosted zone `Z00299812665AE6YO4AB6`. The apex NS and SOA
+      records cannot be deleted individually, so the change batch must exclude
+      them and `delete-hosted-zone` removes them with the zone.
+- [x] Remove the temporary staging route and Firebase authorization.
+- [x] Enable DNSSEC in Cloudflare/Terraform.
+- [ ] Publish the DS record. The registration is mid-transfer to Cloudflare
+      Registrar, so this waits: a DS added at the losing registrar often does not
+      survive the transfer, and a stale DS with no matching key returns SERVFAIL
+      from every validating resolver. Cloudflare publishes it once it holds the
+      registration.
 - [ ] Verify signed delegation and successful DNSSEC validation publicly.
 - [ ] Re-run the critical production smoke checks.
 
@@ -432,6 +439,14 @@ Gate: DNSSEC validates and the production smoke suite remains green.
 - DNSSEC reports a valid signed delegation.
 - adamficke.com still serves correctly over TLS from the shared CloudFront
   distribution, and its certificate's validation records remain resolvable.
+
+## Cached redirects from the legacy site
+
+The CloudFront distribution answered `Host: adamficke.dev` with a permanent
+redirect to `https://adamficke.com/`. Browsers cache a `301` aggressively and
+apply it before any DNS lookup, so anyone who opened the domain before cutover
+keeps being redirected until they clear their HTTP cache. Clearing site data
+does not remove it. Nothing served from the new origin can revoke it.
 
 ## Rollback and stop conditions
 
