@@ -37,9 +37,13 @@ PAYLOAD='{"plan":{"schemaVersion":3,"profile":{"birthDate":"1991-01-01","state":
 attempt=1
 while [ "$attempt" -le "$ATTEMPTS" ]; do
   BODY_FILE=$(mktemp)
-  STATUS=$(curl -s -o "$BODY_FILE" -w '%{http_code}' \
+  set -- -s -o "$BODY_FILE" -w '%{http_code}' \
     -X POST -H 'content-type: application/json' \
-    --data "$PAYLOAD" --max-time 60 "$ENDPOINT" || echo 000)
+    --data "$PAYLOAD" --max-time 60
+  if [ -n "${ORIGIN_SECRET:-}" ]; then
+    set -- "$@" -H "x-retire-plan-origin-secret: $ORIGIN_SECRET"
+  fi
+  STATUS=$(curl "$@" "$ENDPOINT" || echo 000)
 
   if [ "$STATUS" = "200" ]; then
     # Structural, not numeric: assert the engine answered with a result, and

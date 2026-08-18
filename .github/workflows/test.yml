@@ -25,6 +25,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  edge-proxy:
+    name: Edge Proxy Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Worker
+        run: pnpm -C apps/edge-proxy check
+
   test-typescript:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -314,6 +337,12 @@ jobs:
       - name: Validate Terraform
         run: terraform -chdir=terraform validate
 
+      - name: Initialize Cloudflare Terraform without the production backend
+        run: terraform -chdir=terraform/cloudflare init -backend=false -input=false
+
+      - name: Validate Cloudflare Terraform
+        run: terraform -chdir=terraform/cloudflare validate
+
   # The deploy scripts run only in the pipeline, where a failure is expensive
   # and slow to reproduce. Everything else in this workflow gets a linter.
   deploy-scripts:
@@ -364,6 +393,7 @@ jobs:
       - name: Smoke check the running stack
         env:
           SMOKE_ATTEMPTS: 30
+          ORIGIN_SECRET: local-compose-origin-secret
         run: ./scripts/smoke-check.sh http://localhost:3000
 
       - name: Dump container logs

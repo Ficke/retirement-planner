@@ -154,6 +154,17 @@ resource "google_cloud_run_v2_service_iam_member" "web_invokes_rust" {
   member   = "serviceAccount:${module.cloud_run.service_account_email}"
 }
 
+# Cloud Build reads the same immutable origin-secret version mounted by the
+# candidate web revision so its pre-promotion smoke request can authenticate.
+resource "google_secret_manager_secret_iam_member" "cloud_build_origin_secret_accessor" {
+  count = var.enable_cloud_build_trigger ? 1 : 0
+
+  project   = var.project_id
+  secret_id = module.secrets.secret_ids["ORIGIN_SECRET"]
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${element(reverse(split("/", var.cloud_build_service_account)), 0)}"
+}
+
 # Cloud Build trigger for automated deployments (optional)
 resource "google_cloudbuild_trigger" "main_branch" {
   count = var.enable_cloud_build_trigger ? 1 : 0

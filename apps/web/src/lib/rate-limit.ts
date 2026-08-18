@@ -1,3 +1,10 @@
+import { isIP } from 'node:net';
+
+import {
+  ORIGIN_AUTHENTICATED_HEADER,
+  TRUSTED_CLIENT_IP_HEADER,
+} from '@/lib/origin-auth';
+
 /**
  * Simple in-memory rate limiter
  *
@@ -127,17 +134,9 @@ export async function rateLimit(
   return rateLimiter.check(identifier, config.limit, config.windowMs, cost);
 }
 
-/**
- * Cloud Run appends one trusted client address to `x-forwarded-for`. Reading
- * from the right skips any prefix supplied by the caller. Increase this count
- * if another trusted proxy is added in front of Cloud Run.
- */
-const TRUSTED_PROXY_HOPS = 1;
-
 export function getClientIp(headers: Headers): string {
-  const forwardedFor = headers.get('x-forwarded-for');
-  if (!forwardedFor) return 'unknown';
+  if (headers.get(ORIGIN_AUTHENTICATED_HEADER) !== '1') return 'unknown';
 
-  const addresses = forwardedFor.split(',').map((address) => address.trim()).filter(Boolean);
-  return addresses[addresses.length - TRUSTED_PROXY_HOPS] ?? 'unknown';
+  const clientIp = headers.get(TRUSTED_CLIENT_IP_HEADER)?.trim() ?? '';
+  return isIP(clientIp) === 0 ? 'unknown' : clientIp;
 }

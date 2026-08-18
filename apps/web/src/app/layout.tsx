@@ -18,8 +18,12 @@ const geistMono = Geist_Mono({
 
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://adamficke.dev"),
   title: "RetirePlan",
   description: "Modern retirement planning with Monte Carlo simulation",
+  alternates: {
+    canonical: "/",
+  },
 };
 
 export default function RootLayout({
