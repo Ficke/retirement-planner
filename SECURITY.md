@@ -16,6 +16,7 @@ Firebase Auth, verified server-side via the Admin SDK (`lib/firebase/server-auth
 | `/api/profile` | Required | Scoped to `user.id` |
 | `/api/auth/sync-user` | Token required | Verifies the bearer token, and requires a valid invite code before creating a user row. See below |
 | `/api/simulation/monte-carlo`, `/api/simulation/batch` | Firebase ID token | See below |
+| `/api/internal/simulation-probe` | Origin secret only | Deploy-time proof the revision can compute. Unreachable publicly: the edge proxy refuses to forward `/api/internal/`, and the origin demands `ORIGIN_SECRET`. See below |
 | `/healthz` | None | Returns the string `ok`, no I/O. Reachable from inside Cloud Run only — GFE intercepts the path externally |
 
 The app is fully usable signed out. In LOCAL data mode nothing is written
@@ -55,6 +56,23 @@ processed in memory and discarded.
 
 Since accounts are invite-only (`lib/invite-code.ts`), the caller set is bounded
 by codes you hand out rather than by who finds the URL.
+
+### The deploy probe
+
+The pipeline smoke-checks a candidate revision before promoting traffic to it,
+and holds no user credentials, so it cannot use the routes above. It posts to
+`/api/internal/simulation-probe`, which skips auth but validates and clamps the
+payload exactly as the public routes do — it is not an unmetered engine.
+
+Two independent controls keep it off the public internet, and it is only safe
+while **both** hold:
+
+1. The edge proxy answers `/api/internal/` with 404 and never forwards it, so
+   nothing reaching the Worker can touch it.
+2. Going straight at the Cloud Run URL requires `ORIGIN_SECRET`, which the
+   middleware demands and only the Worker and the pipeline hold.
+
+Removing either one exposes an unauthenticated path to the Rust service.
 
 **Known limitation:** the rate limiter is in-process (`lib/rate-limit.ts`), so
 each Cloud Run instance keeps its own counters. At `max_instances = 10` the

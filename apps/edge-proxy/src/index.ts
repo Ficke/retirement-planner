@@ -5,6 +5,7 @@ const ORIGINAL_PROTO_HEADER = 'x-retire-plan-original-proto';
 const REQUEST_ID_HEADER = 'x-retire-plan-request-id';
 
 const STATIC_PATH_PREFIX = '/_next/static/';
+const INTERNAL_PATH_PREFIX = '/api/internal/';
 const NO_STORE = 'no-store';
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 
@@ -187,6 +188,17 @@ export async function handleRequest(
       headers: { 'Cloudflare-CDN-Cache-Control': NO_STORE },
     });
     return responseWithRequestId(failure, requestId);
+  }
+
+  // The deploy pipeline reaches /api/internal/ on the Cloud Run URL directly,
+  // where ORIGIN_SECRET gates it. Nothing behind this Worker may, so refusing
+  // to forward is what keeps the unauthenticated probe off the public internet.
+  if (new URL(request.url).pathname.startsWith(INTERNAL_PATH_PREFIX)) {
+    const blocked = new Response('Not found', {
+      status: 404,
+      headers: { 'Cloudflare-CDN-Cache-Control': NO_STORE },
+    });
+    return responseWithRequestId(blocked, requestId);
   }
 
   const originFetch = dependencies?.originFetch ?? ((originRequest) => fetch(originRequest));

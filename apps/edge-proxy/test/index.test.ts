@@ -191,6 +191,39 @@ describe('edge proxy', () => {
     expect(external.headers.get('location')).toBe('https://accounts.google.com/');
   });
 
+  it('refuses to forward internal paths, so the deploy probe stays unreachable', async () => {
+    const originFetch = vi.fn(async () => new Response('should never be reached'));
+    const ctx = createExecutionContext();
+
+    const response = await handleRequest(
+      new Request('https://adamficke.dev/api/internal/simulation-probe', { method: 'POST', body: '{}' }),
+      testEnv,
+      ctx,
+      dependencies(originFetch),
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(404);
+    expect(originFetch).not.toHaveBeenCalled();
+    expect(response.headers.get('Cloudflare-CDN-Cache-Control')).toBe('no-store');
+  });
+
+  it('still forwards the public simulation routes', async () => {
+    const originFetch = vi.fn(async () => new Response('{}', { status: 401 }));
+    const ctx = createExecutionContext();
+
+    const response = await handleRequest(
+      new Request('https://adamficke.dev/api/simulation/monte-carlo', { method: 'POST', body: '{}' }),
+      testEnv,
+      ctx,
+      dependencies(originFetch),
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(originFetch).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(401);
+  });
+
   it('caches only successful immutable Next static GET responses', async () => {
     let originCalls = 0;
     const deps = dependencies(async () => {

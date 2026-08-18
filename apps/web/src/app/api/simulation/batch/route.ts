@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/firebase/server';
 import { rateLimit } from '@/lib/rate-limit';
-import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
+import { proxyToRustService, simulationProxyError } from '@/lib/simulation-proxy';
 import {
   batchRequestSchema,
   SIMULATION_PATH_RATE_LIMIT,
@@ -56,53 +56,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rustResponse = await fetchRustService('/api/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validation.data),
-      signal: AbortSignal.timeout(60000),
-    });
-
-    if (!rustResponse.ok) {
-      const errorText = await rustResponse.text();
-      console.error(`Rust service error: ${rustResponse.status} ${errorText}`);
-      return NextResponse.json(
-        { error: 'Batch simulation service unavailable', details: `Rust service returned ${rustResponse.status}` },
-        { status: 502 }
-      );
-    }
-
-    return new NextResponse(rustResponse.body, {
-      status: rustResponse.status,
-      headers: { 'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json' },
-    });
+    return await proxyToRustService(
+      '/api/batch',
+      validation.data,
+      60000,
+      'Batch simulation service unavailable',
+    );
   } catch (error) {
     console.error('Batch simulation proxy error:', error);
-
-    if (error instanceof Error) {
-      if (error instanceof RangeError) {
-        return NextResponse.json({ error: error.message }, { status: 413 });
-      }
-      if (error instanceof SyntaxError) {
-        return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
-      }
-      if (error.name === 'AbortError' || error.message.includes('timeout')) {
-        return NextResponse.json(
-          { error: 'Batch simulation timeout', details: 'Request took too long' },
-          { status: 504 }
-        );
-      }
-      if (error instanceof RustServiceUnavailableError) {
-        return NextResponse.json(
-          { error: 'Service unavailable', details: 'Cannot connect to simulation service' },
-          { status: 503 }
-        );
-      }
-    }
-
-    return NextResponse.json(
-      { error: 'Internal server error', details: 'Batch simulation failed' },
-      { status: 500 }
+    return (
+      simulationProxyError(error, 'Batch simulation timeout') ??
+      NextResponse.json(
+        { error: 'Internal server error', details: 'Batch simulation failed' },
+        { status: 500 }
+      )
     );
   }
 }

@@ -48,6 +48,7 @@ import { GET as getAccount } from '@/app/api/accounts/[id]/route';
 import { PUT as saveProfile } from '@/app/api/profile/route';
 import { POST as runBatch } from '@/app/api/simulation/batch/route';
 import { POST as runMonteCarlo } from '@/app/api/simulation/monte-carlo/route';
+import { POST as runProbe } from '@/app/api/internal/simulation-probe/route';
 
 const owner = { id: 'firebase-owner', email: 'owner@example.test', name: null };
 const accountId = '8dc6c282-ffae-4b80-874d-4ee26ecf6604';
@@ -298,6 +299,43 @@ describe('simulation proxy response streaming', () => {
       `simulate:${owner.id}`,
       `simulate-paths:${owner.id}`,
     ]);
+  });
+
+  it('serves the deploy probe without a user, since the pipeline has no credentials', async () => {
+    mocks.getAuthUser.mockResolvedValue(null);
+    mocks.fetchRustService.mockResolvedValue(
+      new Response(JSON.stringify({ successProbability: 0.9, yearlyProjections: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const response = await runProbe(
+      new NextRequest('http://localhost/api/internal/simulation-probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(monteCarloBody),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.fetchRustService).toHaveBeenCalledWith('/api/simulate', expect.anything());
+    await expect(response.json()).resolves.toMatchObject({ successProbability: 0.9 });
+  });
+
+  it('still clamps the probe payload, so it cannot be used as an unmetered engine', async () => {
+    mocks.getAuthUser.mockResolvedValue(null);
+
+    const response = await runProbe(
+      new NextRequest('http://localhost/api/internal/simulation-probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: simulationPlan, config: { paths: 10_000_000, seed: 42 } }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.fetchRustService).not.toHaveBeenCalled();
   });
 
   it('reports an unreachable Rust service as 503 rather than a generic 500', async () => {
