@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ORIGIN_SECRET_HEADER,
+  originSecretCandidates,
   sanitizedOriginHeaders,
   verifyOriginSecret,
 } from '@/lib/origin-auth';
@@ -8,6 +9,7 @@ import {
 export function middleware(request: NextRequest): NextResponse {
   const isHealthCheck = request.nextUrl.pathname === '/healthz';
   const expectedSecret = process.env.ORIGIN_SECRET ?? '';
+  const previousSecret = process.env.ORIGIN_SECRET_PREVIOUS ?? '';
 
   if (isHealthCheck) {
     return NextResponse.next({
@@ -15,7 +17,7 @@ export function middleware(request: NextRequest): NextResponse {
     });
   }
 
-  if (!expectedSecret) {
+  if (originSecretCandidates(expectedSecret, previousSecret).length === 0) {
     if (process.env.NODE_ENV === 'production') {
       return new NextResponse('Service unavailable', { status: 503 });
     }
@@ -28,6 +30,7 @@ export function middleware(request: NextRequest): NextResponse {
   const authenticated = verifyOriginSecret(
     request.headers.get(ORIGIN_SECRET_HEADER),
     expectedSecret,
+    previousSecret,
   );
   if (!authenticated) {
     return new NextResponse('Forbidden', { status: 403 });

@@ -3,6 +3,7 @@ import {
   ORIGIN_AUTHENTICATED_HEADER,
   ORIGIN_SECRET_HEADER,
   TRUSTED_CLIENT_IP_HEADER,
+  originSecretCandidates,
   sanitizedOriginHeaders,
   verifyOriginSecret,
 } from '@/lib/origin-auth';
@@ -17,6 +18,18 @@ describe('verifyOriginSecret', () => {
     );
     expect(verifyOriginSecret(null, 'expected')).toBe(false);
     expect(verifyOriginSecret('', '')).toBe(false);
+  });
+
+  it('accepts either secret while a rotation pair is configured', () => {
+    expect(verifyOriginSecret('incoming', 'incoming', 'outgoing')).toBe(true);
+    expect(verifyOriginSecret('outgoing', 'incoming', 'outgoing')).toBe(true);
+    expect(verifyOriginSecret('retired', 'incoming', 'outgoing')).toBe(false);
+  });
+
+  it('ignores an empty previous secret', () => {
+    expect(originSecretCandidates('current', '')).toEqual(['current']);
+    expect(originSecretCandidates('', '')).toEqual([]);
+    expect(verifyOriginSecret('', 'current', '')).toBe(false);
   });
 });
 

@@ -8,9 +8,24 @@ function digest(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
 }
 
-export function verifyOriginSecret(provided: string | null, expected: string): boolean {
-  if (!provided || !expected) return false;
-  return timingSafeEqual(digest(provided), digest(expected));
+// Accepting the outgoing secret alongside the incoming one lets the Worker and
+// Cloud Run be updated in either order during a rotation, instead of every
+// request failing closed in the window between the two updates.
+export function originSecretCandidates(current: string, previous = ''): string[] {
+  return [current, previous].filter((candidate) => candidate.length > 0);
+}
+
+export function verifyOriginSecret(
+  provided: string | null,
+  current: string,
+  previous = '',
+): boolean {
+  if (!provided) return false;
+  const providedDigest = digest(provided);
+  return originSecretCandidates(current, previous).reduce(
+    (matched, candidate) => timingSafeEqual(providedDigest, digest(candidate)) || matched,
+    false,
+  );
 }
 
 export function sanitizedOriginHeaders(headers: Headers, authenticated: boolean): Headers {
