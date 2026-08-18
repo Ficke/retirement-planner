@@ -162,7 +162,7 @@ Terraform owns:
 - All user-created DNS records in the `adamficke.dev` zone
 - `www` redirect ruleset and its proxied placeholder DNS record
 - WAF rate-limit rule
-- Always Use HTTPS zone setting
+- Always Use HTTPS and minimum TLS version zone settings
 - DNSSEC state
 - Future zone-level WAF and cache rules
 
@@ -221,9 +221,17 @@ Verified 2026-08-17 by read-only inventory.
 - Original nameservers were Route 53. The registrar is Squarespace Domains II LLC.
 - No Worker script, Worker route, or Worker custom domain exists yet, and the
   account has never created a `workers.dev` subdomain.
-- Apex resolves through CNAME flattening to the legacy CloudFront distribution;
-  `www` is an unproxied CNAME to the same distribution.
-- Public DNS shows no MX, TXT, CAA, DS, or DNSKEY records, and no `staging` name.
+- The zone holds exactly four user records, all unproxied CNAMEs at TTL 300:
+  the apex and `www` CloudFront aliases carried over from Route 53, and the two
+  ACM validation records. There are no MX, TXT, CAA, DS, or `staging` records.
+- No entry-point ruleset exists in any phase. Only Cloudflare's managed
+  normalization, free WAF, and DDoS rulesets are present, so the redirect and
+  rate-limit rulesets are created rather than merged.
+- Universal SSL is active for `adamficke.dev` and `*.adamficke.dev`, issued by
+  Google Trust Services with an SSL.com backup pack. That covers both the apex
+  and `staging.adamficke.dev`, which is what the Worker routes rely on.
+- Zone settings: `always_use_https` is off, `ssl` is `full`, and
+  `min_tls_version` is `1.0`.
 - DNSSEC is unsigned. Cloudflare will generate DS values; adding the DS record at
   Squarespace is a required external step.
 - The Wrangler OAuth token carries `zone (read)`, which excludes DNS records,
@@ -278,7 +286,7 @@ issuers, or it blocks that renewal. The zone has none today.
 - [x] Retrieve current Worker types, Wrangler schema, Cloudflare provider
       schema, and official product limits before implementation.
 - [x] Inventory Cloudflare account/zone IDs, Worker resources, and public DNS.
-- [ ] Enumerate every zone DNS record and the redirect and rate-limit phase
+- [x] Enumerate every zone DNS record and the redirect and rate-limit phase
       entry-point rulesets via API.
 - [ ] Inventory GCP service configuration, Secret Manager, IAM, Cloud Build
       service account permissions, and Firebase API-key restrictions.
@@ -287,10 +295,11 @@ issuers, or it blocks that renewal. The zone has none today.
 - [ ] Confirm required credentials are available with least privilege.
 
 Wrangler's OAuth token cannot read DNS records, rulesets, zone settings, or
-DNSSEC, and cannot run Terraform. That work needs an API token scoped to this
-account and zone with Zone:Read, DNS:Edit, Zone Settings:Edit, Zone WAF:Edit,
-Dynamic Redirect:Edit, DNSSEC:Edit, SSL and Certificates:Edit, Workers
-Routes:Edit, and account-level Workers Scripts:Edit.
+DNSSEC; the Cloudflare API MCP server covers the read side. Terraform still
+needs its own API token scoped to this account and zone with Zone:Read,
+DNS:Edit, Zone Settings:Edit, Zone WAF:Edit, Dynamic Redirect:Edit, DNSSEC:Edit,
+SSL and Certificates:Edit, Workers Routes:Edit, and account-level Workers
+Scripts:Edit.
 
 Gate: complete inventories exist, no unexpected DNS/email records are present,
 and no resource proposed for deletion has another consumer.
@@ -307,10 +316,9 @@ and no resource proposed for deletion has another consumer.
 - [x] Update Cloud Build smoke check and IAM for secret access.
 - [x] Add canonical application metadata.
 - [x] Add the gated Cloudflare Terraform root and provider configuration.
-- [ ] Add/import all existing DNS and phase ruleset resources after completing
-      the live Cloudflare inventory. Cloudflare allows one zone entry-point
-      ruleset per phase, so existing rules must be merged rather than added
-      alongside.
+- [x] Add/import all existing DNS and phase ruleset resources after completing
+      the live Cloudflare inventory. The zone has no entry-point ruleset in any
+      phase, so nothing needed merging.
 - [x] Add Worker CI tests and post-merge deployment.
 
 Gate: lint, typecheck, unit tests, application build, Terraform validation, and
@@ -455,3 +463,5 @@ Gate: DNSSEC validates and the production smoke suite remains green.
 - 2026-08-17: Drop `nodejs_compat`; the Worker uses only Web APIs.
 - 2026-08-17: Enable no additional abuse protection initially, and record the
   free-tier request cap as the availability risk it creates.
+- 2026-08-17: Raise the zone's minimum TLS version to 1.2 at cutover, behind its
+  own flag. The zone still accepts TLS 1.0.
