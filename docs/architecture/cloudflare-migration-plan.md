@@ -251,11 +251,26 @@ Verified 2026-08-17 by read-only inventory.
 
 ### GCP
 
-- Live web Cloud Run service is public at its `run.app` URL.
+- Live web Cloud Run service `retire-plan` runs in `us-central1` with ingress
+  `all` and `allUsers` holding `roles/run.invoker`, as the edge proxy requires.
+  It runs as `retire-plan-sa` with a 300-second timeout.
 - Rust Cloud Run service is private and IAM-invoked by the web service.
-- Secret Manager holds `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`;
-  `ORIGIN_SECRET` does not exist yet.
+- Secret Manager holds `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`.
+  `ORIGIN_SECRET` exists in neither Secret Manager nor the deployed revision.
+- The Firebase browser key is restricted to Firebase API targets but carries no
+  HTTP referrer restrictions, so adding them is new hardening rather than a
+  verification. A second key, `OCR`, is scoped to
+  `generativelanguage.googleapis.com` and outlived the feature that used it.
 - The current application and simulation smoke check pass before this work.
+
+### Deploy ordering
+
+The Cloud Build deploy step passes only `--update-env-vars`, so it preserves the
+secret mounts Terraform configures and never adds `ORIGIN_SECRET` itself. Merging the
+origin-enforcement code before the secret exists fails the build when Cloud
+Build resolves `availableSecrets`, and the candidate deploys with `--no-traffic`,
+so production stays on the previous revision rather than serving `503`. Create
+the secret and apply the GCP root before merging.
 
 ## Shared certificate constraint
 
