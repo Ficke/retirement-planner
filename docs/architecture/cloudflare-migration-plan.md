@@ -1,7 +1,7 @@
 # adamficke.dev Cloudflare Migration Plan
 
 Status: approved for implementation  
-Last updated: 2026-08-16  
+Last updated: 2026-08-17  
 Working branch: `codex/set-up-adamfickedev-on-cloudflare`
 
 ## Objective
@@ -68,6 +68,28 @@ Browser
   the URL remains technically available for Cloudflare and Cloud Build.
 - Next.js trusts the Worker-provided client IP only after origin authentication;
   it no longer relies on a fixed forwarded-proxy hop count for Worker traffic.
+- Next.js verifies against a primary secret and an optional fallback, so the two
+  systems can be updated in either order during a rotation.
+
+#### Rotating the origin secret
+
+The Worker and Cloud Run hold the secret in different providers and cannot be
+updated at once. With a single accepted value, every ordering leaves a window
+where the origin rejects all traffic; no sequencing avoids it.
+`ORIGIN_SECRET_PREVIOUS` points at an older version of the same Secret Manager
+secret, so rotation creates no second secret.
+
+1. Add Secret Manager version N+1 without printing the value.
+2. In `production.tfvars`, point `ORIGIN_SECRET` at N+1 and add
+   `ORIGIN_SECRET_PREVIOUS` at N. Apply. The origin now accepts both.
+3. Set `_ORIGIN_SECRET_VERSION` to N+1 so the Cloud Build smoke check sends the
+   new value.
+4. Run `wrangler secret put ORIGIN_SECRET` with the new value. The edge now
+   sends it.
+5. Remove `ORIGIN_SECRET_PREVIOUS`, apply, and disable version N.
+
+Step 5 is not optional. A rotation prompted by disclosure leaves the exposed
+value accepted until it runs.
 
 ### Proxy behavior
 
@@ -103,6 +125,13 @@ Browser
 - Do not add a Worker Rate Limiting binding, Durable Object, KV counter, Redis,
   or another state service.
 
+Workers Free enforces a hard 100,000 request/day cap and cache hits count
+against it. A route has no non-Worker fallback, so exhausting the cap takes the
+site down until the UTC day rolls over. Every page subresource counts, which
+makes `/_next/static/*` a likelier exhaustion path than the simulation API.
+Nothing mitigates this initially; Bot Fight Mode and a zone-wide rate-limit rule
+are the levers if it is ever reached.
+
 ### Observability
 
 - Capture 100% of automatic Worker invocation logs.
@@ -129,9 +158,8 @@ Browser
 Terraform owns:
 
 - Worker container/name
-- Worker custom-domain binding
-- All user-created DNS records in the `adamficke.dev` zone, except the generated
-  apex/staging records owned through Worker custom-domain resources
+- Worker routes and the proxied placeholder records they attach to
+- All user-created DNS records in the `adamficke.dev` zone
 - `www` redirect ruleset and its proxied placeholder DNS record
 - WAF rate-limit rule
 - Always Use HTTPS zone setting
@@ -181,18 +209,66 @@ terraform/cloudflare/  Provider, imported DNS, Worker/domain, redirect, WAF,
 
 ## Current external state
 
+Verified 2026-08-17 by read-only inventory.
+
+### Cloudflare
+
+- Zone `adamficke.dev` is `ff442a4703c379164a642897d97eb3b4`: active, type
+  `full`, Free Website plan, in account `89a75ac95dfa6b01e511aa0f5bb5d9ae`.
 - Cloudflare nameservers are authoritative:
   - `addilyn.ns.cloudflare.com`
   - `leonidas.ns.cloudflare.com`
-- Apex and `www` still resolve to the legacy AWS CloudFront distribution.
-- Public DNS shows no MX, TXT, CAA, DS, or DNSKEY records.
-- Existing DNS TTLs are short: apex 60 seconds, `www` 300 seconds.
-- Domain registrar is Squarespace Domains II LLC.
-- DNSSEC is currently unsigned. Cloudflare will generate DS values; adding the
-  DS record at Squarespace is a required external step.
+- Original nameservers were Route 53. The registrar is Squarespace Domains II LLC.
+- No Worker script, Worker route, or Worker custom domain exists yet, and the
+  account has never created a `workers.dev` subdomain.
+- Apex resolves through CNAME flattening to the legacy CloudFront distribution;
+  `www` is an unproxied CNAME to the same distribution.
+- Public DNS shows no MX, TXT, CAA, DS, or DNSKEY records, and no `staging` name.
+- DNSSEC is unsigned. Cloudflare will generate DS values; adding the DS record at
+  Squarespace is a required external step.
+- The Wrangler OAuth token carries `zone (read)`, which excludes DNS records,
+  rulesets, zone settings, and DNSSEC.
+
+### AWS, account 036558359194
+
+- CloudFront distribution `E2GRHIFQ0MTZD6` serves four aliases: `adamficke.dev`,
+  `www.adamficke.dev`, `adamficke.com`, and `www.adamficke.com`.
+- Its origins are the adamficke.com S3 buckets and API Gateway. adamficke.com is
+  a live site, and adamficke.dev currently serves that same content.
+- ACM certificate `d15bec61-7150-483b-b3da-6c661c66aae9` covers all four
+  hostnames, is in use by that distribution, and expires 2027-02-08.
+- Route 53 hosted zone `Z00299812665AE6YO4AB6` (`adamficke.dev`) is orphaned;
+  Cloudflare is authoritative, so it serves no public traffic.
+- Route 53 hosted zone `Z04479101GOFFRE70OK2D` (`adamficke.com`) is live.
+
+### GCP
+
 - Live web Cloud Run service is public at its `run.app` URL.
 - Rust Cloud Run service is private and IAM-invoked by the web service.
+- Secret Manager holds `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`;
+  `ORIGIN_SECRET` does not exist yet.
 - The current application and simulation smoke check pass before this work.
+
+## Shared certificate constraint
+
+The ACM certificate above is DNS-validated, and its `adamficke.dev` and
+`www.adamficke.dev` validation records live in the Cloudflare zone:
+
+```text
+_902cd09029d8ad858297874316f62745.adamficke.dev
+_08bd04f558179d7741d9e78655159dc0.www.adamficke.dev
+```
+
+ACM re-checks every name on a certificate at managed renewal. Deleting either
+record breaks renewal for the whole certificate and takes the live adamficke.com
+site down when the current one expires. Terraform imports and retains them.
+
+Retiring them requires first removing the two `.dev` aliases from the CloudFront
+distribution and reissuing a `.com`-only certificate. That is optional cleanup
+against a live site, not part of this migration.
+
+A CAA record added to this zone must authorize Amazon alongside Cloudflare's
+issuers, or it blocks that renewal. The zone has none today.
 
 ## Execution phases and gates
 
@@ -201,12 +277,20 @@ terraform/cloudflare/  Provider, imported DNS, Worker/domain, redirect, WAF,
 - [x] Reconfirm clean branch and current `origin/main` ancestry.
 - [x] Retrieve current Worker types, Wrangler schema, Cloudflare provider
       schema, and official product limits before implementation.
-- [ ] Inventory Cloudflare account/zone IDs and all zone records via API.
+- [x] Inventory Cloudflare account/zone IDs, Worker resources, and public DNS.
+- [ ] Enumerate every zone DNS record and the redirect and rate-limit phase
+      entry-point rulesets via API.
 - [ ] Inventory GCP service configuration, Secret Manager, IAM, Cloud Build
       service account permissions, and Firebase API-key restrictions.
-- [ ] Inventory dedicated AWS CloudFront, ACM, Route 53, S3, logging, and related
-      resources without mutating them.
+- [x] Inventory AWS CloudFront, ACM, Route 53, and related resources without
+      mutating them.
 - [ ] Confirm required credentials are available with least privilege.
+
+Wrangler's OAuth token cannot read DNS records, rulesets, zone settings, or
+DNSSEC, and cannot run Terraform. That work needs an API token scoped to this
+account and zone with Zone:Read, DNS:Edit, Zone Settings:Edit, Zone WAF:Edit,
+Dynamic Redirect:Edit, DNSSEC:Edit, SSL and Certificates:Edit, Workers
+Routes:Edit, and account-level Workers Scripts:Edit.
 
 Gate: complete inventories exist, no unexpected DNS/email records are present,
 and no resource proposed for deletion has another consumer.
@@ -224,7 +308,9 @@ and no resource proposed for deletion has another consumer.
 - [x] Add canonical application metadata.
 - [x] Add the gated Cloudflare Terraform root and provider configuration.
 - [ ] Add/import all existing DNS and phase ruleset resources after completing
-      the live Cloudflare inventory.
+      the live Cloudflare inventory. Cloudflare allows one zone entry-point
+      ruleset per phase, so existing rules must be merged rather than added
+      alongside.
 - [x] Add Worker CI tests and post-merge deployment.
 
 Gate: lint, typecheck, unit tests, application build, Terraform validation, and
@@ -234,14 +320,21 @@ or Terraform state.
 ### Phase 3: Bootstrap and deploy
 
 - [ ] Generate the origin secret without printing it.
-- [ ] Store it in Google Secret Manager and Cloudflare Worker secrets.
-- [ ] Add Firebase authorized domains and API-key referrer restrictions.
+- [ ] Store it in Google Secret Manager and grant the runtime and Cloud Build
+      service accounts access.
 - [ ] Deploy the GCP revision with origin enforcement and a secret-aware
       candidate smoke check.
-- [ ] Create the Worker container and deploy the tested Worker version.
+- [ ] Apply Terraform to create the Worker container.
+- [ ] Deploy the tested Worker version with Wrangler.
+- [ ] Set the Worker secret with `wrangler secret put`, which publishes a new
+      version.
+- [ ] Add Firebase authorized domains and API-key referrer restrictions.
 - [ ] Add the narrow GitHub deployment token/account secrets and enable
       `EDGE_DEPLOY_ENABLED` after the initial deployment succeeds.
-- [ ] Bind temporary `staging.adamficke.dev` and validate the real edge path.
+- [ ] Route temporary `staging.adamficke.dev` and validate the real edge path.
+
+The Worker secret cannot be set before the Worker exists, and the Worker returns
+`500` until the secret is present, so that order is deliberate.
 
 Gate: staging passes the full acceptance suite and direct `run.app` requests
 are rejected while Cloud Build health/simulation checks pass.
@@ -249,9 +342,8 @@ are rejected while Cloud Build health/simulation checks pass.
 ### Phase 4: Coordinated cutover
 
 - [ ] Take a final Cloudflare and AWS inventory.
-- [ ] Apply a reviewed Terraform plan removing the imported legacy apex record;
-      then apply a second plan enabling the Worker apex custom domain. The
-      custom-domain resource creates its own DNS record and certificate.
+- [ ] Apply one reviewed Terraform plan that replaces the imported legacy apex
+      record with the proxied placeholder and attaches the apex Worker route.
 - [ ] Replace the imported legacy `www` record with the proxied placeholder and
       enable the canonical redirect.
 - [ ] Enable the free simulation WAF rate-limit rule.
@@ -264,16 +356,21 @@ stop before AWS deletion and repair or roll back the Cloudflare binding/DNS.
 
 ### Phase 5: AWS retirement and DNSSEC
 
-- [ ] Delete only AWS resources proven dedicated to this domain.
-- [ ] Confirm no AWS DNS or distribution continues serving the domain.
-- [ ] Remove temporary staging binding and Firebase authorization.
+adamficke.com is live on the shared CloudFront distribution, certificate, S3
+buckets, and API Gateway, so none of them are removable. The only resource this
+migration orphans is the Route 53 `adamficke.dev` hosted zone.
+
+- [ ] Confirm the CloudFront distribution no longer receives adamficke.dev
+      traffic.
+- [ ] Optionally delete Route 53 hosted zone `Z00299812665AE6YO4AB6`, which is
+      already non-authoritative. Keep the `adamficke.com` zone.
+- [ ] Remove the temporary staging route and Firebase authorization.
 - [ ] Enable DNSSEC in Cloudflare/Terraform.
 - [ ] Add the generated DS record at Squarespace.
 - [ ] Verify signed delegation and successful DNSSEC validation publicly.
 - [ ] Re-run the critical production smoke checks.
 
-Gate: AWS inventory contains no obsolete dedicated resources, DNSSEC validates,
-and the production smoke suite remains green.
+Gate: DNSSEC validates and the production smoke suite remains green.
 
 ## Acceptance criteria
 
@@ -294,12 +391,13 @@ and the production smoke suite remains green.
 - Worker metrics/logs/traces are visible with the approved sampling.
 - Firebase accepts only intended origins and the browser key remains API-scoped.
 - DNSSEC reports a valid signed delegation.
-- Dedicated legacy AWS resources are removed.
+- adamficke.com still serves correctly over TLS from the shared CloudFront
+  distribution, and its certificate's validation records remain resolvable.
 
 ## Rollback and stop conditions
 
-- Before AWS deletion, rollback is a Terraform change restoring the legacy
-  CloudFront DNS records or detaching the Worker custom domain.
+- Rollback is a Terraform change restoring the legacy CloudFront DNS records or
+  removing the Worker route.
 - Worker code can be rolled back to a previous version with Wrangler.
 - Cloud Run can restore traffic to the prior revision, but origin-secret and
   smoke-check compatibility must be considered together.
@@ -312,15 +410,15 @@ and the production smoke suite remains green.
 ## Cost envelope
 
 - Cloudflare Workers Free: $0/month, with a 100,000-request daily hard limit.
-- Cloudflare DNS, custom-domain certificates, redirect, one WAF rate-limit
+- Cloudflare DNS, the zone's universal certificate, redirect, one WAF rate-limit
   rule, Worker secrets, caching, and DNSSEC: $0 incremental at selected usage.
 - Workers logs/traces: $0 within 200,000 events/day and three-day retention.
 - Google Secret Manager: normally $0 within the account's six active-version
   and 10,000-access monthly allowances; otherwise about $0.06 per additional
   active version plus $0.03 per 10,000 excess accesses.
 - GitHub Actions: expected $0 within the repository/account allowance.
-- Removing an unused Route 53 hosted zone may save about $0.50/month; dedicated
-  S3/log storage may add small further savings.
+- Removing the orphaned Route 53 hosted zone may save about $0.50/month. No
+  other AWS resource is removable.
 
 ## Decision log
 
@@ -344,4 +442,16 @@ and the production smoke suite remains green.
   because `run.app` is not a Cloudflare-proxied cache origin.
 - 2026-08-16: Let Worker custom-domain resources own their generated DNS records
   and remove the legacy apex in a separate apply before enabling the apex.
+  Superseded 2026-08-17.
 - 2026-08-16: Manage Always Use HTTPS with Terraform.
+- 2026-08-17: Bind hostnames with Worker routes on proxied placeholder records
+  instead of Worker custom domains, so the apex swaps in a single apply under the
+  zone's universal certificate and reverts by editing one record.
+- 2026-08-17: Keep the shared CloudFront distribution, certificate, S3 buckets,
+  and API Gateway, and retain the two ACM validation records indefinitely.
+  adamficke.com is live on them.
+- 2026-08-17: Verify the origin secret against a primary and an optional
+  fallback so a rotation cannot reject every request mid-way.
+- 2026-08-17: Drop `nodejs_compat`; the Worker uses only Web APIs.
+- 2026-08-17: Enable no additional abuse protection initially, and record the
+  free-tier request cap as the availability risk it creates.
