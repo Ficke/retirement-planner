@@ -380,13 +380,15 @@ are rejected while Cloud Build health/simulation checks pass.
 
 ### Phase 4: Coordinated cutover
 
-- [ ] Take a final Cloudflare and AWS inventory.
-- [ ] Apply one reviewed Terraform plan that replaces the imported legacy apex
+- [x] Take a final Cloudflare and AWS inventory.
+- [x] Apply one reviewed Terraform plan that replaces the imported legacy apex
       record with the proxied placeholder and attaches the apex Worker route.
-- [ ] Replace the imported legacy `www` record with the proxied placeholder and
+- [x] Replace the imported legacy `www` record with the proxied placeholder and
       enable the canonical redirect.
-- [ ] Enable the free simulation WAF rate-limit rule.
-- [ ] Verify TLS, DNS, canonical redirects, cache behavior, security headers,
+- [ ] Enable the free simulation WAF rate-limit rule. A sweep is one batched
+      request, but rapid slider changes at the 300ms debounce could approach 60
+      requests in 10 seconds, so this needs its own apply and observation.
+- [x] Verify TLS, DNS, canonical redirects, cache behavior, security headers,
       origin blocking, and Worker/Cloud Run correlation on the apex.
 - [ ] Run the full application acceptance suite on `adamficke.dev`.
 
@@ -432,6 +434,14 @@ Gate: DNSSEC validates and the production smoke suite remains green.
 - DNSSEC reports a valid signed delegation.
 - adamficke.com still serves correctly over TLS from the shared CloudFront
   distribution, and its certificate's validation records remain resolvable.
+
+## Cached redirects from the legacy site
+
+The CloudFront distribution answered `Host: adamficke.dev` with a permanent
+redirect to `https://adamficke.com/`. Browsers cache a `301` aggressively and
+apply it before any DNS lookup, so anyone who opened the domain before cutover
+keeps being redirected until they clear their HTTP cache. Clearing site data
+does not remove it. Nothing served from the new origin can revoke it.
 
 ## Rollback and stop conditions
 
