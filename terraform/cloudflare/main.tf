@@ -29,6 +29,13 @@ data "cloudflare_zone" "site" {
 resource "cloudflare_worker" "edge" {
   account_id = var.cloudflare_account_id
   name       = var.worker_name
+
+  # Creating the worker records the API's defaults for these, so Terraform
+  # reads whatever wrangler.jsonc deployed as drift and reverts it. Logging and
+  # tracing would switch off on the next unrelated apply.
+  lifecycle {
+    ignore_changes = [observability, subdomain]
+  }
 }
 
 # A route, not a custom domain: a custom domain creates and owns its own DNS
