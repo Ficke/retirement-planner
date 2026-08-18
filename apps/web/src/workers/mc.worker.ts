@@ -1,6 +1,5 @@
 import * as Comlink from 'comlink';
 import type {
-  IncomeSourcesRow,
   OutcomeBucket,
   OutcomeCashFlowRow,
   PathProjection,
@@ -132,16 +131,6 @@ async function runSimulation(
     });
   }
 
-  const incomeSourcesPath: IncomeSourcesRow[] = representative.map((row) => ({
-    age: row.age,
-    isRetired: row.isRetired,
-    socialSecurityBenefit: row.socialSecurityBenefit,
-    withdrawalTaxable: row.withdrawalTaxable,
-    withdrawalTraditional: row.withdrawalTraditional,
-    withdrawalRoth: row.withdrawalRoth,
-    withdrawalHSA: row.withdrawalHSA,
-  }));
-
   const outcomeBuckets: OutcomeBucket[] = OUTCOME_CENTERS.map((centerPercentile) => {
     const lowerPercentile = centerPercentile - 5;
     const upperPercentile = centerPercentile + 5;
@@ -190,7 +179,6 @@ async function runSimulation(
     percentile10TerminalWealth: terminalOutcomes[p10Index].wealth,
     percentile90TerminalWealth: terminalOutcomes[p90Index].wealth,
     yearlyProjections,
-    incomeSourcesPath,
     outcomeBuckets,
     riskOfRuin: 1 - successProbability,
   };

@@ -201,23 +201,6 @@ pub struct YearlyProjection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IncomeSourcesRow {
-    pub age: u32,
-    #[serde(rename = "isRetired")]
-    pub is_retired: bool,
-    #[serde(rename = "socialSecurityBenefit")]
-    pub social_security_benefit: f64,
-    #[serde(rename = "withdrawalTaxable")]
-    pub withdrawal_taxable: f64,
-    #[serde(rename = "withdrawalTraditional")]
-    pub withdrawal_traditional: f64,
-    #[serde(rename = "withdrawalRoth")]
-    pub withdrawal_roth: f64,
-    #[serde(rename = "withdrawalHSA")]
-    pub withdrawal_hsa: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutcomeCashFlowRow {
     pub age: u32,
     #[serde(rename = "isRetired")]
@@ -269,12 +252,6 @@ pub struct SimulationResult {
     /// 1 - success_probability. A path fails when any modeled year is underfunded.
     #[serde(rename = "riskOfRuin")]
     pub risk_of_ruin: f64,
-    #[serde(
-        rename = "incomeSourcesPath",
-        skip_serializing_if = "Vec::is_empty",
-        default
-    )]
-    pub income_sources_path: Vec<IncomeSourcesRow>,
     #[serde(
         rename = "outcomeBuckets",
         skip_serializing_if = "Vec::is_empty",

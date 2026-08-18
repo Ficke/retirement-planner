@@ -16,9 +16,7 @@ import {
   ageTicks,
 } from "@/components/ui/chart";
 import { fmtAxisCurrency, fmtCurrency } from "@/components/retire/format";
-import type { IncomeSourcesRow } from "@/domain/types";
-
-type CashFlowRow = IncomeSourcesRow & { income?: number };
+import type { OutcomeCashFlowRow } from "@/domain/types";
 
 const series = [
   { key: "earnedIncome", label: "Salary", color: "var(--color-account-salary)" },
@@ -37,7 +35,7 @@ export function IncomeSourcesChart({
   projections,
   height = 240,
 }: {
-  projections: CashFlowRow[];
+  projections: OutcomeCashFlowRow[];
   height?: number;
 }) {
   const data = useMemo(
@@ -45,7 +43,7 @@ export function IncomeSourcesChart({
       age: row.age,
       // In retirement `income` is the Social Security benefit, which the
       // benefit series already stacks.
-      earnedIncome: row.isRetired ? 0 : row.income ?? 0,
+      earnedIncome: row.isRetired ? 0 : row.income,
       socialSecurityBenefit: row.socialSecurityBenefit,
       withdrawalTraditional: row.withdrawalTraditional,
       withdrawalTaxable: row.withdrawalTaxable,

@@ -4,9 +4,8 @@ use tracing::info;
 
 use crate::simulation::projection::{project_scenario, project_scenario_summary, ProjectionConfig};
 use crate::types::{
-    BatchSimulationRequest, BatchSimulationSummaryResponse, IncomeSourcesRow, MCConfig,
-    OutcomeBucket, OutcomeCashFlowRow, PathResult, RetirementPlan, SimulationResult,
-    YearlyProjection,
+    BatchSimulationRequest, BatchSimulationSummaryResponse, MCConfig, OutcomeBucket,
+    OutcomeCashFlowRow, PathResult, RetirementPlan, SimulationResult, YearlyProjection,
 };
 
 const OUTCOME_CENTERS: [u32; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
@@ -230,20 +229,6 @@ fn aggregate_results(
         });
     }
 
-    let income_sources_path = representative
-        .projections
-        .iter()
-        .map(|projection| IncomeSourcesRow {
-            age: projection.age,
-            is_retired: projection.is_retired,
-            social_security_benefit: projection.social_security_benefit,
-            withdrawal_taxable: projection.withdrawal_taxable,
-            withdrawal_traditional: projection.withdrawal_traditional,
-            withdrawal_roth: projection.withdrawal_roth,
-            withdrawal_hsa: projection.withdrawal_hsa,
-        })
-        .collect();
-
     let outcome_buckets = OUTCOME_CENTERS
         .into_iter()
         .map(|center_percentile| {
@@ -317,7 +302,6 @@ fn aggregate_results(
         percentile90_terminal_wealth: terminal_outcomes[p90_index].0,
         yearly_projections,
         risk_of_ruin: 1.0 - success_probability,
-        income_sources_path,
         outcome_buckets,
     })
 }
