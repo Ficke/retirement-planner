@@ -348,19 +348,19 @@ or Terraform state.
 
 ### Phase 3: Bootstrap and deploy
 
-- [ ] Generate the origin secret without printing it.
-- [ ] Store it in Google Secret Manager and grant the runtime and Cloud Build
+- [x] Generate the origin secret without printing it.
+- [x] Store it in Google Secret Manager and grant the runtime and Cloud Build
       service accounts access.
 - [ ] Deploy the GCP revision with origin enforcement and a secret-aware
       candidate smoke check.
-- [ ] Apply Terraform to create the Worker container.
-- [ ] Deploy the tested Worker version with Wrangler.
-- [ ] Set the Worker secret with `wrangler secret put`, which publishes a new
+- [x] Apply Terraform to create the Worker container.
+- [x] Deploy the tested Worker version with Wrangler.
+- [x] Set the Worker secret with `wrangler secret put`, which publishes a new
       version.
 - [ ] Add Firebase authorized domains and API-key referrer restrictions.
 - [ ] Add the narrow GitHub deployment token/account secrets and enable
       `EDGE_DEPLOY_ENABLED` after the initial deployment succeeds.
-- [ ] Route temporary `staging.adamficke.dev` and validate the real edge path.
+- [x] Route temporary `staging.adamficke.dev` and validate the real edge path.
 
 The Worker secret cannot be set before the Worker exists, and the Worker returns
 `500` until the secret is present, so that order is deliberate.
