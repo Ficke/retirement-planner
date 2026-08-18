@@ -183,6 +183,12 @@ Wrangler owns:
 `wrangler.jsonc` must not declare routes or custom domains because Terraform
 owns them. Neither tool may manage a resource owned by the other.
 
+Creating `cloudflare_worker` records the API's observability and subdomain
+defaults in state even when the configuration omits them, so Terraform reads
+whatever Wrangler deployed as drift and plans to revert it. Both attributes are
+listed in `ignore_changes` for that reason; removing them switches off logging
+and tracing on the next apply.
+
 ### Repository and state layout
 
 ```text
