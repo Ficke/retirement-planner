@@ -31,24 +31,52 @@ resource "cloudflare_worker" "edge" {
   name       = var.worker_name
 }
 
-# A custom domain creates and owns its DNS record and certificate. Do not add a
-# competing apex/staging cloudflare_dns_record resource.
-resource "cloudflare_workers_custom_domain" "staging" {
-  count      = var.enable_staging_domain ? 1 : 0
-  account_id = var.cloudflare_account_id
-  hostname   = "staging.${var.zone_name}"
-  service    = cloudflare_worker.edge.name
-  zone_id    = data.cloudflare_zone.site.id
-  zone_name  = var.zone_name
+# A route, not a custom domain: a custom domain creates and owns its own DNS
+# record, so binding the apex would mean destroying the legacy record in one
+# apply and waiting on certificate issuance in the next. A route attached to a
+# proxied placeholder swaps in a single apply under the zone's existing
+# universal certificate, and rolls back by reverting one record.
+#
+# 192.0.2.0 is RFC 5737 documentation space, so a request that reaches the
+# placeholder instead of the Worker fails closed rather than hitting a live host.
+resource "cloudflare_dns_record" "staging_placeholder" {
+  count   = var.enable_staging_worker ? 1 : 0
+  zone_id = data.cloudflare_zone.site.id
+  name    = "staging.${var.zone_name}"
+  type    = "A"
+  content = "192.0.2.0"
+  ttl     = 1
+  proxied = true
+  comment = "Originless placeholder for the edge proxy Worker route"
 }
 
-resource "cloudflare_workers_custom_domain" "apex" {
-  count      = var.enable_apex_domain ? 1 : 0
-  account_id = var.cloudflare_account_id
-  hostname   = var.zone_name
-  service    = cloudflare_worker.edge.name
-  zone_id    = data.cloudflare_zone.site.id
-  zone_name  = var.zone_name
+resource "cloudflare_workers_route" "staging" {
+  count   = var.enable_staging_worker ? 1 : 0
+  zone_id = data.cloudflare_zone.site.id
+  pattern = "staging.${var.zone_name}/*"
+  script  = cloudflare_worker.edge.name
+
+  depends_on = [cloudflare_dns_record.staging_placeholder]
+}
+
+resource "cloudflare_dns_record" "apex_placeholder" {
+  count   = var.enable_apex_worker ? 1 : 0
+  zone_id = data.cloudflare_zone.site.id
+  name    = var.zone_name
+  type    = "A"
+  content = "192.0.2.0"
+  ttl     = 1
+  proxied = true
+  comment = "Originless placeholder for the edge proxy Worker route"
+}
+
+resource "cloudflare_workers_route" "apex" {
+  count   = var.enable_apex_worker ? 1 : 0
+  zone_id = data.cloudflare_zone.site.id
+  pattern = "${var.zone_name}/*"
+  script  = cloudflare_worker.edge.name
+
+  depends_on = [cloudflare_dns_record.apex_placeholder]
 }
 
 resource "cloudflare_dns_record" "www_placeholder" {

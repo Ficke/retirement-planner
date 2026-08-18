@@ -15,14 +15,14 @@ variable "worker_name" {
   default     = "retire-plan-edge"
 }
 
-variable "enable_staging_domain" {
-  description = "Attach the temporary staging custom domain"
+variable "enable_staging_worker" {
+  description = "Route the temporary staging hostname to the edge proxy Worker"
   type        = bool
   default     = false
 }
 
-variable "enable_apex_domain" {
-  description = "Attach the canonical apex custom domain"
+variable "enable_apex_worker" {
+  description = "Route the canonical apex to the edge proxy Worker"
   type        = bool
   default     = false
 }
