@@ -363,7 +363,11 @@ or Terraform state.
 - [x] Deploy the tested Worker version with Wrangler.
 - [x] Set the Worker secret with `wrangler secret put`, which publishes a new
       version.
-- [ ] Add Firebase authorized domains and API-key referrer restrictions.
+- [x] Add Firebase authorized domains.
+- [ ] Add API-key referrer restrictions. The browser key carries none today,
+      so this is new hardening: the list must cover `localhost`, the `run.app`
+      URL, both new hostnames, and `firebaseapp.com`, where the auth handler
+      runs during popup and redirect flows.
 - [ ] Add the narrow GitHub deployment token/account secrets and enable
       `EDGE_DEPLOY_ENABLED` after the initial deployment succeeds.
 - [x] Route temporary `staging.adamficke.dev` and validate the real edge path.
