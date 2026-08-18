@@ -50,3 +50,15 @@ variable "enable_dnssec" {
   type        = bool
   default     = false
 }
+
+variable "legacy_origin_hostname" {
+  description = "CloudFront distribution the apex and www records point at before cutover"
+  type        = string
+  default     = "d1isufjlbv5d7m.cloudfront.net"
+}
+
+variable "enable_tls_hardening" {
+  description = "Raise the zone's minimum TLS version to 1.2"
+  type        = bool
+  default     = false
+}

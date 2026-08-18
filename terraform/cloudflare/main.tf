@@ -59,15 +59,18 @@ resource "cloudflare_workers_route" "staging" {
   depends_on = [cloudflare_dns_record.staging_placeholder]
 }
 
-resource "cloudflare_dns_record" "apex_placeholder" {
-  count   = var.enable_apex_worker ? 1 : 0
+# One resource per hostname rather than a legacy record and a placeholder
+# gated on opposite counts: Cloudflare rejects a CNAME and an A record on the
+# same name, so two resources could collide if Terraform created the
+# replacement before destroying the original.
+resource "cloudflare_dns_record" "apex" {
   zone_id = data.cloudflare_zone.site.id
   name    = var.zone_name
-  type    = "A"
-  content = "192.0.2.0"
-  ttl     = 1
-  proxied = true
-  comment = "Originless placeholder for the edge proxy Worker route"
+  type    = var.enable_apex_worker ? "A" : "CNAME"
+  content = var.enable_apex_worker ? "192.0.2.0" : var.legacy_origin_hostname
+  ttl     = var.enable_apex_worker ? 1 : 300
+  proxied = var.enable_apex_worker
+  comment = var.enable_apex_worker ? "Originless placeholder for the edge proxy Worker route" : "Migrated from Route 53 CloudFront alias"
 }
 
 resource "cloudflare_workers_route" "apex" {
@@ -76,18 +79,41 @@ resource "cloudflare_workers_route" "apex" {
   pattern = "${var.zone_name}/*"
   script  = cloudflare_worker.edge.name
 
-  depends_on = [cloudflare_dns_record.apex_placeholder]
+  depends_on = [cloudflare_dns_record.apex]
 }
 
-resource "cloudflare_dns_record" "www_placeholder" {
-  count   = var.enable_www_redirect ? 1 : 0
+resource "cloudflare_dns_record" "www" {
   zone_id = data.cloudflare_zone.site.id
   name    = "www.${var.zone_name}"
-  type    = "A"
-  content = "192.0.2.0"
-  ttl     = 1
-  proxied = true
-  comment = "Originless placeholder for www-to-apex redirect"
+  type    = var.enable_www_redirect ? "A" : "CNAME"
+  content = var.enable_www_redirect ? "192.0.2.0" : var.legacy_origin_hostname
+  ttl     = var.enable_www_redirect ? 1 : 300
+  proxied = var.enable_www_redirect
+  comment = var.enable_www_redirect ? "Originless placeholder for www-to-apex redirect" : "Migrated from Route 53 CloudFront alias"
+}
+
+# ACM revalidates every name on a certificate at managed renewal, and the
+# certificate these prove also carries adamficke.com, which is live. Deleting
+# either record breaks that renewal and takes adamficke.com down when the
+# current certificate expires.
+resource "cloudflare_dns_record" "acm_validation_apex" {
+  zone_id = data.cloudflare_zone.site.id
+  name    = "_902cd09029d8ad858297874316f62745.${var.zone_name}"
+  type    = "CNAME"
+  content = "_c1fe8451324bcaa3d03bb6095894da8d.jkddzztszm.acm-validations.aws"
+  ttl     = 300
+  proxied = false
+  comment = "AWS ACM certificate validation"
+}
+
+resource "cloudflare_dns_record" "acm_validation_www" {
+  zone_id = data.cloudflare_zone.site.id
+  name    = "_08bd04f558179d7741d9e78655159dc0.www.${var.zone_name}"
+  type    = "CNAME"
+  content = "_817f77192fb91675427c19130022e780.jkddzztszm.acm-validations.aws"
+  ttl     = 300
+  proxied = false
+  comment = "AWS ACM certificate validation"
 }
 
 resource "cloudflare_ruleset" "www_redirect" {
@@ -115,7 +141,7 @@ resource "cloudflare_ruleset" "www_redirect" {
     }
   }]
 
-  depends_on = [cloudflare_dns_record.www_placeholder]
+  depends_on = [cloudflare_dns_record.www]
 }
 
 resource "cloudflare_ruleset" "simulation_rate_limit" {
@@ -146,6 +172,13 @@ resource "cloudflare_zone_setting" "always_use_https" {
   zone_id    = data.cloudflare_zone.site.id
   setting_id = "always_use_https"
   value      = "on"
+}
+
+resource "cloudflare_zone_setting" "min_tls_version" {
+  count      = var.enable_tls_hardening ? 1 : 0
+  zone_id    = data.cloudflare_zone.site.id
+  setting_id = "min_tls_version"
+  value      = "1.2"
 }
 
 resource "cloudflare_zone_dnssec" "site" {
