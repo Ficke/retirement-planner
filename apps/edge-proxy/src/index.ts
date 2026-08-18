@@ -25,6 +25,11 @@ function protectedRequestHeader(name: string): boolean {
     lower.startsWith('forwarded') ||
     lower.startsWith('x-forwarded-') ||
     lower.startsWith('x-retire-plan-') ||
+    // Next.js has treated x-middleware-* as internal routing state, and a
+    // forged x-middleware-subrequest once skipped middleware entirely
+    // (CVE-2025-29927). Origin authentication runs there, so a bypass is a
+    // full bypass.
+    lower.startsWith('x-middleware-') ||
     lower === 'host' ||
     lower === 'true-client-ip' ||
     lower === 'x-real-ip' ||
@@ -111,6 +116,7 @@ function safeResponseHeaders(
       lower.startsWith('x-retire-plan-') ||
       lower.startsWith('x-cloud-') ||
       lower === 'server' ||
+      lower === 'x-powered-by' ||
       lower === 'via' ||
       lower === 'alt-svc' ||
       lower === 'x-request-id'

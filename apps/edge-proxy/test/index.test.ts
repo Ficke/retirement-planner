@@ -69,6 +69,7 @@ describe('edge proxy', () => {
           'x-real-ip': '5.6.7.8',
           'x-retire-plan-origin-secret': 'spoofed',
           'x-retire-plan-client-ip': '9.9.9.9',
+          'x-middleware-subrequest': 'middleware',
         },
       }),
       testEnv,
@@ -85,7 +86,33 @@ describe('edge proxy', () => {
     expect(observedHeaders.has('x-forwarded-for')).toBe(false);
     expect(observedHeaders.has('x-real-ip')).toBe(false);
     expect(observedHeaders.has('cf-connecting-ip')).toBe(false);
+    expect(observedHeaders.has('x-middleware-subrequest')).toBe(false);
     expect(observedHeaders.get('x-retire-plan-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('removes headers identifying the origin stack', async () => {
+    const deps = dependencies(
+      async () =>
+        new Response('ok', {
+          headers: {
+            'x-powered-by': 'Next.js',
+            server: 'Google Frontend',
+            'x-cloud-trace-context': 'abc/123',
+          },
+        }),
+    );
+    const ctx = createExecutionContext();
+
+    const response = await handleRequest(
+      new Request('https://staging.adamficke.dev/'),
+      testEnv,
+      ctx,
+      deps,
+    );
+
+    expect(response.headers.has('x-powered-by')).toBe(false);
+    expect(response.headers.has('server')).toBe(false);
+    expect(response.headers.has('x-cloud-trace-context')).toBe(false);
   });
 
   it('streams non-GET request bodies and performs exactly one manual origin fetch', async () => {
