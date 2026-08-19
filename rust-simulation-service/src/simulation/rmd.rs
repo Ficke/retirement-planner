@@ -4,11 +4,14 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 /// SECURE/SECURE 2.0 applicable age by birth cohort.
-/// The annual model represents the pre-2020 age-70½ cohort as age 70.
+///
+/// The published Uniform Lifetime Table starts at 72, so the pre-2020 age-70½
+/// cohort is floored there rather than modeled at 70. Everyone in that cohort is
+/// well past both ages, so no reachable plan is affected — and the floor keeps
+/// this function from returning an age `calculate_rmd` has no factor for.
 pub fn get_rmd_start_age(birth_year: i32) -> u32 {
     match birth_year {
-        ..=1948 => 70,
-        1949..=1950 => 72,
+        ..=1950 => 72,
         1951..=1959 => 73,
         _ => 75,
     }
@@ -79,10 +82,13 @@ pub fn calculate_rmd(previous_year_end_balance: f64, age: u32, applicable_age: u
         return 0.0;
     }
 
+    // Ages past the table's end keep its final factor; ages below its start have
+    // no factor at all, and inventing one would distribute a plausible-looking
+    // wrong amount instead of failing.
     let distribution_factor = RMD_UNIFORM_LIFETIME_TABLE
         .get(&age.min(120))
         .copied()
-        .unwrap_or(2.0); // Fallback for ages beyond table
+        .unwrap_or_else(|| panic!("No RMD distribution factor for age {age}"));
 
     previous_year_end_balance / distribution_factor
 }
@@ -121,10 +127,21 @@ mod tests {
     }
 
     #[test]
-    fn test_rmd_beyond_table() {
-        // Age 121 should use fallback factor of 2.0
+    fn ages_past_the_table_keep_its_final_factor() {
+        // 121 clamps to 120, whose factor is 2.0.
         let rmd = calculate_rmd(100000.0, 121, 73);
         assert_eq!(rmd, 50000.0);
+    }
+
+    #[test]
+    fn start_age_never_precedes_the_table() {
+        for birth_year in [1900, 1948, 1950, 1951, 1959, 1960, 2000] {
+            let start = get_rmd_start_age(birth_year);
+            assert!(
+                RMD_UNIFORM_LIFETIME_TABLE.contains_key(&start),
+                "no factor for applicable age {start} (birth year {birth_year})"
+            );
+        }
     }
 
     #[test]

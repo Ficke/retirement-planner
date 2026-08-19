@@ -62,8 +62,20 @@ export const MONTE_CARLO_DEFAULTS = {
   paths: 5000,
   // Block bootstrap preserves multi-year sequences such as 2008 → 2009.
   use_historical_bootstrap: true,
-  block_size: 3,
+  // Long enough to carry a multi-year regime rather than a single crash year.
+  // Longer blocks trade sampling diversity for that, so this sits near the
+  // n^(1/3) heuristic for a 98-year dataset.
+  block_size: 5,
 } as const;
+
+/**
+ * All-in annual portfolio cost, subtracted from the realized return before it
+ * reaches a balance. The historical series are gross index returns, so without
+ * this every projection quietly assumes a free portfolio.
+ *
+ * Mirrored in rust-simulation-service/src/simulation/projection.rs.
+ */
+export const ANNUAL_PORTFOLIO_FEE = 0.001;
 
 /**
  * Convert arithmetic mean/vol to log-space parameters so that:

@@ -20,6 +20,13 @@ use crate::types::{
     State, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
+/// All-in annual portfolio cost, subtracted from the realized return before it
+/// reaches a balance. The historical series are gross index returns, so without
+/// this every projection quietly assumes a free portfolio.
+///
+/// Mirrored from ANNUAL_PORTFOLIO_FEE in apps/web/src/data/market-history.ts.
+const ANNUAL_PORTFOLIO_FEE: f64 = 0.001;
+
 const BUCKET_ORDER: [AccountType; 4] = [
     AccountType::Taxable,
     AccountType::Traditional,
@@ -320,7 +327,8 @@ fn project_scenario_internal(
 
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
-                    + account.asset_weights.bonds * bond_return;
+                    + account.asset_weights.bonds * bond_return
+                    - ANNUAL_PORTFOLIO_FEE;
 
                 let effective_return = if year == 0 {
                     account_return * remaining_year_fraction
@@ -492,7 +500,8 @@ fn project_scenario_internal(
             // Apply returns to each account
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
-                    + account.asset_weights.bonds * bond_return;
+                    + account.asset_weights.bonds * bond_return
+                    - ANNUAL_PORTFOLIO_FEE;
 
                 let effective_return = if year == 0 {
                     account_return * remaining_year_fraction

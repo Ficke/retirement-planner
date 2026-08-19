@@ -6,10 +6,13 @@
 
 /**
  * SECURE/SECURE 2.0 applicable age by birth cohort.
- * The model is annual, so the pre-2020 age-70½ cohort is represented as age 70.
+ *
+ * The published Uniform Lifetime Table starts at 72, so the pre-2020 age-70½
+ * cohort is floored there rather than modeled at 70. Everyone in that cohort is
+ * well past both ages, so no reachable plan is affected — and the floor keeps
+ * this function from returning an age `calculateRmd` has no factor for.
  */
 export function getRmdStartAge(birthYear: number): number {
-  if (birthYear <= 1948) return 70;
   if (birthYear <= 1950) return 72;
   if (birthYear <= 1959) return 73;
   return 75;

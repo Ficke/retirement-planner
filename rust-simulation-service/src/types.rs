@@ -279,7 +279,7 @@ fn default_use_historical_bootstrap() -> bool {
     true
 }
 fn default_block_size() -> usize {
-    3
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

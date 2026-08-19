@@ -16,7 +16,11 @@ import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { ageOn, birthYearOf } from '@/domain/age';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
-import { MONTE_CARLO_DEFAULTS, generateCorrelatedReturns } from '@/data/market-history';
+import {
+  ANNUAL_PORTFOLIO_FEE,
+  MONTE_CARLO_DEFAULTS,
+  generateCorrelatedReturns,
+} from '@/data/market-history';
 import seedrandom from 'seedrandom';
 
 type ProjectionAccount = SimulationAccount & { isSurplusCash: boolean };
@@ -225,7 +229,8 @@ function projectScenarioInternal(
       for (const account of accountBalances) {
         const accountReturn =
           account.assetWeights.stocks * yearlyReturns.stockReturn +
-          account.assetWeights.bonds * yearlyReturns.bondReturn;
+          account.assetWeights.bonds * yearlyReturns.bondReturn
+          - ANNUAL_PORTFOLIO_FEE;
 
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         account.balance *= (1 + effectiveReturn);
@@ -362,7 +367,8 @@ function projectScenarioInternal(
       for (const account of accountBalances) {
         const accountReturn =
           account.assetWeights.stocks * yearlyReturns.stockReturn +
-          account.assetWeights.bonds * yearlyReturns.bondReturn;
+          account.assetWeights.bonds * yearlyReturns.bondReturn
+          - ANNUAL_PORTFOLIO_FEE;
 
         const effectiveReturn = year === 0 ? accountReturn * remainingYearFraction : accountReturn;
         account.balance *= (1 + effectiveReturn);

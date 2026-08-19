@@ -34,10 +34,20 @@ describe('RMD Calculation', () => {
       expect(result).toBeCloseTo(expected, 2);
     });
 
-    it('should use fallback factor for ages beyond table', () => {
+    it('keeps the table\'s final factor for ages past its end', () => {
       const result = calculateRmd(100000, 125);
-      const expected = 100000 / 2.0; // Fallback factor
-      expect(result).toBeCloseTo(expected, 2);
+      expect(result).toBeCloseTo(100000 / 2.0, 2);
+    });
+
+    it('refuses an age the table has no factor for', () => {
+      expect(() => calculateRmd(100000, 70, 70)).toThrow(RangeError);
+    });
+
+    it('never starts a cohort before the table does', () => {
+      for (const birthYear of [1900, 1948, 1950, 1951, 1959, 1960, 2000]) {
+        const startAge = getRmdStartAge(birthYear);
+        expect(() => calculateRmd(100000, startAge, startAge)).not.toThrow();
+      }
     });
   });
 
