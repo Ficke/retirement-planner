@@ -54,12 +54,9 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 test('Plan includes income outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
-  // Exercise the worker response directly; a separately deployed cloud engine
-  // may still be on the previous additive response shape during rollout.
-  await navItem(page, 'Settings').click();
-  await page.getByRole('combobox').click();
-  await page.getByRole('option', { name: 'Local (never leaves device)' }).click();
-  await navItem(page, 'Plan').click();
+  // Exercises the worker response directly: a separately deployed cloud engine
+  // may still be on the previous additive response shape during rollout. Signed
+  // out there is nothing to switch — cloud compute needs an account.
 
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });
@@ -107,6 +104,12 @@ test('signed out, the app runs in local mode and offers sign-in', async ({ page 
   await navItem(page, 'Settings').click();
   // The storage badge reflects LOCAL mode when there is no auth user.
   await expect(page.getByText('This browser', { exact: true })).toBeVisible();
+
+  // Cloud compute needs an account, so signed out there is no engine to pick
+  // between — offering the choice would advertise a mode that cannot run.
+  await expect(page.getByText('Local', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox')).toHaveCount(0);
+  await expect(page.getByText('Cloud (fast, nothing stored)')).toHaveCount(0);
 });
 
 test('an account can be added locally and Plan remains reachable', async ({ page }) => {
