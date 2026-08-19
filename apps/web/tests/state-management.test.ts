@@ -90,6 +90,7 @@ describe('State Management - Simple Invalidation Logic', () => {
   it('migrates legacy spending fields into explicit working and retirement phases', () => {
     const migrated = hydratePlan({
       birthDate: '1986-01-01',
+      retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       asOfDate: '2026-01-01',
       currentSpending: 48_000,
       desiredSpending: 60_000,

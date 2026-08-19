@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 3;
+pub const PLAN_SCHEMA_VERSION: u32 = 4;
+
+/// Medicare eligibility, which is where retirement premiums step down.
+pub const MEDICARE_AGE: u32 = 65;
 
 /// Version that introduced phase-based spending. Older requests carry a flat
 /// working amount and compound retirement growth from the as-of year. Gating
@@ -81,8 +84,30 @@ pub struct UserProfile {
     pub retirement_spending_growth_rate: f64,
     #[serde(rename = "lifeExpectancy")]
     pub life_expectancy: u32,
+    /// Healthcare in retirement, carried separately from `current_spending`
+    /// because it steps down at Medicare and grows faster than everything else.
+    #[serde(rename = "retirementHealthcare", default)]
+    pub retirement_healthcare: RetirementHealthcare,
     #[serde(rename = "asOfDate")]
     pub as_of_date: String,
+}
+
+/// Retirement healthcare, which is a step at Medicare eligibility rather than a
+/// share of spending. Premiums and out-of-pocket costs are separate because
+/// Medicare, and later any subsidy or surcharge, moves only the premium.
+///
+/// All figures are household totals in real dollars. A request that predates
+/// this field gets zeros, which reproduces the projection it would have had.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RetirementHealthcare {
+    #[serde(rename = "preMedicarePremium", default)]
+    pub pre_medicare_premium: f64,
+    #[serde(rename = "medicarePremium", default)]
+    pub medicare_premium: f64,
+    #[serde(rename = "outOfPocket", default)]
+    pub out_of_pocket: f64,
+    #[serde(rename = "realGrowthRate", default)]
+    pub real_growth_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

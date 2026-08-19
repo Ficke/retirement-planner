@@ -170,7 +170,7 @@ describe('Withdrawal Logic', () => {
     // Use the imported projectScenario function
     
     const plan = {
-      schemaVersion: 3 as const,
+      schemaVersion: 4 as const,
       profile: {
         birthDate: '1958-01-01',
         retirementAge: 67,
@@ -183,6 +183,7 @@ describe('Withdrawal Logic', () => {
         retirementSpendingGrowthRate: 0,
         filingStatus: 'Single' as FilingStatus,
         state: 'CA' as const,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01'
       },
       accounts,

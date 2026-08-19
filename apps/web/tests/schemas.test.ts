@@ -57,7 +57,7 @@ describe('Domain Schemas', () => {
     expect(migrated).toEqual([account]);
     saveLocalAccounts(migrated!, null);
     expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       accounts: [account],
     });
   });
@@ -93,6 +93,7 @@ describe('Domain Schemas', () => {
         desiredSpending: 60_000,
         spendingGrowthRate: 0.01,
         lifeExpectancy: 90,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2026-01-01',
       },
       socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
@@ -124,6 +125,7 @@ describe('Domain Schemas', () => {
         retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       accounts: [
@@ -166,6 +168,7 @@ describe('Domain Schemas', () => {
         retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       accounts: [],
@@ -189,6 +192,7 @@ describe('Domain Schemas', () => {
         retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-06-30',
       },
       accounts: [createTestAccount({ type: 'Traditional', balance: 500_000 })],
@@ -212,6 +216,7 @@ describe('Domain Schemas', () => {
         retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-06-30',
       },
       accounts: [createTestAccount({ type: 'Traditional', balance: 500_000 })],
@@ -239,6 +244,7 @@ describe('Domain Schemas', () => {
         retirementSpendingMultiplier: 1,
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       accounts: [

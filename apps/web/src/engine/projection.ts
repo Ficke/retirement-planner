@@ -17,6 +17,7 @@ import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { ageOn, birthYearOf } from '@/domain/age';
+import { MEDICARE_AGE } from '@/domain/constants';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import {
   ANNUAL_PORTFOLIO_FEE,
@@ -31,6 +32,37 @@ const BUCKET_ORDER: AccountType[] = ['Taxable', 'Traditional', 'Roth', 'HSA'];
 
 /** Cash tolerance, in dollars, below which a shortfall is considered funded. */
 const SHORTFALL_TOLERANCE = 1;
+
+/** Traditional money taken before 59½ owes this on top of ordinary income. */
+const EARLY_TRADITIONAL_PENALTY_RATE = 0.10;
+const TRADITIONAL_PENALTY_AGE = 60;
+
+/** An HSA distribution that is not for medical care, taken before 65. */
+const NON_QUALIFIED_HSA_PENALTY_RATE = 0.20;
+
+/**
+ * Retirement healthcare for one year: premiums step down at Medicare, while
+ * out-of-pocket cost barely moves across that line.
+ *
+ * `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
+ * not on that list — HSAs cover premiums only for COBRA, coverage during
+ * unemployment, Medicare, and long-term care — so folding them in would hand an
+ * early retiree a large tax break they do not have.
+ */
+function healthcareCostFor(
+  healthcare: SimulationPlan['profile']['retirementHealthcare'],
+  age: number,
+  yearsRetired: number,
+): { total: number; qualified: number } {
+  const growth = Math.pow(1 + healthcare.realGrowthRate, Math.max(0, yearsRetired));
+  const onMedicare = age >= MEDICARE_AGE;
+  const premium = onMedicare ? healthcare.medicarePremium : healthcare.preMedicarePremium;
+  const outOfPocket = healthcare.outOfPocket;
+  return {
+    total: (premium + outOfPocket) * growth,
+    qualified: (outOfPocket + (onMedicare ? premium : 0)) * growth,
+  };
+}
 
 /** Drain buckets in the withdrawal order until `amount` is raised or nothing is left. */
 function withdrawInOrder(accounts: ProjectionAccount[], amount: number) {
@@ -176,6 +208,8 @@ function projectScenarioInternal(
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
   
   let previousYearTraditionalBalance = 0;
+  /** Medical cost the HSA may still reimburse tax-free, carried year to year. */
+  let hsaQualifiedAllowance = 0;
   const rng = createRNG(config.seed);
   const returnsGenerator = createMarketReturnsGenerator(plan, rng);
   
@@ -213,6 +247,7 @@ function projectScenarioInternal(
     let depositRothYear = 0;
     let depositHSAYear = 0;
     let insufficientFundsYear = false;
+    let healthcareCostYear = 0;
     
     if (!isRetired) {
       // Working phase saves the residual: gross income less taxes and spending.
@@ -279,6 +314,7 @@ function projectScenarioInternal(
       // remainder left over is what decides whether the year was funded.
       let shortfallPrincipal = 0;
       let shortfallGains = 0;
+      let workingPenalties = 0;
       for (let pass = 0; pass < 12; pass++) {
         const remaining = Math.max(
           0,
@@ -291,7 +327,11 @@ function projectScenarioInternal(
         withdrawalTraditionalYear += drawn.traditional;
         withdrawalRothYear += drawn.roth;
         withdrawalHSAYear += drawn.hsa;
-        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa;
+        // Traditional is credited as income by the tax call below; the other
+        // buckets are principal. A penalty is cash out the door either way, so
+        // it comes off what the draw actually raised.
+        workingPenalties += penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
+        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa - workingPenalties;
         shortfallGains += drawn.taxable * taxableGainRatio;
         workingCashFlow = calculateWorkingCashFlow({
           grossIncome: annualSalary,
@@ -301,7 +341,9 @@ function projectScenarioInternal(
           taxYear,
           policy,
           other: {
-            ordinary: withdrawalTraditionalYear / periodFraction,
+            // A working-year HSA draw is not paying a modeled medical cost, so
+            // it is an ordinary distribution rather than a tax-free one.
+            ordinary: (withdrawalTraditionalYear + withdrawalHSAYear) / periodFraction,
             qualified: shortfallGains / periodFraction,
           },
         });
@@ -319,7 +361,7 @@ function projectScenarioInternal(
       insufficientFundsYear = unfunded > SHORTFALL_TOLERANCE;
       income = annualSalary * periodFraction;
       spending = annualWorkingSpending * periodFraction - Math.max(0, unfunded);
-      taxes = taxResult.totalTax * periodFraction;
+      taxes = taxResult.totalTax * periodFraction + workingPenalties;
 
       // The residual is fully invested, so the buckets receive all of it and
       // nothing is left unallocated. First year prorates like every other flow.
@@ -355,9 +397,20 @@ function projectScenarioInternal(
       // Already-retired plans also start at exponent zero on their as-of date.
       const retirementStartYear = Math.max(0, profile.retirementAge - age);
       const yearsRetired = year - retirementStartYear;
+      const healthcare = healthcareCostFor(
+        profile.retirementHealthcare,
+        currentAge,
+        yearsRetired,
+      );
+      healthcareCostYear = healthcare.total * retirementPeriodFraction;
+      // Medical spending is what an HSA can cover tax-free, and the allowance
+      // carries forward: an HSA has no reimbursement deadline, and this bucket
+      // is drained last, so by the time it is touched the allowance is large.
+      hsaQualifiedAllowance += healthcare.qualified * retirementPeriodFraction;
       const targetSpending = profile.retirementSpending
         * Math.pow(1 + profile.retirementSpendingGrowthRate, yearsRetired)
-        * retirementPeriodFraction;
+        * retirementPeriodFraction
+        + healthcareCostYear;
 
       if (socialSecurity.enabled && currentAge >= socialSecurity.claimAge) {
         const annualSocialSecurityBenefit = socialSecurity.manualOverride
@@ -390,7 +443,7 @@ function projectScenarioInternal(
       }
 
       rmdAmount *= retirementPeriodFraction;
-      const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable } =
+      const { withdrawalTaxable, withdrawalTraditional, withdrawalRoth, withdrawalHSA, totalWithdrawn, totalTaxes, insufficientFunds, depositTaxable, hsaQualifiedUsed } =
         executeOrderedWithdrawals(
           targetSpending,
           accountBalances,
@@ -398,10 +451,12 @@ function projectScenarioInternal(
             household: householdOf(profile.filingStatus, currentAge),
             state: profile.state,
             taxYear,
+            age: currentAge,
           },
           socialSecurityBenefit,
           rmdAmount,
           plan.assumptions.taxableGainRatio ?? 0.5,
+          hsaQualifiedAllowance,
         );
 
       // An RMD is forced out of the account, not spent, so what the year
@@ -411,6 +466,7 @@ function projectScenarioInternal(
         depositTaxableYear = depositTaxable;
       }
 
+      hsaQualifiedAllowance -= hsaQualifiedUsed;
       withdrawalTaxableYear = withdrawalTaxable;
       withdrawalTraditionalYear = withdrawalTraditional;
       withdrawalRothYear = withdrawalRoth;
@@ -762,6 +818,26 @@ function depositToBucket(
 }
 
 /**
+ * Money taken out of a retirement wrapper too early owes a penalty on top of
+ * ordinary income tax. Taxable and Roth are left alone: taxable was never
+ * sheltered, and a Roth's contributions come out at any age — telling those
+ * apart needs basis the model does not track yet.
+ */
+function penaltiesOn(
+  traditionalWithdrawal: number,
+  nonQualifiedHsaWithdrawal: number,
+  age: number,
+): number {
+  const traditionalPenalty = age < TRADITIONAL_PENALTY_AGE
+    ? traditionalWithdrawal * EARLY_TRADITIONAL_PENALTY_RATE
+    : 0;
+  const hsaPenalty = age < MEDICARE_AGE
+    ? nonQualifiedHsaWithdrawal * NON_QUALIFIED_HSA_PENALTY_RATE
+    : 0;
+  return traditionalPenalty + hsaPenalty;
+}
+
+/**
  * Execute the configured deterministic withdrawal order with iterative taxes.
  * Finds the smallest withdrawal that funds spending and taxes after Social
  * Security, subject to the full RMD. Any cash that remains when only mandatory
@@ -776,11 +852,13 @@ function depositToBucket(
 function executeOrderedWithdrawals(
   targetSpending: number,
   accountBalances: ProjectionAccount[],
-  profile: { household: Household; state: State; taxYear: number },
+  profile: { household: Household; state: State; taxYear: number; age: number },
   socialSecurityBenefit: number,
   rmdAmount: number,
   taxableGainRatio: number,
+  hsaQualifiedAllowance: number,
 ): {
+  hsaQualifiedUsed: number;
   withdrawalTaxable: number;
   withdrawalTraditional: number;
   withdrawalRoth: number;
@@ -811,6 +889,7 @@ function executeOrderedWithdrawals(
     totalWithdrawn: number;
     totalTaxes: number;
     cashAvailableAfterTax: number;
+    hsaQualifiedUsed: number;
   };
 
   const evaluate = (voluntaryBudget: number): Evaluation => {
@@ -870,14 +949,21 @@ function executeOrderedWithdrawals(
       }
     }
 
-    const totalTaxes = calculateRetirementTax({
-      traditionalWithdrawals: withdrawalTraditional,
+    // An HSA pays medical costs tax-free; anything beyond them is an ordinary
+    // distribution, and before 65 it carries a penalty as well.
+    const hsaQualifiedUsed = Math.min(withdrawalHSA, hsaQualifiedAllowance);
+    const nonQualifiedHsa = withdrawalHSA - hsaQualifiedUsed;
+
+    const tax = calculateRetirementTax({
+      traditionalWithdrawals: withdrawalTraditional + nonQualifiedHsa,
       socialSecurityBenefit,
       qualifiedIncome,
       household: profile.household,
       state: profile.state,
       taxYear: profile.taxYear,
     }).totalTax;
+    const penalties = penaltiesOn(withdrawalTraditional, nonQualifiedHsa, profile.age);
+    const totalTaxes = tax + penalties;
     const totalWithdrawn = withdrawalTaxable
       + withdrawalTraditional
       + withdrawalRoth
@@ -891,6 +977,7 @@ function executeOrderedWithdrawals(
       totalWithdrawn,
       totalTaxes,
       cashAvailableAfterTax: socialSecurityBenefit + totalWithdrawn - totalTaxes,
+      hsaQualifiedUsed,
     };
   };
 
@@ -908,6 +995,7 @@ function executeOrderedWithdrawals(
       totalTaxes: evaluation.totalTaxes,
       insufficientFunds: difference < -tolerance,
       depositTaxable: difference > tolerance ? difference : 0,
+      hsaQualifiedUsed: evaluation.hsaQualifiedUsed,
     };
   };
 

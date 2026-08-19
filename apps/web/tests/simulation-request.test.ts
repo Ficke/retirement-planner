@@ -5,10 +5,11 @@ import {
   MAX_PATHS,
   MAX_BATCH_SIMULATIONS,
 } from '@/lib/simulation-request';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1991-01-01',
     state: 'CA',
@@ -21,6 +22,7 @@ const validPlan = {
     retirementSpending: 50000,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 90,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [
@@ -97,7 +99,7 @@ describe('simulation request limits', () => {
 
   it('rejects a request from a newer unsupported schema', () => {
     expect(monteCarloRequestSchema.safeParse({
-      plan: { ...validPlan, schemaVersion: 4 },
+      plan: { ...validPlan, schemaVersion: PLAN_SCHEMA_VERSION + 1 },
       config: validConfig,
     }).success).toBe(false);
   });

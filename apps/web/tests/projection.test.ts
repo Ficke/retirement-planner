@@ -4,7 +4,7 @@ import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1990-01-01',
     state: 'CA',
@@ -17,6 +17,7 @@ const testPlan: SimulationPlan = {
     retirementSpending: 80000,
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2025-01-01',
   },
   accounts: [
@@ -146,6 +147,7 @@ describe('Projection Engine', () => {
         workingSpendingGrowthRate: 0.1,
         retirementSpending: 70_000,
         retirementSpendingGrowthRate: 0.05,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
@@ -170,6 +172,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 69,
         retirementSpending: 50_000,
         retirementSpendingGrowthRate: 0.1,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
@@ -323,6 +326,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 60_000,
         retirementSpendingGrowthRate: 0.1,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-07-02',
         state: 'TX',
       },
@@ -356,6 +360,7 @@ describe('Projection Engine', () => {
         workingSpendingGrowthRate: 0,
         retirementSpending: 30_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -393,6 +398,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 81,
         currentSalary: 100_000,
         currentSpending: 60_000,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -422,6 +428,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 50_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -459,6 +466,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 1_000_000_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'CA',
       },
@@ -526,6 +534,7 @@ describe('Projection Engine', () => {
         salaryGrowthRate: 0,
         currentSpending: 250_000,
         workingSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       accounts: [
@@ -560,6 +569,7 @@ describe('Projection Engine', () => {
       salaryGrowthRate: 0,
       currentSpending: 250_000,
       workingSpendingGrowthRate: 0,
+      retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       asOfDate: '2025-01-01',
     };
     const base: SimulationPlan = {

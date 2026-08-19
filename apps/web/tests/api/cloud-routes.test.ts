@@ -75,6 +75,7 @@ const profile = {
   retirementSpendingMultiplier: 1,
   retirementSpendingGrowthRate: 0.02,
   lifeExpectancy: 90,
+  retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
   asOfDate: '2026-01-01',
 };
 
@@ -229,7 +230,7 @@ describe('cloud API authorization boundaries', () => {
 
 describe('simulation proxy response streaming', () => {
   const simulationPlan = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     profile: { ...profile, retirementSpending: 50_000 },
     accounts: [{
       type: 'Taxable',

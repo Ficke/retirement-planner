@@ -48,6 +48,14 @@ const profileBaseShape = {
   workingSpendingGrowthRate: z.number().min(-0.1, "Working spending growth rate must be reasonable").max(0.1, "Working spending growth rate must be reasonable"),
   retirementSpendingGrowthRate: z.number().min(-0.1, "Retirement spending growth rate must be reasonable").max(0.1, "Retirement spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),
+  retirementHealthcare: z.object({
+    preMedicarePremium: z.number().min(0, "Premium must be non-negative").max(1_000_000),
+    medicarePremium: z.number().min(0, "Premium must be non-negative").max(1_000_000),
+    outOfPocket: z.number().min(0, "Out-of-pocket cost must be non-negative").max(1_000_000),
+    realGrowthRate: z.number()
+      .min(-0.1, "Healthcare growth rate must be reasonable")
+      .max(0.1, "Healthcare growth rate must be reasonable"),
+  }),
   asOfDate: isoDateSchema,
 };
 

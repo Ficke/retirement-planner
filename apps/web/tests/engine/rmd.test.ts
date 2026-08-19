@@ -53,9 +53,10 @@ describe('RMD Calculation', () => {
 
   describe('RMD Integration Tests', () => {
     const createTestPlan = (age: number, traditionalBalance: number, retirementSpending: number): SimulationPlan => ({
-      schemaVersion: 3,
+      schemaVersion: 4,
       profile: {
         birthDate: `${2025 - age}-01-01`,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         currentSalary: 0, // Retired
         retirementAge: age - 1, // Already retired

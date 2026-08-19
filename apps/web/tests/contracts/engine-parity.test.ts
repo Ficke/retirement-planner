@@ -21,7 +21,7 @@ const assumptions = {
 };
 
 const socialSecuritySurplusPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1959-01-01',
     state: 'TX',
@@ -34,6 +34,7 @@ const socialSecuritySurplusPlan: SimulationPlan = {
     retirementSpending: 0,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 68,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [],
@@ -47,7 +48,7 @@ const socialSecuritySurplusPlan: SimulationPlan = {
 };
 
 const withdrawalPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1951-01-01',
     state: 'TX',
@@ -60,6 +61,7 @@ const withdrawalPlan: SimulationPlan = {
     retirementSpending: 250_000,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 76,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [
@@ -107,7 +109,7 @@ const workingRmdPlan: SimulationPlan = {
  * year came to accept a capital gain and tax it at nothing.
  */
 const workingShortfallPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1985-01-01',
     state: 'CA',
@@ -120,6 +122,7 @@ const workingShortfallPlan: SimulationPlan = {
     retirementSpending: 320_000,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 46,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [
@@ -132,7 +135,7 @@ const workingShortfallPlan: SimulationPlan = {
 
 /** Both spouses past 65, where the per-person senior deductions have to agree. */
 const seniorCouplePlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1958-01-01',
     state: 'CA',
@@ -145,6 +148,7 @@ const seniorCouplePlan: SimulationPlan = {
     retirementSpending: 190_000,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 72,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [

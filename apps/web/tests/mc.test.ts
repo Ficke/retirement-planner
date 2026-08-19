@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   profile: {
     birthDate: '1990-01-01',
     state: 'CA', 
@@ -32,6 +32,7 @@ const testPlan: SimulationPlan = {
     retirementSpending: 60000,
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2025-01-01',
   },
   accounts: [

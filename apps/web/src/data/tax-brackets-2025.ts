@@ -167,6 +167,25 @@ export const RETIREMENT_LIMITS_2025 = {
   hsa_catchup: 1000, // Age 55+
 } as const;
 
+/**
+ * Retirement healthcare defaults, per household, in real 2026 dollars.
+ *
+ * Premiums assume one person: the national benchmark silver plan at 60 runs
+ * about $15,900 a year unsubsidized before Medicare, and Part B ($202.90/mo),
+ * Part D, and a supplement come to roughly $4,650 after it. Out-of-pocket
+ * covers deductibles, coinsurance, and the dental, vision, and hearing care
+ * Medicare does not, which is why it barely moves at 65.
+ *
+ * Growth is medical inflation above CPI. It is not decoration — 2% real over
+ * thirty years is 1.8x in real terms.
+ */
+export const DEFAULT_RETIREMENT_HEALTHCARE = {
+  preMedicarePremium: 15_900,
+  medicarePremium: 4_650,
+  outOfPocket: 3_000,
+  realGrowthRate: 0.02,
+} as const;
+
 // 2025 FICA and Payroll Tax Limits
 export const PAYROLL_LIMITS_2025 = {
   // Social Security
