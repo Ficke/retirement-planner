@@ -139,42 +139,39 @@ export function PageSettings() {
           <Setting
             label="Where simulations run"
             helper={
-              cloudCompute || !useServerSideCalculations
+              signedIn
                 ? "Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device."
-                : "The cloud engine needs an account. Sign in to use it — until then simulations run on this device."
+                : "Simulations run on this device. The cloud engine needs an account."
             }
             badge={
               <Badge
                 variant="secondary"
-                className={
-                  cloudCompute || !useServerSideCalculations
-                    ? "bg-success/15 text-success gap-1.5"
-                    : "bg-warn/15 text-warn gap-1.5"
-                }
+                className="bg-success/15 text-success gap-1.5"
               >
-                <span
-                  className={
-                    cloudCompute || !useServerSideCalculations
-                      ? "bg-success size-1.5 rounded-full"
-                      : "bg-warn size-1.5 rounded-full"
-                  }
-                />
+                <span className="bg-success size-1.5 rounded-full" />
                 {cloudCompute ? "Cloud" : "Local"}
               </Badge>
             }
           >
-            <Select
-              value={useServerSideCalculations ? "server" : "local"}
-              onValueChange={(v) => setUseServerSideCalculations(v === "server")}
-            >
-              <SelectTrigger className="max-w-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="server">Cloud (fast, nothing stored)</SelectItem>
-                <SelectItem value="local">Local (never leaves device)</SelectItem>
-              </SelectContent>
-            </Select>
+            {signedIn ? (
+              <Select
+                value={useServerSideCalculations ? "server" : "local"}
+                onValueChange={(v) => setUseServerSideCalculations(v === "server")}
+              >
+                <SelectTrigger className="max-w-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="server">Cloud (fast, nothing stored)</SelectItem>
+                  <SelectItem value="local">Local (never leaves device)</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => router.push("/auth/signin")}>
+                <LogIn className="size-4" />
+                Sign in
+              </Button>
+            )}
           </Setting>
         </DashboardCard>
 
