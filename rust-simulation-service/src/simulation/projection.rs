@@ -17,8 +17,8 @@ use super::tax::{
 };
 
 use crate::types::{
-    Account, AccountType, AssetWeights, PathProjection, PathResult, RetirementPlan,
-    State, PHASE_SPENDING_SCHEMA_VERSION,
+    Account, AccountType, AssetWeights, PathProjection, PathResult, RetirementHealthcare,
+    RetirementPlan, State, MEDICARE_AGE, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
 /// All-in annual portfolio cost, subtracted from the realized return before it
@@ -37,6 +37,64 @@ const BUCKET_ORDER: [AccountType; 4] = [
 
 /// Cash tolerance, in dollars, below which a shortfall is considered funded.
 const SHORTFALL_TOLERANCE: f64 = 1.0;
+
+/// Traditional money taken before 59½ owes this on top of ordinary income.
+const EARLY_TRADITIONAL_PENALTY_RATE: f64 = 0.10;
+const TRADITIONAL_PENALTY_AGE: u32 = 60;
+
+/// An HSA distribution that is not for medical care, taken before 65.
+const NON_QUALIFIED_HSA_PENALTY_RATE: f64 = 0.20;
+
+/// One year of retirement healthcare: what it costs, and the share of that cost
+/// an HSA can pay tax-free.
+struct HealthcareCost {
+    total: f64,
+    qualified: f64,
+}
+
+/// Retirement healthcare for one year: premiums step down at Medicare, while
+/// out-of-pocket cost barely moves across that line.
+///
+/// `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
+/// not on that list — HSAs cover premiums only for COBRA, coverage during
+/// unemployment, Medicare, and long-term care — so folding them in would hand an
+/// early retiree a large tax break they do not have.
+fn healthcare_cost_for(
+    healthcare: &RetirementHealthcare,
+    age: u32,
+    years_retired: u32,
+) -> HealthcareCost {
+    let growth = (1.0 + healthcare.real_growth_rate).powi(years_retired as i32);
+    let on_medicare = age >= MEDICARE_AGE;
+    let premium = if on_medicare {
+        healthcare.medicare_premium
+    } else {
+        healthcare.pre_medicare_premium
+    };
+    let out_of_pocket = healthcare.out_of_pocket;
+    HealthcareCost {
+        total: (premium + out_of_pocket) * growth,
+        qualified: (out_of_pocket + if on_medicare { premium } else { 0.0 }) * growth,
+    }
+}
+
+/// Money taken out of a retirement wrapper too early owes a penalty on top of
+/// ordinary income tax. Taxable and Roth are left alone: taxable was never
+/// sheltered, and a Roth's contributions come out at any age — telling those
+/// apart needs basis the model does not track yet.
+fn penalties_on(traditional_withdrawal: f64, non_qualified_hsa_withdrawal: f64, age: u32) -> f64 {
+    let traditional_penalty = if age < TRADITIONAL_PENALTY_AGE {
+        traditional_withdrawal * EARLY_TRADITIONAL_PENALTY_RATE
+    } else {
+        0.0
+    };
+    let hsa_penalty = if age < MEDICARE_AGE {
+        non_qualified_hsa_withdrawal * NON_QUALIFIED_HSA_PENALTY_RATE
+    } else {
+        0.0
+    };
+    traditional_penalty + hsa_penalty
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 struct OrderedWithdrawal {
@@ -265,6 +323,8 @@ fn project_scenario_internal(
     let mut portfolio_value: f64 = accounts.iter().map(|acc| acc.balance).sum();
 
     let mut previous_year_traditional_balance = 0.0;
+    // Medical cost the HSA may still reimburse tax-free, carried year to year.
+    let mut hsa_qualified_allowance = 0.0;
 
     let mut returns_generator = create_market_returns_generator(plan, &config);
 
@@ -388,6 +448,7 @@ fn project_scenario_internal(
             // because the remainder left over decides whether the year was funded.
             let mut shortfall_principal = 0.0;
             let mut shortfall_gains = 0.0;
+            let mut working_penalties = 0.0;
             for _ in 0..12 {
                 let remaining =
                     (working_cash_flow.funding_gap * period_fraction - shortfall_principal).max(0.0);
@@ -402,7 +463,12 @@ fn project_scenario_internal(
                 withdrawal_traditional += drawn.traditional;
                 withdrawal_roth += drawn.roth;
                 withdrawal_hsa += drawn.hsa;
-                shortfall_principal += drawn.taxable + drawn.roth + drawn.hsa;
+                // Traditional is credited as income by the tax call below; the
+                // other buckets are principal. A penalty is cash out the door
+                // either way, so it comes off what the draw actually raised.
+                let pass_penalties = penalties_on(drawn.traditional, drawn.hsa, current_age);
+                working_penalties += pass_penalties;
+                shortfall_principal += drawn.taxable + drawn.roth + drawn.hsa - pass_penalties;
                 shortfall_gains += drawn.taxable * taxable_gain_ratio;
                 working_cash_flow = calculate_working_cash_flow(
                     annual_salary,
@@ -412,7 +478,10 @@ fn project_scenario_internal(
                     tax_year,
                     &policy,
                     OtherIncome {
-                        ordinary: withdrawal_traditional / period_fraction,
+                        // A working-year HSA draw is not paying a modeled
+                        // medical cost, so it is an ordinary distribution
+                        // rather than a tax-free one.
+                        ordinary: (withdrawal_traditional + withdrawal_hsa) / period_fraction,
                         qualified: shortfall_gains / period_fraction,
                     },
                 );
@@ -425,7 +494,7 @@ fn project_scenario_internal(
 
             income = annual_salary * period_fraction;
             spending = annual_working_spending * period_fraction - unfunded.max(0.0);
-            taxes = working_cash_flow.tax.total_tax * period_fraction;
+            taxes = working_cash_flow.tax.total_tax * period_fraction + working_penalties;
             // Only true ruin counts as failure: the portfolio could not cover it.
             insufficient_funds = unfunded > SHORTFALL_TOLERANCE;
 
@@ -475,10 +544,19 @@ fn project_scenario_internal(
                 // as-of year, including working years.
                 year
             };
+            let years_retired = year.saturating_sub(profile.retirement_age.saturating_sub(age));
+            let healthcare =
+                healthcare_cost_for(&profile.retirement_healthcare, current_age, years_retired);
+            // Medical spending is what an HSA can cover tax-free, and the
+            // allowance carries forward: an HSA has no reimbursement deadline,
+            // and this bucket is drained last, so by the time it is touched the
+            // allowance is large.
+            hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
             let target_spending = profile.retirement_spending
                 * (1.0 + profile.retirement_spending_growth_rate)
                     .powi(spending_growth_exponent as i32)
-                * retirement_period_fraction;
+                * retirement_period_fraction
+                + healthcare.total * retirement_period_fraction;
 
             // Calculate Social Security
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
@@ -533,11 +611,15 @@ fn project_scenario_internal(
                     household: &household,
                     state: &profile.state,
                     tax_year,
+                    age: current_age,
                     social_security_benefit,
                     rmd_amount,
                     taxable_gain_ratio: plan.assumptions.taxable_gain_ratio,
+                    hsa_qualified_allowance,
                 },
             )?;
+
+            hsa_qualified_allowance -= withdrawal_result.hsa_qualified_used;
 
             withdrawal_taxable = withdrawal_result.withdrawal_taxable;
             withdrawal_traditional = withdrawal_result.withdrawal_traditional;
@@ -622,6 +704,7 @@ struct WithdrawalResult {
     total_taxes: f64,
     insufficient_funds: bool,
     deposit_taxable: f64,
+    hsa_qualified_used: f64,
 }
 
 struct WithdrawalEvaluation {
@@ -633,15 +716,18 @@ struct WithdrawalEvaluation {
     total_withdrawn: f64,
     total_taxes: f64,
     cash_available_after_tax: f64,
+    hsa_qualified_used: f64,
 }
 
 struct WithdrawalContext<'a> {
     household: &'a Household,
     state: &'a State,
     tax_year: i32,
+    age: u32,
     social_security_benefit: f64,
     rmd_amount: f64,
     taxable_gain_ratio: f64,
+    hsa_qualified_allowance: f64,
 }
 
 /// Deposit into a type's bucket, opening it when the household holds no account
@@ -828,8 +914,13 @@ fn evaluate_ordered_withdrawals(
         }
     }
 
-    let total_taxes = calculate_retirement_tax(
-        withdrawal_traditional,
+    // An HSA pays medical costs tax-free; anything beyond them is an ordinary
+    // distribution, and before 65 it carries a penalty as well.
+    let hsa_qualified_used = withdrawal_hsa.min(context.hsa_qualified_allowance);
+    let non_qualified_hsa = withdrawal_hsa - hsa_qualified_used;
+
+    let tax = calculate_retirement_tax(
+        withdrawal_traditional + non_qualified_hsa,
         context.social_security_benefit,
         qualified_income,
         context.household,
@@ -837,6 +928,8 @@ fn evaluate_ordered_withdrawals(
         context.tax_year,
     )
     .total_tax;
+    let penalties = penalties_on(withdrawal_traditional, non_qualified_hsa, context.age);
+    let total_taxes = tax + penalties;
     let total_withdrawn =
         withdrawal_taxable + withdrawal_traditional + withdrawal_roth + withdrawal_hsa;
     WithdrawalEvaluation {
@@ -848,6 +941,7 @@ fn evaluate_ordered_withdrawals(
         total_withdrawn,
         total_taxes,
         cash_available_after_tax: context.social_security_benefit + total_withdrawn - total_taxes,
+        hsa_qualified_used,
     }
 }
 
@@ -874,6 +968,7 @@ fn finish_ordered_withdrawals(
         } else {
             0.0
         },
+        hsa_qualified_used: evaluation.hsa_qualified_used,
     }
 }
 
@@ -927,6 +1022,7 @@ mod tests {
                 retirement_spending: 60_000.0,
                 retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
+                retirement_healthcare: Default::default(),
                 as_of_date: "2026-01-01".to_string(),
             },
             accounts: vec![

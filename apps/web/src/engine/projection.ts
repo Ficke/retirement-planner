@@ -330,8 +330,9 @@ function projectScenarioInternal(
         // Traditional is credited as income by the tax call below; the other
         // buckets are principal. A penalty is cash out the door either way, so
         // it comes off what the draw actually raised.
-        workingPenalties += penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
-        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa - workingPenalties;
+        const passPenalties = penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
+        workingPenalties += passPenalties;
+        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa - passPenalties;
         shortfallGains += drawn.taxable * taxableGainRatio;
         workingCashFlow = calculateWorkingCashFlow({
           grossIncome: annualSalary,

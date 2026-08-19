@@ -165,6 +165,44 @@ const seniorCouplePlan: SimulationPlan = {
 };
 
 /**
+ * An HSA-only retiree who starts before Medicare and lives past it. The single
+ * bucket is deliberate: it is deep enough that no year can empty it, so every
+ * draw is the tax solver's answer rather than a balance limit, and the two
+ * engines stay comparable even though their market draws diverge.
+ *
+ * Crossing 65 moves three things at once — the premium steps down, the premium
+ * joins the HSA's qualified allowance, and the 20% non-qualified penalty stops.
+ */
+const healthcarePlan: SimulationPlan = {
+  schemaVersion: 4,
+  profile: {
+    birthDate: '1968-01-01',
+    state: 'CA',
+    filingStatus: 'Single',
+    retirementAge: 58,
+    currentSalary: 0,
+    salaryGrowthRate: 0,
+    currentSpending: 0,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 40_000,
+    retirementSpendingGrowthRate: 0,
+    lifeExpectancy: 70,
+    retirementHealthcare: {
+      preMedicarePremium: 24_000,
+      medicarePremium: 7_000,
+      outOfPocket: 6_000,
+      realGrowthRate: 0.02,
+    },
+    asOfDate: '2026-01-01',
+  },
+  accounts: [
+    { type: 'HSA', balance: 3_000_000, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+  ],
+  socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+  assumptions,
+};
+
+/**
  * The returns model has two sources: the TypeScript engine reads it off the
  * plan, the Rust service off the request config. Production keeps them in step
  * in services/simulation.ts, so the contract test has to as well — hardcoding
@@ -372,6 +410,39 @@ describe('TypeScript/Rust engine contract', () => {
       'depositTaxable',
       'insufficientFunds',
     ]);
+  });
+
+  it('agrees on healthcare cost, the HSA allowance, and early-withdrawal penalties', async () => {
+    const typescript = projectScenario(healthcarePlan, { paths: 1, seed: 42 });
+    const rust = await runRust(healthcarePlan);
+
+    // Ages 58 and 66: one side of the Medicare step each.
+    const beforeMedicare = typescript.projections[0];
+    const afterMedicare = typescript.projections[8];
+    expect(beforeMedicare.age).toBe(58);
+    expect(afterMedicare.age).toBe(66);
+
+    // The fixture only means anything if the premium really did step down and
+    // the pre-Medicare year really was penalized.
+    expect(beforeMedicare.spending).toBeCloseTo(40_000 + 30_000, 5);
+    expect(afterMedicare.spending).toBeCloseTo(
+      40_000 + 13_000 * Math.pow(1.02, 8),
+      5,
+    );
+    expect(beforeMedicare.taxes).toBeGreaterThan(afterMedicare.taxes);
+
+    expect(rust.successProbability).toBe(typescript.success ? 1 : 0);
+    for (const index of [0, 6, 7, 8, 12]) {
+      expectCashFlowParity(typescript.projections[index], rust.yearlyProjections[index], [
+        'year',
+        'age',
+        'spending',
+        'taxes',
+        'withdrawalHSA',
+        'withdrawalTraditional',
+        'insufficientFunds',
+      ]);
+    }
   });
 
   it('keeps the production 5,000-path request within a broad CI budget', async () => {
