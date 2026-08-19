@@ -3,28 +3,14 @@ import {
   calculateRetirementTax,
   calculateTaxableSocialSecurity,
   calculateWorkingCashFlow,
+  householdOf,
 } from '@/engine/tax';
 
 describe('Retirement Tax Calculation', () => {
   it('taxes working-year RMD income without applying payroll tax to it', () => {
     const policy = { hsaEligible: false, useBackdoorRoth: false };
-    const wagesOnly = calculateWorkingCashFlow(
-      100_000,
-      60_000,
-      75,
-      'Single',
-      'TX',
-      policy,
-    );
-    const withRmd = calculateWorkingCashFlow(
-      100_000,
-      60_000,
-      75,
-      'Single',
-      'TX',
-      policy,
-      { ordinary: 40_000, qualified: 0 },
-    );
+    const wagesOnly = calculateWorkingCashFlow({ grossIncome: 100_000, annualSpending: 60_000, household: householdOf('Single', 75), state: 'TX', taxYear: 2026, policy: policy });
+    const withRmd = calculateWorkingCashFlow({ grossIncome: 100_000, annualSpending: 60_000, household: householdOf('Single', 75), state: 'TX', taxYear: 2026, policy: policy, other: { ordinary: 40_000, qualified: 0 } });
 
     expect(withRmd.tax.ficaTax).toBe(wagesOnly.tax.ficaTax);
     expect(withRmd.tax.totalTax).toBeGreaterThan(wagesOnly.tax.totalTax);
@@ -34,14 +20,7 @@ describe('Retirement Tax Calculation', () => {
 
   describe('Working-year cash flow', () => {
     it('invests the entire residual, leaving nothing unallocated', () => {
-      const result = calculateWorkingCashFlow(
-        100_000,
-        50_000,
-        40,
-        'Single',
-        'TX',
-        { hsaEligible: true, useBackdoorRoth: true },
-      );
+      const result = calculateWorkingCashFlow({ grossIncome: 100_000, annualSpending: 50_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: true, useBackdoorRoth: true } });
 
       // Gross is fully accounted for: taxed, spent, or saved. No fourth bucket.
       expect(
@@ -51,14 +30,7 @@ describe('Retirement Tax Calculation', () => {
     });
 
     it('fills tax-advantaged space to its statutory limits before taxable', () => {
-      const result = calculateWorkingCashFlow(
-        500_000,
-        40_000,
-        40,
-        'Single',
-        'TX',
-        { hsaEligible: true, useBackdoorRoth: true },
-      );
+      const result = calculateWorkingCashFlow({ grossIncome: 500_000, annualSpending: 40_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: true, useBackdoorRoth: true } });
 
       expect(result.contributions.hsa).toBe(4_300);
       expect(result.contributions.traditional).toBe(23_500);
@@ -68,14 +40,8 @@ describe('Retirement Tax Calculation', () => {
     });
 
     it('skips the space the household cannot use, without losing the cash', () => {
-      const eligible = calculateWorkingCashFlow(
-        200_000, 40_000, 40, 'Single', 'TX',
-        { hsaEligible: true, useBackdoorRoth: true },
-      );
-      const ineligible = calculateWorkingCashFlow(
-        200_000, 40_000, 40, 'Single', 'TX',
-        { hsaEligible: false, useBackdoorRoth: false },
-      );
+      const eligible = calculateWorkingCashFlow({ grossIncome: 200_000, annualSpending: 40_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: true, useBackdoorRoth: true } });
+      const ineligible = calculateWorkingCashFlow({ grossIncome: 200_000, annualSpending: 40_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: false, useBackdoorRoth: false } });
 
       expect(ineligible.contributions.hsa).toBe(0);
       expect(ineligible.contributions.roth).toBe(0);
@@ -84,15 +50,50 @@ describe('Retirement Tax Calculation', () => {
         .toBeGreaterThan(eligible.contributions.taxable);
     });
 
+    it('taxes capital gains realized in a working year', () => {
+      const base = {
+        grossIncome: 200_000,
+        annualSpending: 60_000,
+        household: householdOf('Single', 45),
+        state: 'CA' as const,
+        taxYear: 2026,
+        policy: { hsaEligible: false, useBackdoorRoth: false },
+      };
+      const wagesOnly = calculateWorkingCashFlow({ ...base, other: { ordinary: 0, qualified: 0 } });
+      const withGains = calculateWorkingCashFlow({
+        ...base,
+        other: { ordinary: 0, qualified: 100_000 },
+      });
+
+      // Federal takes them at preferential rates; California taxes them as
+      // ordinary income. Neither charges payroll tax on a gain.
+      expect(withGains.tax.federalTax).toBeGreaterThan(wagesOnly.tax.federalTax);
+      expect(withGains.tax.stateTax).toBeGreaterThan(wagesOnly.tax.stateTax);
+      expect(withGains.tax.ficaTax).toBeCloseTo(wagesOnly.tax.ficaTax, 2);
+    });
+
+    it('taxes a working-year gain more gently than a working-year RMD', () => {
+      const base = {
+        grossIncome: 200_000,
+        annualSpending: 60_000,
+        household: householdOf('Single', 45),
+        state: 'TX' as const,
+        taxYear: 2026,
+        policy: { hsaEligible: false, useBackdoorRoth: false },
+      };
+      const qualified = calculateWorkingCashFlow({
+        ...base,
+        other: { ordinary: 0, qualified: 50_000 },
+      });
+      const ordinary = calculateWorkingCashFlow({
+        ...base,
+        other: { ordinary: 50_000, qualified: 0 },
+      });
+      expect(qualified.tax.federalTax).toBeLessThan(ordinary.tax.federalTax);
+    });
+
     it('reports a funding gap when spending outruns after-tax income', () => {
-      const result = calculateWorkingCashFlow(
-        50_000,
-        60_000,
-        40,
-        'Single',
-        'TX',
-        { hsaEligible: false, useBackdoorRoth: false },
-      );
+      const result = calculateWorkingCashFlow({ grossIncome: 50_000, annualSpending: 60_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: false, useBackdoorRoth: false } });
       expect(result.fundingGap).toBeGreaterThan(10_000);
       expect(result.totalContributions).toBe(0);
     });
@@ -101,14 +102,7 @@ describe('Retirement Tax Calculation', () => {
   describe('Bug Fix Verification', () => {
     it('should calculate realistic taxes on Traditional withdrawals', () => {
       // Test case from bug report: $91.4K withdrawal should yield much more than $2.1K taxes
-      const taxResult = calculateRetirementTax(
-        91400, // Traditional withdrawal (ordinary income)
-        0,     // No SS benefits
-        0,     // No LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 91400, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Should be significantly higher than the buggy $2.1K
       expect(taxResult.totalTax).toBeGreaterThan(10000); // At least $10K
@@ -127,14 +121,7 @@ describe('Retirement Tax Calculation', () => {
     });
     
     it('should handle mixed withdrawal sources correctly', () => {
-      const taxResult = calculateRetirementTax(
-        50000, // Traditional withdrawal
-        20000, // SS benefits
-        10000, // LTCG from taxable account
-        65,    // Age 65 (gets senior deduction)
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 20000, qualifiedIncome: 10000, household: householdOf('Single', 65), state: 'CA', taxYear: 2026 });
       
       expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.ficaTax).toBe(0); // No FICA in retirement
@@ -143,31 +130,31 @@ describe('Retirement Tax Calculation', () => {
     });
     
     it('should apply senior standard deduction for 65+ taxpayers', () => {
-      const under65Tax = calculateRetirementTax(50000, 0, 0, 64, 'Single', 'CA');
-      const over65Tax = calculateRetirementTax(50000, 0, 0, 65, 'Single', 'CA');
+      const under65Tax = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 64), state: 'CA', taxYear: 2026 });
+      const over65Tax = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 65), state: 'CA', taxYear: 2026 });
       
       // Over 65 should pay less tax due to higher standard deduction
       expect(over65Tax.totalTax).toBeLessThan(under65Tax.totalTax);
     });
 
     it('applies the 2025 enhanced senior deduction and phaseout', () => {
-      const eligible = calculateRetirementTax(50_000, 0, 0, 65, 'Single', 'TX');
+      const eligible = calculateRetirementTax({ traditionalWithdrawals: 50_000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 65), state: 'TX', taxYear: 2026 });
       expect(eligible.federalTax).toBeCloseTo(2_911.5, 2);
 
-      const phasedOut = calculateRetirementTax(175_000, 0, 0, 65, 'Single', 'TX');
-      const under65 = calculateRetirementTax(175_000, 0, 0, 64, 'Single', 'TX');
+      const phasedOut = calculateRetirementTax({ traditionalWithdrawals: 175_000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 65), state: 'TX', taxYear: 2026 });
+      const under65 = calculateRetirementTax({ traditionalWithdrawals: 175_000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 64), state: 'TX', taxYear: 2026 });
       expect(phasedOut.federalTax).toBe(under65.federalTax - 2_000 * 0.24);
     });
 
     it('uses final 2025 California brackets and standard deduction', () => {
-      const result = calculateRetirementTax(100_000, 0, 0, 64, 'Single', 'CA');
+      const result = calculateRetirementTax({ traditionalWithdrawals: 100_000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 64), state: 'CA', taxYear: 2026 });
       expect(result.stateTax).toBeCloseTo(5_207.98, 2);
     });
     
     it('should handle LTCG stacking correctly', () => {
       // Test LTCG preferential rates
-      const noLTCGTax = calculateRetirementTax(40000, 0, 0, 67, 'Single', 'CA');
-      const withLTCGTax = calculateRetirementTax(40000, 0, 20000, 67, 'Single', 'CA');
+      const noLTCGTax = calculateRetirementTax({ traditionalWithdrawals: 40000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
+      const withLTCGTax = calculateRetirementTax({ traditionalWithdrawals: 40000, socialSecurityBenefit: 0, qualifiedIncome: 20000, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Adding LTCG should increase total tax, but not as much as ordinary income would
       expect(withLTCGTax.totalTax).toBeGreaterThan(noLTCGTax.totalTax);
@@ -178,10 +165,38 @@ describe('Retirement Tax Calculation', () => {
     });
 
     it('applies the Net Investment Income Tax above the filing threshold', () => {
-      const result = calculateRetirementTax(0, 0, 250_000, 64, 'Single', 'TX');
+      const result = calculateRetirementTax({ traditionalWithdrawals: 0, socialSecurityBenefit: 0, qualifiedIncome: 250_000, household: householdOf('Single', 64), state: 'TX', taxYear: 2025 });
       // $234,250 after the standard deduction: $185,800 at 15%, plus
       // 3.8% NIIT on the $50,000 of MAGI above $200,000.
       expect(result.federalTax).toBeCloseTo(29_770, 2);
+    });
+
+    it('erodes the thresholds Congress never indexed', () => {
+      const args = {
+        traditionalWithdrawals: 0,
+        socialSecurityBenefit: 0,
+        qualifiedIncome: 250_000,
+        household: householdOf('Single', 64),
+        state: 'TX' as const,
+      };
+      // The $200,000 NIIT threshold is fixed in nominal dollars, so in the real
+      // dollars the engine works in it shrinks every year and catches more.
+      const atLawYear = calculateRetirementTax({ ...args, taxYear: 2025 });
+      const twentyYearsOn = calculateRetirementTax({ ...args, taxYear: 2045 });
+      expect(twentyYearsOn.federalTax).toBeGreaterThan(atLawYear.federalTax);
+    });
+
+    it('taxes Social Security more heavily as its 1984 thresholds erode', () => {
+      const args = {
+        traditionalWithdrawals: 30_000,
+        socialSecurityBenefit: 40_000,
+        qualifiedIncome: 0,
+        household: householdOf('Single', 70),
+        state: 'TX' as const,
+      };
+      const atLawYear = calculateRetirementTax({ ...args, taxYear: 2025 });
+      const twentyYearsOn = calculateRetirementTax({ ...args, taxYear: 2045 });
+      expect(twentyYearsOn.totalTax).toBeGreaterThan(atLawYear.totalTax);
     });
   });
 
@@ -195,25 +210,18 @@ describe('Retirement Tax Calculation', () => {
     });
 
     it('excludes Social Security from California taxable income', () => {
-      const withoutBenefits = calculateRetirementTax(20_000, 0, 0, 67, 'Single', 'CA');
-      const withBenefits = calculateRetirementTax(20_000, 50_000, 0, 67, 'Single', 'CA');
+      const withoutBenefits = calculateRetirementTax({ traditionalWithdrawals: 20_000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
+      const withBenefits = calculateRetirementTax({ traditionalWithdrawals: 20_000, socialSecurityBenefit: 50_000, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       expect(withBenefits.stateTax).toBeCloseTo(withoutBenefits.stateTax, 8);
     });
 
     it('applies unused standard deduction to capital gains', () => {
-      const result = calculateRetirementTax(0, 0, 10_000, 67, 'Single', 'TX');
+      const result = calculateRetirementTax({ traditionalWithdrawals: 0, socialSecurityBenefit: 0, qualifiedIncome: 10_000, household: householdOf('Single', 67), state: 'TX', taxYear: 2026 });
       expect(result.federalTax).toBe(0);
     });
     it('should not tax SS when combined income is below threshold', () => {
       // Low income scenario - no SS should be taxable
-      const taxResult = calculateRetirementTax(
-        10000, // Traditional withdrawal
-        20000, // SS benefits
-        0,     // No LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 10000, socialSecurityBenefit: 20000, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Combined income = 10k + 0 + (20k * 0.5) = 20k < 25k threshold
       // So no SS should be taxable, only the 10k Traditional withdrawal
@@ -222,14 +230,7 @@ describe('Retirement Tax Calculation', () => {
     
     it('should tax 50% of SS when in middle tier', () => {
       // Middle income scenario - up to 50% SS taxable
-      const taxResult = calculateRetirementTax(
-        20000, // Traditional withdrawal
-        20000, // SS benefits
-        0,     // No LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 20000, socialSecurityBenefit: 20000, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Combined income = 20k + 0 + (20k * 0.5) = 30k (between 25k and 34k)
       // Some SS should be taxable but not all
@@ -239,14 +240,7 @@ describe('Retirement Tax Calculation', () => {
     
     it('should tax up to 85% of SS when income is high', () => {
       // High income scenario - up to 85% SS taxable
-      const taxResult = calculateRetirementTax(
-        60000, // Traditional withdrawal
-        30000, // SS benefits
-        10000, // LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 60000, socialSecurityBenefit: 30000, qualifiedIncome: 10000, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Combined income = 60k + 10k + (30k * 0.5) = 85k > 34k threshold
       // Up to 85% of SS should be taxable
@@ -255,8 +249,8 @@ describe('Retirement Tax Calculation', () => {
     
     it('should handle married filing jointly thresholds correctly', () => {
       // Married filing jointly has different thresholds ($32k/$44k vs $25k/$34k)
-      const singleTax = calculateRetirementTax(25000, 20000, 0, 67, 'Single', 'CA');
-      const marriedTax = calculateRetirementTax(25000, 20000, 0, 67, 'MarriedFilingJointly', 'CA');
+      const singleTax = calculateRetirementTax({ traditionalWithdrawals: 25000, socialSecurityBenefit: 20000, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
+      const marriedTax = calculateRetirementTax({ traditionalWithdrawals: 25000, socialSecurityBenefit: 20000, qualifiedIncome: 0, household: householdOf('MarriedFilingJointly', 67), state: 'CA', taxYear: 2026 });
       
       // Same income should result in less tax for married filers due to higher thresholds
       expect(marriedTax.totalTax).toBeLessThanOrEqual(singleTax.totalTax);
@@ -266,14 +260,7 @@ describe('Retirement Tax Calculation', () => {
   describe('Real-World Scenario Validation', () => {
     it('should calculate correct taxes for screenshot scenario', () => {
       // From user screenshot: Age 57, $25.2K Traditional, $58.3K Taxable (50% LTCG)
-      const taxResult = calculateRetirementTax(
-        25200, // Traditional withdrawal (ordinary income)
-        0,     // No SS benefits at age 57
-        29150, // 50% of $58.3K taxable withdrawal = LTCG
-        57,    // Age 57
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 25200, socialSecurityBenefit: 0, qualifiedIncome: 29150, household: householdOf('Single', 57), state: 'CA', taxYear: 2026 });
       
       console.log(`Detailed tax breakdown for screenshot scenario:`);
       console.log(`Traditional: $25,200 (ordinary income)`);
@@ -294,14 +281,7 @@ describe('Retirement Tax Calculation', () => {
     
     it('should show much higher taxes when Traditional withdrawals are larger', () => {
       // Test scenario with more Traditional withdrawals
-      const highTraditionalTax = calculateRetirementTax(
-        70000, // Much larger Traditional withdrawal
-        0,     // No SS
-        15000, // Some LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const highTraditionalTax = calculateRetirementTax({ traditionalWithdrawals: 70000, socialSecurityBenefit: 0, qualifiedIncome: 15000, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Should be much higher tax rate
       expect(highTraditionalTax.totalTax).toBeCloseTo(11206.48, 2);

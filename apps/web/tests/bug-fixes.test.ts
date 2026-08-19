@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { calculateSSABenefit } from '@/engine/ssa';
-import { calculateRetirementTax } from '@/engine/tax';
+import { calculateRetirementTax,
+  householdOf,
+} from '@/engine/tax';
 
 describe('Bug Fixes', () => {
   describe('Social Security Age Adjustment Bug', () => {
@@ -42,14 +44,7 @@ describe('Bug Fixes', () => {
   describe('Retirement Tax Calculation Bug', () => {
     it('should calculate realistic taxes on Traditional withdrawals', () => {
       // Test case from bug report: $91.4K withdrawal should yield much more than $2.1K taxes
-      const taxResult = calculateRetirementTax(
-        91400, // Traditional withdrawal (ordinary income)
-        0,     // No SS benefits
-        0,     // No LTCG
-        67,    // Age 67
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 91400, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 67), state: 'CA', taxYear: 2026 });
       
       // Should be significantly higher than the buggy $2.1K
       expect(taxResult.totalTax).toBeGreaterThan(10000); // At least $10K
@@ -64,14 +59,7 @@ describe('Bug Fixes', () => {
     });
     
     it('should handle mixed withdrawal sources correctly', () => {
-      const taxResult = calculateRetirementTax(
-        50000, // Traditional withdrawal
-        20000, // SS benefits
-        10000, // LTCG from taxable account
-        65,    // Age 65 (gets senior deduction)
-        'Single',
-        'CA'
-      );
+      const taxResult = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 20000, qualifiedIncome: 10000, household: householdOf('Single', 65), state: 'CA', taxYear: 2026 });
       
       expect(taxResult.totalTax).toBeGreaterThan(0);
       expect(taxResult.ficaTax).toBe(0); // No FICA in retirement
@@ -80,8 +68,8 @@ describe('Bug Fixes', () => {
     });
     
     it('should apply senior standard deduction for 65+ taxpayers', () => {
-      const under65Tax = calculateRetirementTax(50000, 0, 0, 64, 'Single', 'CA');
-      const over65Tax = calculateRetirementTax(50000, 0, 0, 65, 'Single', 'CA');
+      const under65Tax = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 64), state: 'CA', taxYear: 2026 });
+      const over65Tax = calculateRetirementTax({ traditionalWithdrawals: 50000, socialSecurityBenefit: 0, qualifiedIncome: 0, household: householdOf('Single', 65), state: 'CA', taxYear: 2026 });
       
       // Over 65 should pay less tax due to higher standard deduction
       expect(over65Tax.totalTax).toBeLessThan(under65Tax.totalTax);

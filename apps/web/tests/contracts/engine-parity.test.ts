@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { projectScenario } from '@/engine/projection';
+import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import type {
   PathProjection,
   SimulationPlan,
@@ -100,6 +101,78 @@ const workingRmdPlan: SimulationPlan = {
   },
 };
 
+/**
+ * Spending runs past wages, so the working year draws the taxable bucket and
+ * realizes gains. Nothing exercised this path before, which is how the working
+ * year came to accept a capital gain and tax it at nothing.
+ */
+const workingShortfallPlan: SimulationPlan = {
+  schemaVersion: 3,
+  profile: {
+    birthDate: '1985-01-01',
+    state: 'CA',
+    filingStatus: 'Single',
+    retirementAge: 45,
+    currentSalary: 220_000,
+    salaryGrowthRate: 0,
+    currentSpending: 320_000,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 320_000,
+    retirementSpendingGrowthRate: 0,
+    lifeExpectancy: 46,
+    asOfDate: '2026-01-01',
+  },
+  accounts: [
+    { type: 'Taxable', balance: 3_000_000, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+    { type: 'Traditional', balance: 500_000, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+  ],
+  socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+  assumptions,
+};
+
+/** Both spouses past 65, where the per-person senior deductions have to agree. */
+const seniorCouplePlan: SimulationPlan = {
+  schemaVersion: 3,
+  profile: {
+    birthDate: '1958-01-01',
+    state: 'CA',
+    filingStatus: 'MarriedFilingJointly',
+    retirementAge: 68,
+    currentSalary: 0,
+    salaryGrowthRate: 0,
+    currentSpending: 0,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 190_000,
+    retirementSpendingGrowthRate: 0,
+    lifeExpectancy: 72,
+    asOfDate: '2026-01-01',
+  },
+  accounts: [
+    { type: 'Taxable', balance: 1_500_000, assetWeights: { stocks: 0.5, bonds: 0.5 } },
+    { type: 'Traditional', balance: 2_000_000, assetWeights: { stocks: 0.5, bonds: 0.5 } },
+  ],
+  socialSecurity: {
+    enabled: true,
+    claimAge: 68,
+    manualOverride: true,
+    estimatedBenefit: 60_000,
+  },
+  assumptions,
+};
+
+/**
+ * The returns model has two sources: the TypeScript engine reads it off the
+ * plan, the Rust service off the request config. Production keeps them in step
+ * in services/simulation.ts, so the contract test has to as well — hardcoding
+ * one here silently pointed the two engines at different market histories.
+ */
+function engineConfigFor(plan: SimulationPlan) {
+  return {
+    useHistoricalBootstrap: plan.assumptions.simulationModel !== 'parametric',
+    blockSize: MONTE_CARLO_DEFAULTS.block_size,
+  };
+}
+
 async function runRust(plan: SimulationPlan, paths = 1): Promise<SimulationResult> {
   const response = await fetch(new URL('/api/simulate', serviceUrl), {
     method: 'POST',
@@ -109,8 +182,7 @@ async function runRust(plan: SimulationPlan, paths = 1): Promise<SimulationResul
       config: {
         paths,
         seed: 42,
-        useHistoricalBootstrap: false,
-        blockSize: 3,
+        ...engineConfigFor(plan),
       },
     }),
   });
@@ -136,8 +208,7 @@ async function runRustBatch(
         config: {
           paths,
           seed: 42,
-          useHistoricalBootstrap: false,
-          blockSize: 3,
+          ...engineConfigFor(plan),
         },
       }],
     }),
@@ -148,6 +219,12 @@ async function runRustBatch(
   return response.json();
 }
 
+/**
+ * Compares the fields that are a pure function of the plan. Balances are not
+ * among them: the engines seed different RNGs by design, so their market draws
+ * diverge even from one seed, and only the tax and cash-flow math is expected
+ * to agree exactly.
+ */
 function expectCashFlowParity(
   typescript: PathProjection,
   rust: YearlyProjection,
@@ -180,6 +257,46 @@ describe('TypeScript/Rust engine contract', () => {
     };
     expect(legacy.results[0].id).toBe('contract');
     expect(legacy.results[0].result.yearlyProjections.length).toBeGreaterThan(0);
+  });
+
+  it('taxes a working-year shortfall draw identically in both engines', async () => {
+    const typescript = projectScenario(workingShortfallPlan, { paths: 1, seed: 42 });
+    const rust = await runRust(workingShortfallPlan);
+
+    const workingYear = typescript.projections[1];
+    // The fixture only means anything if the year really did realize a gain.
+    expect(workingYear.withdrawalTaxable).toBeGreaterThan(0);
+    expect(workingYear.taxes).toBeGreaterThan(0);
+
+    expect(rust.successProbability).toBe(typescript.success ? 1 : 0);
+    expectCashFlowParity(workingYear, rust.yearlyProjections[1], [
+      'year',
+      'age',
+      'income',
+      'spending',
+      'taxes',
+      'savings',
+      'withdrawalTaxable',
+      'withdrawalTraditional',
+      'insufficientFunds',
+    ]);
+  });
+
+  it('agrees on a household where both spouses are past 65', async () => {
+    const typescript = projectScenario(seniorCouplePlan, { paths: 1, seed: 42 });
+    const rust = await runRust(seniorCouplePlan);
+
+    expect(rust.successProbability).toBe(typescript.success ? 1 : 0);
+    expectCashFlowParity(typescript.projections[0], rust.yearlyProjections[0], [
+      'year',
+      'age',
+      'taxes',
+      'socialSecurityBenefit',
+      'withdrawalTaxable',
+      'withdrawalTraditional',
+      'rmdAmount',
+      'insufficientFunds',
+    ]);
   });
 
   it('matches exact first-year Social Security surplus cash flows', async () => {

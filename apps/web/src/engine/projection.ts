@@ -4,12 +4,14 @@ import type {
   AccountType,
   PathResult,
   PathProjection,
-  FilingStatus,
+  State,
 } from '@/domain/types';
 import {
   calculateWorkingCashFlow,
   calculateRetirementTax,
+  householdOf,
   type ContributionPolicy,
+  type Household,
 } from './tax';
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
@@ -179,6 +181,7 @@ function projectScenarioInternal(
   
   for (let year = 0; year < totalYears; year++) {
     const currentAge = age + year;
+    const taxYear = currentYear + year;
     const isRetired = currentAge >= profile.retirementAge;
 
     
@@ -254,15 +257,15 @@ function projectScenarioInternal(
       rmdAmount = withdrawalTraditionalYear;
       const annualizedRmdIncome = withdrawalTraditionalYear / periodFraction;
       const taxableGainRatio = plan.assumptions.taxableGainRatio ?? 0.5;
-      let workingCashFlow = calculateWorkingCashFlow(
-        annualSalary,
-        annualWorkingSpending,
-        currentAge,
-        profile.filingStatus,
-        profile.state,
+      let workingCashFlow = calculateWorkingCashFlow({
+        grossIncome: annualSalary,
+        annualSpending: annualWorkingSpending,
+        household: householdOf(profile.filingStatus, currentAge),
+        state: profile.state,
+        taxYear,
         policy,
-        { ordinary: annualizedRmdIncome, qualified: 0 },
-      );
+        other: { ordinary: annualizedRmdIncome, qualified: 0 },
+      });
 
       // Spending above after-tax income is funded from the portfolio, exactly as
       // it is in retirement — it is a drawdown, not a failure. Traditional
@@ -270,16 +273,19 @@ function projectScenarioInternal(
       // so each pass re-converges the tax the withdrawal itself creates.
       // Traditional already counts as income inside fundingGap; the other
       // buckets are principal and have to be credited separately.
+      // Each draw creates income, which raises the gap, which needs a further
+      // draw. The step shrinks by roughly the marginal rate each pass, so this
+      // converges quickly — but it has to actually converge, because the
+      // remainder left over is what decides whether the year was funded.
       let shortfallPrincipal = 0;
       let shortfallGains = 0;
-      let unfunded = 0;
-      for (let pass = 0; pass < 4; pass++) {
-        unfunded = workingCashFlow.fundingGap * periodFraction - shortfallPrincipal;
-        if (unfunded <= SHORTFALL_TOLERANCE) {
-          unfunded = 0;
-          break;
-        }
-        const drawn = withdrawInOrder(accountBalances, unfunded);
+      for (let pass = 0; pass < 12; pass++) {
+        const remaining = Math.max(
+          0,
+          workingCashFlow.fundingGap * periodFraction - shortfallPrincipal,
+        );
+        if (remaining <= SHORTFALL_TOLERANCE) break;
+        const drawn = withdrawInOrder(accountBalances, remaining);
         if (drawn.total <= SHORTFALL_TOLERANCE) break; // portfolio exhausted
         withdrawalTaxableYear += drawn.taxable;
         withdrawalTraditionalYear += drawn.traditional;
@@ -287,19 +293,26 @@ function projectScenarioInternal(
         withdrawalHSAYear += drawn.hsa;
         shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa;
         shortfallGains += drawn.taxable * taxableGainRatio;
-        workingCashFlow = calculateWorkingCashFlow(
-          annualSalary,
-          annualWorkingSpending,
-          currentAge,
-          profile.filingStatus,
-          profile.state,
+        workingCashFlow = calculateWorkingCashFlow({
+          grossIncome: annualSalary,
+          annualSpending: annualWorkingSpending,
+          household: householdOf(profile.filingStatus, currentAge),
+          state: profile.state,
+          taxYear,
           policy,
-          {
+          other: {
             ordinary: withdrawalTraditionalYear / periodFraction,
             qualified: shortfallGains / periodFraction,
           },
-        );
+        });
       }
+
+      // The shortfall that survived every draw — measured once, after the loop,
+      // rather than left holding whatever the last pass tried.
+      const unfunded = Math.max(
+        0,
+        workingCashFlow.fundingGap * periodFraction - shortfallPrincipal,
+      );
 
       const taxResult = workingCashFlow.tax;
       // Only true ruin counts as failure: the portfolio could not cover the gap.
@@ -381,7 +394,11 @@ function projectScenarioInternal(
         executeOrderedWithdrawals(
           targetSpending,
           accountBalances,
-          { age: currentAge, filingStatus: profile.filingStatus, state: profile.state },
+          {
+            household: householdOf(profile.filingStatus, currentAge),
+            state: profile.state,
+            taxYear,
+          },
           socialSecurityBenefit,
           rmdAmount,
           plan.assumptions.taxableGainRatio ?? 0.5,
@@ -759,7 +776,7 @@ function depositToBucket(
 function executeOrderedWithdrawals(
   targetSpending: number,
   accountBalances: ProjectionAccount[],
-  profile: { age: number; filingStatus: FilingStatus; state: string },
+  profile: { household: Household; state: State; taxYear: number },
   socialSecurityBenefit: number,
   rmdAmount: number,
   taxableGainRatio: number,
@@ -853,14 +870,14 @@ function executeOrderedWithdrawals(
       }
     }
 
-    const totalTaxes = calculateRetirementTax(
-      withdrawalTraditional,
+    const totalTaxes = calculateRetirementTax({
+      traditionalWithdrawals: withdrawalTraditional,
       socialSecurityBenefit,
       qualifiedIncome,
-      profile.age,
-      profile.filingStatus,
-      profile.state,
-    ).totalTax;
+      household: profile.household,
+      state: profile.state,
+      taxYear: profile.taxYear,
+    }).totalTax;
     const totalWithdrawn = withdrawalTaxable
       + withdrawalTraditional
       + withdrawalRoth

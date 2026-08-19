@@ -12,11 +12,12 @@ use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{
-    calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy, OtherIncome,
+    calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy, Household,
+    OtherIncome,
 };
 
 use crate::types::{
-    Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult, RetirementPlan,
+    Account, AccountType, AssetWeights, PathProjection, PathResult, RetirementPlan,
     State, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
@@ -269,6 +270,8 @@ fn project_scenario_internal(
 
     for year in 0..total_years {
         let current_age = age + year;
+        let tax_year = current_year + year as i32;
+        let household = Household::single(profile.filing_status.clone(), current_age);
         let is_retired = current_age >= profile.retirement_age;
 
         let mut rmd_amount = 0.0;
@@ -362,9 +365,9 @@ fn project_scenario_internal(
             let mut working_cash_flow = calculate_working_cash_flow(
                 annual_salary,
                 annual_working_spending,
-                current_age,
-                &profile.filing_status,
+                &household,
                 &profile.state,
+                tax_year,
                 &policy,
                 OtherIncome {
                     ordinary: annualized_rmd_income,
@@ -379,16 +382,19 @@ fn project_scenario_internal(
             // withdrawal itself creates. Traditional already counts as income
             // inside funding_gap; the other buckets are principal and have to
             // be credited separately.
+            // Each draw creates income, which raises the gap, which needs a
+            // further draw. The step shrinks by roughly the marginal rate each
+            // pass, so this converges quickly — but it has to actually converge,
+            // because the remainder left over decides whether the year was funded.
             let mut shortfall_principal = 0.0;
             let mut shortfall_gains = 0.0;
-            let mut unfunded = 0.0;
-            for _ in 0..4 {
-                unfunded = working_cash_flow.funding_gap * period_fraction - shortfall_principal;
-                if unfunded <= SHORTFALL_TOLERANCE {
-                    unfunded = 0.0;
+            for _ in 0..12 {
+                let remaining =
+                    (working_cash_flow.funding_gap * period_fraction - shortfall_principal).max(0.0);
+                if remaining <= SHORTFALL_TOLERANCE {
                     break;
                 }
-                let drawn = withdraw_in_order(&mut accounts, unfunded);
+                let drawn = withdraw_in_order(&mut accounts, remaining);
                 if drawn.total <= SHORTFALL_TOLERANCE {
                     break; // portfolio exhausted
                 }
@@ -401,9 +407,9 @@ fn project_scenario_internal(
                 working_cash_flow = calculate_working_cash_flow(
                     annual_salary,
                     annual_working_spending,
-                    current_age,
-                    &profile.filing_status,
+                    &household,
                     &profile.state,
+                    tax_year,
                     &policy,
                     OtherIncome {
                         ordinary: withdrawal_traditional / period_fraction,
@@ -411,6 +417,11 @@ fn project_scenario_internal(
                     },
                 );
             }
+
+            // The shortfall that survived every draw — measured once, after the
+            // loop, rather than left holding whatever the last pass tried.
+            let unfunded =
+                (working_cash_flow.funding_gap * period_fraction - shortfall_principal).max(0.0);
 
             income = annual_salary * period_fraction;
             spending = annual_working_spending * period_fraction - unfunded.max(0.0);
@@ -519,9 +530,9 @@ fn project_scenario_internal(
                 target_spending,
                 &mut accounts,
                 WithdrawalContext {
-                    age: current_age,
-                    filing_status: &profile.filing_status,
+                    household: &household,
                     state: &profile.state,
+                    tax_year,
                     social_security_benefit,
                     rmd_amount,
                     taxable_gain_ratio: plan.assumptions.taxable_gain_ratio,
@@ -625,9 +636,9 @@ struct WithdrawalEvaluation {
 }
 
 struct WithdrawalContext<'a> {
-    age: u32,
-    filing_status: &'a FilingStatus,
+    household: &'a Household,
     state: &'a State,
+    tax_year: i32,
     social_security_benefit: f64,
     rmd_amount: f64,
     taxable_gain_ratio: f64,
@@ -821,9 +832,9 @@ fn evaluate_ordered_withdrawals(
         withdrawal_traditional,
         context.social_security_benefit,
         qualified_income,
-        context.age,
-        context.filing_status,
+        context.household,
         context.state,
+        context.tax_year,
     )
     .total_tax;
     let total_withdrawn =
@@ -895,6 +906,7 @@ fn is_leap_year(year: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::FilingStatus;
     use crate::types::PLAN_SCHEMA_VERSION;
     use crate::types::{
         AssetWeights, ProjectionSettings, SimulationModel, SocialSecuritySettings, UserProfile,

@@ -5,4 +5,5 @@ pub mod parametric_returns;
 pub mod projection;
 pub mod rmd;
 pub mod ssa;
+pub mod state_tax;
 pub mod tax;

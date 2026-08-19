@@ -124,6 +124,25 @@ export const CA_STANDARD_DEDUCTIONS_2025: Record<FilingStatus, number> = {
   HeadOfHousehold: 11412,
 };
 
+/**
+ * The tax year every bracket, deduction, and limit here is stated in. The
+ * engines work in real dollars, so indexed figures stay fixed against it;
+ * thresholds Congress never indexed are eroded away from it instead.
+ */
+export const TAX_LAW_YEAR = 2025;
+
+/**
+ * The OBBBA enhanced senior deduction — per qualifying individual, phased out
+ * on the household total, and scheduled to lapse after 2028.
+ */
+export const OBBBA_SENIOR_DEDUCTION = {
+  perPerson: 6_000,
+  phaseoutStartJoint: 150_000,
+  phaseoutStartOther: 75_000,
+  phaseoutRate: 0.06,
+  lastYear: 2028,
+} as const;
+
 // 2025 Retirement Account Contribution Limits
 export const RETIREMENT_LIMITS_2025 = {
   // 401(k) / 403(b) / 457(b) plans
