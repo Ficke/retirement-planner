@@ -92,9 +92,9 @@ describe('Retirement Tax Calculation', () => {
       expect(qualified.tax.federalTax).toBeLessThan(ordinary.tax.federalTax);
     });
 
-    it('reports a funding gap when spending outruns after-tax income', () => {
+    it('reports negative net cash flow when spending outruns after-tax income', () => {
       const result = calculateWorkingCashFlow({ grossIncome: 50_000, annualSpending: 60_000, household: householdOf('Single', 40), state: 'TX', taxYear: 2026, policy: { hsaEligible: false, useBackdoorRoth: false } });
-      expect(result.fundingGap).toBeGreaterThan(10_000);
+      expect(result.netCashFlow).toBeLessThan(-10_000);
       expect(result.totalContributions).toBe(0);
     });
   });

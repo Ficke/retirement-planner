@@ -82,8 +82,10 @@ pub struct TaxResult {
 pub struct WorkingCashFlowResult {
     pub tax: TaxResult,
     pub contributions: AnnualContributions,
-    /// Spending above after-tax income. The portfolio covers it; not a failure.
-    pub funding_gap: f64,
+    /// Cash left once taxes, spending, and pretax contributions are paid.
+    /// Negative means the portfolio has to cover the difference; that is a
+    /// drawdown, not a failure.
+    pub net_cash_flow: f64,
 }
 
 /// Income reaching the household from somewhere other than wages — RMDs and
@@ -554,7 +556,6 @@ pub fn calculate_working_cash_flow(
         - annual_spending
         - tax.hsa_contribution
         - tax.k401_contribution;
-    let funding_gap = (-cash_after_pretax_and_spending).max(0.0);
     let after_tax_budget = cash_after_pretax_and_spending.max(0.0);
     let roth = if policy.use_backdoor_roth {
         get_ira_contribution_limit(primary_age).min(after_tax_budget)
@@ -572,7 +573,7 @@ pub fn calculate_working_cash_flow(
     WorkingCashFlowResult {
         tax,
         contributions,
-        funding_gap,
+        net_cash_flow: cash_after_pretax_and_spending,
     }
 }
 
@@ -919,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn working_cash_flow_reports_a_funding_gap() {
+    fn working_cash_flow_reports_a_shortfall() {
         let underfunded = calculate_working_cash_flow(
             50_000.0,
             60_000.0,
@@ -932,7 +933,7 @@ mod tests {
             },
             OtherIncome::default(),
         );
-        assert!(underfunded.funding_gap > 10_000.0);
+        assert!(underfunded.net_cash_flow < -10_000.0);
     }
 
     #[test]

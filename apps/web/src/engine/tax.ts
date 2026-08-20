@@ -60,8 +60,12 @@ export interface WorkingCashFlowResult {
   tax: TaxResult;
   contributions: AnnualContributions;
   totalContributions: number;
-  /** Spending above after-tax income. The portfolio covers it; it is not a failure. */
-  fundingGap: number;
+  /**
+   * Cash left once taxes, spending, and pretax contributions are paid.
+   * Negative means the portfolio has to cover the difference; that is a
+   * drawdown, not a failure.
+   */
+  netCashFlow: number;
 }
 
 interface PretaxContributionTargets {
@@ -359,7 +363,6 @@ export function calculateWorkingCashFlow(
     - annualSpending
     - tax.hsaContribution
     - tax.k401Contribution;
-  const fundingGap = Math.max(0, -cashAfterPretaxAndSpending);
   const afterTaxBudget = Math.max(0, cashAfterPretaxAndSpending);
   const roth = policy.useBackdoorRoth
     ? Math.min(getIRAContributionLimit(primaryAge), afterTaxBudget)
@@ -376,7 +379,7 @@ export function calculateWorkingCashFlow(
     tax,
     contributions,
     totalContributions: Object.values(contributions).reduce((sum, value) => sum + value, 0),
-    fundingGap,
+    netCashFlow: cashAfterPretaxAndSpending,
   };
 }
 

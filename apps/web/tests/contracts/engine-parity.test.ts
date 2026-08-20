@@ -133,6 +133,43 @@ const workingShortfallPlan: SimulationPlan = {
   assumptions,
 };
 
+type PenalizedBucket = 'Traditional' | 'HSA';
+
+/**
+ * The same shortfall, funded from a bucket that charges a penalty before 60.
+ * The penalty is cash the tax model never sees, so it has to be netted the same
+ * way in both engines or the loop that sizes the draw stops somewhere else. One
+ * bucket per plan, deep enough to fund every year: a draw that spilled into a
+ * second bucket would split on balances, and balances follow each engine's own
+ * market draws.
+ */
+const penaltyShortfallPlan = (bucket: PenalizedBucket): SimulationPlan => ({
+  schemaVersion: 4,
+  profile: {
+    birthDate: '1986-01-01',
+    state: 'TX',
+    filingStatus: 'Single',
+    retirementAge: 45,
+    currentSalary: 50_000,
+    salaryGrowthRate: 0,
+    currentSpending: 120_000,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 120_000,
+    retirementSpendingGrowthRate: 0,
+    lifeExpectancy: 46,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    asOfDate: '2026-01-01',
+  },
+  accounts: [{ type: bucket, balance: 5_000_000, assetWeights: { stocks: 0.6, bonds: 0.4 } }],
+  socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+  assumptions,
+});
+
+const penaltyShortfallPlans: Array<{ bucket: PenalizedBucket; plan: SimulationPlan }> = [
+  { bucket: 'Traditional', plan: penaltyShortfallPlan('Traditional') },
+  { bucket: 'HSA', plan: penaltyShortfallPlan('HSA') },
+];
+
 /** Both spouses past 65, where the per-person senior deductions have to agree. */
 const seniorCouplePlan: SimulationPlan = {
   schemaVersion: 4,
@@ -300,6 +337,39 @@ describe('TypeScript/Rust engine contract', () => {
     expect(legacy.results[0].id).toBe('contract');
     expect(legacy.results[0].result.yearlyProjections.length).toBeGreaterThan(0);
   });
+
+  it.each(penaltyShortfallPlans)(
+    'penalizes an early working-year $bucket draw identically in both engines',
+    async ({ bucket, plan }) => {
+      const typescript = projectScenario(plan, { paths: 1, seed: 42 });
+      const rust = await runRust(plan);
+
+      const workingYear = typescript.projections[1];
+      const drawn = bucket === 'Traditional'
+        ? workingYear.withdrawalTraditional
+        : workingYear.withdrawalHSA;
+      // The fixture only means anything if the draw really was penalized.
+      expect(drawn).toBeGreaterThan(0);
+      expect(workingYear.age).toBeLessThan(59);
+      // Salary plus the draw, less taxes and the penalty, is what got spent.
+      expect(workingYear.income + drawn - workingYear.taxes)
+        .toBeCloseTo(workingYear.spending, 6);
+      expect(workingYear.insufficientFunds).toBe(false);
+
+      expect(rust.successProbability).toBe(typescript.success ? 1 : 0);
+      expectCashFlowParity(workingYear, rust.yearlyProjections[1], [
+        'year',
+        'age',
+        'income',
+        'spending',
+        'taxes',
+        'savings',
+        'withdrawalTraditional',
+        'withdrawalHSA',
+        'insufficientFunds',
+      ]);
+    },
+  );
 
   it('taxes a working-year shortfall draw identically in both engines', async () => {
     const typescript = projectScenario(workingShortfallPlan, { paths: 1, seed: 42 });

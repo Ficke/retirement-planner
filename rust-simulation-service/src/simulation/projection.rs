@@ -38,6 +38,13 @@ const BUCKET_ORDER: [AccountType; 4] = [
 /// Cash tolerance, in dollars, below which a shortfall is considered funded.
 const SHORTFALL_TOLERANCE: f64 = 1.0;
 
+/// Each pass of the shortfall loop leaves roughly the marginal tax rate plus the
+/// penalty rate of the step before it, so the worst case a household can reach —
+/// top federal plus NIIT plus California plus a 20% HSA penalty, near 0.74 —
+/// needs this many passes to land inside the tolerance. Every pass but the last
+/// is skipped in the common case, since the loop exits once the year is funded.
+const SHORTFALL_PASSES: usize = 50;
+
 /// Traditional money taken before 59½ owes this on top of ordinary income.
 const EARLY_TRADITIONAL_PENALTY_RATE: f64 = 0.10;
 const TRADITIONAL_PENALTY_AGE: u32 = 60;
@@ -422,35 +429,43 @@ fn project_scenario_internal(
             rmd_amount = withdrawal_traditional;
             let annualized_rmd_income = withdrawal_traditional / period_fraction;
             let taxable_gain_ratio = plan.assumptions.taxable_gain_ratio;
-            let mut working_cash_flow = calculate_working_cash_flow(
-                annual_salary,
-                annual_working_spending,
-                &household,
-                &profile.state,
-                tax_year,
-                &policy,
-                OtherIncome {
-                    ordinary: annualized_rmd_income,
-                    qualified: 0.0,
-                },
-            );
+            // An early-withdrawal penalty is cash out the door, not a tax on
+            // income, so the cash-flow model sees it the way it sees spending:
+            // it shrinks what is left to invest and widens the gap the
+            // portfolio has to close.
+            let cash_flow_with = |penalties: f64, ordinary: f64, qualified: f64| {
+                calculate_working_cash_flow(
+                    annual_salary,
+                    annual_working_spending + penalties / period_fraction,
+                    &household,
+                    &profile.state,
+                    tax_year,
+                    &policy,
+                    OtherIncome {
+                        ordinary,
+                        qualified,
+                    },
+                )
+            };
+            let mut working_cash_flow = cash_flow_with(0.0, annualized_rmd_income, 0.0);
 
             // Spending above after-tax income is funded from the portfolio,
             // exactly as it is in retirement — it is a drawdown, not a failure.
             // Traditional withdrawals are ordinary income and taxable
             // withdrawals realize gains, so each pass re-converges the tax the
-            // withdrawal itself creates. Traditional already counts as income
-            // inside funding_gap; the other buckets are principal and have to
-            // be credited separately.
+            // withdrawal itself creates.
             // Each draw creates income, which raises the gap, which needs a
             // further draw. The step shrinks by roughly the marginal rate each
             // pass, so this converges quickly — but it has to actually converge,
-            // because the remainder left over decides whether the year was funded.
+            // because the remainder left over decides whether the year was
+            // funded. Hence signed `net_cash_flow` rather than a gap floored at
+            // zero: once the gap closes, a zero floor hides the cash a draw
+            // still owes and asks for another draw, which owes more again.
             let mut shortfall_principal = 0.0;
             let mut shortfall_gains = 0.0;
             let mut working_penalties = 0.0;
-            for _ in 0..12 {
-                let remaining = (working_cash_flow.funding_gap * period_fraction
+            for _ in 0..SHORTFALL_PASSES {
+                let remaining = (-working_cash_flow.net_cash_flow * period_fraction
                     - shortfall_principal)
                     .max(0.0);
                 if remaining <= SHORTFALL_TOLERANCE {
@@ -464,37 +479,29 @@ fn project_scenario_internal(
                 withdrawal_traditional += drawn.traditional;
                 withdrawal_roth += drawn.roth;
                 withdrawal_hsa += drawn.hsa;
-                // Traditional is credited as income by the tax call below; the
-                // other buckets are principal. A penalty is cash out the door
-                // either way, so it comes off what the draw actually raised.
-                let pass_penalties = penalties_on(drawn.traditional, drawn.hsa, current_age);
-                working_penalties += pass_penalties;
-                shortfall_principal += drawn.taxable + drawn.roth + drawn.hsa - pass_penalties;
+                // Traditional and HSA reach the cash-flow model as income; only
+                // the buckets it never sees are principal it has to be credited
+                // with.
+                working_penalties += penalties_on(drawn.traditional, drawn.hsa, current_age);
+                shortfall_principal += drawn.taxable + drawn.roth;
                 shortfall_gains += drawn.taxable * taxable_gain_ratio;
-                working_cash_flow = calculate_working_cash_flow(
-                    annual_salary,
-                    annual_working_spending,
-                    &household,
-                    &profile.state,
-                    tax_year,
-                    &policy,
-                    OtherIncome {
-                        // A working-year HSA draw is not paying a modeled
-                        // medical cost, so it is an ordinary distribution
-                        // rather than a tax-free one.
-                        ordinary: (withdrawal_traditional + withdrawal_hsa) / period_fraction,
-                        qualified: shortfall_gains / period_fraction,
-                    },
+                working_cash_flow = cash_flow_with(
+                    working_penalties,
+                    // A working-year HSA draw is not paying a modeled medical
+                    // cost, so it is an ordinary distribution rather than a
+                    // tax-free one.
+                    (withdrawal_traditional + withdrawal_hsa) / period_fraction,
+                    shortfall_gains / period_fraction,
                 );
             }
 
             // The shortfall that survived every draw — measured once, after the
             // loop, rather than left holding whatever the last pass tried.
             let unfunded =
-                (working_cash_flow.funding_gap * period_fraction - shortfall_principal).max(0.0);
+                (-working_cash_flow.net_cash_flow * period_fraction - shortfall_principal).max(0.0);
 
             income = annual_salary * period_fraction;
-            spending = annual_working_spending * period_fraction - unfunded.max(0.0);
+            spending = annual_working_spending * period_fraction - unfunded;
             taxes = working_cash_flow.tax.total_tax * period_fraction + working_penalties;
             // Only true ruin counts as failure: the portfolio could not cover it.
             insufficient_funds = unfunded > SHORTFALL_TOLERANCE;

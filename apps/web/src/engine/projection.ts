@@ -34,6 +34,15 @@ const BUCKET_ORDER: AccountType[] = ['Taxable', 'Traditional', 'Roth', 'HSA'];
 /** Cash tolerance, in dollars, below which a shortfall is considered funded. */
 const SHORTFALL_TOLERANCE = 1;
 
+/**
+ * Each pass of the shortfall loop leaves roughly the marginal tax rate plus the
+ * penalty rate of the step before it, so the worst case a household can reach —
+ * top federal plus NIIT plus California plus a 20% HSA penalty, near 0.74 — needs
+ * this many passes to land inside the tolerance. Every pass but the last is
+ * skipped in the common case, since the loop exits as soon as the year is funded.
+ */
+const SHORTFALL_PASSES = 50;
+
 /** Traditional money taken before 59½ owes this on top of ordinary income. */
 const EARLY_TRADITIONAL_PENALTY_RATE = 0.10;
 const TRADITIONAL_PENALTY_AGE = 60;
@@ -269,33 +278,39 @@ function projectScenarioInternal(
       rmdAmount = withdrawalTraditionalYear;
       const annualizedRmdIncome = withdrawalTraditionalYear / periodFraction;
       const taxableGainRatio = plan.assumptions.taxableGainRatio ?? 0.5;
-      let workingCashFlow = calculateWorkingCashFlow({
-        grossIncome: annualSalary,
-        annualSpending: annualWorkingSpending,
-        household: householdOf(profile.filingStatus, currentAge),
-        state: profile.state,
-        taxYear,
-        policy,
-        other: { ordinary: annualizedRmdIncome, qualified: 0 },
-      });
+      // An early-withdrawal penalty is cash out the door, not a tax on income,
+      // so the cash-flow model sees it the way it sees spending: it shrinks
+      // what is left to invest and widens the gap the portfolio has to close.
+      const cashFlowWith = (penalties: number, ordinary: number, qualified: number) =>
+        calculateWorkingCashFlow({
+          grossIncome: annualSalary,
+          annualSpending: annualWorkingSpending + penalties / periodFraction,
+          household: householdOf(profile.filingStatus, currentAge),
+          state: profile.state,
+          taxYear,
+          policy,
+          other: { ordinary, qualified },
+        });
+      let workingCashFlow = cashFlowWith(0, annualizedRmdIncome, 0);
 
       // Spending above after-tax income is funded from the portfolio, exactly as
       // it is in retirement — it is a drawdown, not a failure. Traditional
       // withdrawals are ordinary income and taxable withdrawals realize gains,
       // so each pass re-converges the tax the withdrawal itself creates.
-      // Traditional already counts as income inside fundingGap; the other
-      // buckets are principal and have to be credited separately.
       // Each draw creates income, which raises the gap, which needs a further
       // draw. The step shrinks by roughly the marginal rate each pass, so this
       // converges quickly — but it has to actually converge, because the
-      // remainder left over is what decides whether the year was funded.
+      // remainder left over is what decides whether the year was funded. Hence
+      // signed `netCashFlow` rather than a gap floored at zero: once the gap
+      // closes, a zero floor hides the cash a draw still owes and asks for
+      // another draw, which owes more again.
       let shortfallPrincipal = 0;
       let shortfallGains = 0;
       let workingPenalties = 0;
-      for (let pass = 0; pass < 12; pass++) {
+      for (let pass = 0; pass < SHORTFALL_PASSES; pass++) {
         const remaining = Math.max(
           0,
-          workingCashFlow.fundingGap * periodFraction - shortfallPrincipal,
+          -workingCashFlow.netCashFlow * periodFraction - shortfallPrincipal,
         );
         if (remaining <= SHORTFALL_TOLERANCE) break;
         const drawn = withdrawInOrder(accountBalances, remaining);
@@ -304,41 +319,32 @@ function projectScenarioInternal(
         withdrawalTraditionalYear += drawn.traditional;
         withdrawalRothYear += drawn.roth;
         withdrawalHSAYear += drawn.hsa;
-        // Traditional is credited as income by the tax call below; the other
-        // buckets are principal. A penalty is cash out the door either way, so
-        // it comes off what the draw actually raised.
-        const passPenalties = penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
-        workingPenalties += passPenalties;
-        shortfallPrincipal += drawn.taxable + drawn.roth + drawn.hsa - passPenalties;
+        // Traditional and HSA reach the cash-flow model as income; only the
+        // buckets it never sees are principal it has to be credited with.
+        workingPenalties += penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
+        shortfallPrincipal += drawn.taxable + drawn.roth;
         shortfallGains += drawn.taxable * taxableGainRatio;
-        workingCashFlow = calculateWorkingCashFlow({
-          grossIncome: annualSalary,
-          annualSpending: annualWorkingSpending,
-          household: householdOf(profile.filingStatus, currentAge),
-          state: profile.state,
-          taxYear,
-          policy,
-          other: {
-            // A working-year HSA draw is not paying a modeled medical cost, so
-            // it is an ordinary distribution rather than a tax-free one.
-            ordinary: (withdrawalTraditionalYear + withdrawalHSAYear) / periodFraction,
-            qualified: shortfallGains / periodFraction,
-          },
-        });
+        workingCashFlow = cashFlowWith(
+          workingPenalties,
+          // A working-year HSA draw is not paying a modeled medical cost, so it
+          // is an ordinary distribution rather than a tax-free one.
+          (withdrawalTraditionalYear + withdrawalHSAYear) / periodFraction,
+          shortfallGains / periodFraction,
+        );
       }
 
       // The shortfall that survived every draw — measured once, after the loop,
       // rather than left holding whatever the last pass tried.
       const unfunded = Math.max(
         0,
-        workingCashFlow.fundingGap * periodFraction - shortfallPrincipal,
+        -workingCashFlow.netCashFlow * periodFraction - shortfallPrincipal,
       );
 
       const taxResult = workingCashFlow.tax;
       // Only true ruin counts as failure: the portfolio could not cover the gap.
       insufficientFundsYear = unfunded > SHORTFALL_TOLERANCE;
       income = annualSalary * periodFraction;
-      spending = annualWorkingSpending * periodFraction - Math.max(0, unfunded);
+      spending = annualWorkingSpending * periodFraction - unfunded;
       taxes = taxResult.totalTax * periodFraction + workingPenalties;
 
       // The residual is fully invested, so the buckets receive all of it and
