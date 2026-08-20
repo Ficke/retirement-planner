@@ -45,7 +45,10 @@ const SHORTFALL_TOLERANCE: f64 = 1.0;
 /// is skipped in the common case, since the loop exits once the year is funded.
 const SHORTFALL_PASSES: usize = 50;
 
-/// Traditional money taken before 59½ owes this on top of ordinary income.
+/// Traditional money taken before 59½ owes this on top of ordinary income. Ages
+/// here are whole years, which 59½ falls between, so the penalty is charged
+/// through 59 and dropped at 60 — the side that overstates the cost rather than
+/// the one that hands a household a year of free withdrawals.
 const EARLY_TRADITIONAL_PENALTY_RATE: f64 = 0.10;
 const TRADITIONAL_PENALTY_AGE: u32 = 60;
 

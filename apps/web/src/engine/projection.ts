@@ -43,7 +43,12 @@ const SHORTFALL_TOLERANCE = 1;
  */
 const SHORTFALL_PASSES = 50;
 
-/** Traditional money taken before 59½ owes this on top of ordinary income. */
+/**
+ * Traditional money taken before 59½ owes this on top of ordinary income. Ages
+ * here are whole years, which 59½ falls between, so the penalty is charged
+ * through 59 and dropped at 60 — the side that overstates the cost rather than
+ * the one that hands a household a year of free withdrawals.
+ */
 const EARLY_TRADITIONAL_PENALTY_RATE = 0.10;
 const TRADITIONAL_PENALTY_AGE = 60;
 
