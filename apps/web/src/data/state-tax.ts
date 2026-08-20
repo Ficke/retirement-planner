@@ -20,8 +20,8 @@ import {
 
 /**
  * Whether a plan in this state gets a real answer. `not-modeled` is a first
- * class value, not an absence — the UI reads it to say so rather than quietly
- * reporting zero.
+ * class value, not an absence: a state with no income tax and a state nobody
+ * has modeled yet both compute zero, and this is what separates them.
  */
 export type StateTaxStatus = 'modeled' | 'no-income-tax' | 'not-modeled';
 

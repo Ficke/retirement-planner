@@ -4,9 +4,14 @@
  * state table in apps/web/src/data/state-tax.ts and the bracket schedules it
  * references, so both simulation engines tax a state identically.
  *
+ * The output goes through rustfmt, which CI checks separately: emitting
+ * anything else would leave a file that fails one check or the other whichever
+ * way it is written. Needs rustfmt on PATH.
+ *
  * Usage: node scripts/gen-rust-state-tax.mjs [--check]
  */
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -195,7 +200,7 @@ pub enum StateTaxStatus {
 #[derive(Debug, Clone)]
 pub struct StateTaxProfile {
     // Name and status exist so this table stays a faithful copy of the
-    // TypeScript one; only the web UI reads them.
+    // TypeScript one. Nothing in the service reads them.
     #[allow(dead_code)]
     pub name: &'static str,
     #[allow(dead_code)]
@@ -226,6 +231,17 @@ ${deductionArms(states)}
 }
 `;
 
+const formatted = (() => {
+  try {
+    return execFileSync('rustfmt', ['--emit', 'stdout', '--edition', '2021'], {
+      input: generated,
+      encoding: 'utf8',
+    });
+  } catch (error) {
+    throw new Error(`rustfmt failed; is it on PATH? (${error.message})`);
+  }
+})();
+
 const existing = (() => {
   try {
     return readFileSync(rsPath, 'utf8');
@@ -235,12 +251,12 @@ const existing = (() => {
 })();
 
 if (checkOnly) {
-  if (existing !== generated) {
+  if (existing !== formatted) {
     console.error(`${rsPath} is stale. Run: node scripts/gen-rust-state-tax.mjs`);
     process.exit(1);
   }
   console.log(`state_tax.rs is up to date (${states.length} states).`);
 } else {
-  writeFileSync(rsPath, generated);
+  writeFileSync(rsPath, formatted);
   console.log(`Wrote ${rsPath} (${states.length} states).`);
 }

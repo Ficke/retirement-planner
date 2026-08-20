@@ -18,7 +18,7 @@ pub enum StateTaxStatus {
 #[derive(Debug, Clone)]
 pub struct StateTaxProfile {
     // Name and status exist so this table stays a faithful copy of the
-    // TypeScript one; only the web UI reads them.
+    // TypeScript one. Nothing in the service reads them.
     #[allow(dead_code)]
     pub name: &'static str,
     #[allow(dead_code)]
