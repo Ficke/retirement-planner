@@ -291,7 +291,8 @@ pub fn deduction_for(
     // Married filing separately is not eligible, and the enhanced deduction is
     // scheduled to lapse after 2028. Its phaseout applies to the household total
     // rather than to each person's share.
-    if matches!(filing_status, FilingStatus::MarriedFilingSeparately) || tax_year > OBBBA_LAST_YEAR {
+    if matches!(filing_status, FilingStatus::MarriedFilingSeparately) || tax_year > OBBBA_LAST_YEAR
+    {
         return deduction;
     }
 
@@ -794,7 +795,10 @@ mod tests {
         let one = Household::new(FilingStatus::MarriedFilingJointly, vec![66, 60]);
         let both = Household::new(FilingStatus::MarriedFilingJointly, vec![66, 67]);
         // Each qualifying spouse adds $1,600 and another $6,000 of OBBBA.
-        assert_eq!(deduction_for(&both, 2026, 50_000.0) - deduction_for(&one, 2026, 50_000.0), 7_600.0);
+        assert_eq!(
+            deduction_for(&both, 2026, 50_000.0) - deduction_for(&one, 2026, 50_000.0),
+            7_600.0
+        );
     }
 
     #[test]
@@ -811,12 +815,28 @@ mod tests {
         };
         let household = Household::single(FilingStatus::Single, 45);
         let wages_only = calculate_working_cash_flow(
-            200_000.0, 60_000.0, &household, &State::CA, 2026, &policy,
-            OtherIncome { ordinary: 0.0, qualified: 0.0 },
+            200_000.0,
+            60_000.0,
+            &household,
+            &State::CA,
+            2026,
+            &policy,
+            OtherIncome {
+                ordinary: 0.0,
+                qualified: 0.0,
+            },
         );
         let with_gains = calculate_working_cash_flow(
-            200_000.0, 60_000.0, &household, &State::CA, 2026, &policy,
-            OtherIncome { ordinary: 0.0, qualified: 100_000.0 },
+            200_000.0,
+            60_000.0,
+            &household,
+            &State::CA,
+            2026,
+            &policy,
+            OtherIncome {
+                ordinary: 0.0,
+                qualified: 100_000.0,
+            },
         );
         assert!(with_gains.tax.total_tax > wages_only.tax.total_tax);
     }

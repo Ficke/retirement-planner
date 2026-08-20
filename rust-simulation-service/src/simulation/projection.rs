@@ -450,8 +450,9 @@ fn project_scenario_internal(
             let mut shortfall_gains = 0.0;
             let mut working_penalties = 0.0;
             for _ in 0..12 {
-                let remaining =
-                    (working_cash_flow.funding_gap * period_fraction - shortfall_principal).max(0.0);
+                let remaining = (working_cash_flow.funding_gap * period_fraction
+                    - shortfall_principal)
+                    .max(0.0);
                 if remaining <= SHORTFALL_TOLERANCE {
                     break;
                 }
