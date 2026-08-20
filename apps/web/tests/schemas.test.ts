@@ -93,7 +93,6 @@ describe('Domain Schemas', () => {
         desiredSpending: 60_000,
         spendingGrowthRate: 0.01,
         lifeExpectancy: 90,
-        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2026-01-01',
       },
       socialSecurity: { enabled: true, claimAge: 67, manualOverride: false },
@@ -107,6 +106,9 @@ describe('Domain Schemas', () => {
       // $60k target on $48k of working-year spending.
       retirementSpendingMultiplier: 1.25,
       retirementSpendingGrowthRate: 0.01,
+      retirementHealthcare: {
+        preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0,
+      },
     });
     expect(saved.profile).not.toHaveProperty('desiredSpending');
   });

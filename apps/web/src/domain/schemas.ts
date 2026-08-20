@@ -129,6 +129,12 @@ export const legacyStoredProfileSchema = z
         ?? 0,
       birthDate:
         rest.birthDate ?? birthDateFromLegacyAge(age ?? 35, birthYear, rest.asOfDate),
+      // A bundle built before healthcare existed priced none of it, so zeros --
+      // not the current defaults -- are what keep the plan it is saving the
+      // plan it thinks it is saving.
+      retirementHealthcare:
+        (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
+        ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       // A plan with no working-year spending has no ratio to recover.
       retirementSpendingMultiplier: currentSpending > 0 ? target / currentSpending : 1,
     };
