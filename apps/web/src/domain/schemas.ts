@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ageOn, birthDateFromLegacyAge } from '@/domain/age';
+import type { UserProfile } from '@/domain/types';
 
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const [year, month, day] = value.split('-').map(Number);
@@ -161,6 +162,12 @@ export const legacySimulationProfileSchema = z
       ?? 0,
     birthDate: rest.birthDate ?? birthDateFromLegacyAge(age ?? 35, birthYear, rest.asOfDate),
     retirementSpending: retirementSpending ?? desiredSpending ?? rest.currentSpending ?? 0,
+    // A bundle built before healthcare existed priced none of it, so zeros --
+    // not the current defaults -- are what reproduce the projection it expects.
+    // Matches the Rust service, where the field carries #[serde(default)].
+    retirementHealthcare:
+      (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
+      ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
   }))
   .pipe(simulationProfileSchema);
 

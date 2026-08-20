@@ -48,6 +48,8 @@ const legacyPlan = {
     workingSpendingGrowthRate: undefined,
     retirementSpending: undefined,
     retirementSpendingGrowthRate: undefined,
+    // A bundle this old predates the healthcare block entirely.
+    retirementHealthcare: undefined,
     desiredSpending: 55000,
     spendingGrowthRate: 0.02,
   },
@@ -72,6 +74,20 @@ describe('simulation request limits', () => {
     const result = monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.plan.assumptions.randomSeed).toBe(42);
+  });
+
+  it('prices no healthcare for a bundle that predates it, rather than rejecting it', () => {
+    // The legacy branch exists so a browser mid-rollout keeps working. Requiring
+    // a block that bundle never sent would 400 exactly the clients it protects.
+    const result = monteCarloRequestSchema.safeParse({ plan: legacyPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.plan.profile.retirementHealthcare).toEqual({
+      preMedicarePremium: 0,
+      medicarePremium: 0,
+      outOfPocket: 0,
+      realGrowthRate: 0,
+    });
   });
 
   it('accepts and normalizes a legacy browser request without changing its semantics version', () => {
