@@ -41,6 +41,7 @@ import {
   PageHeader,
   PageShell,
 } from "@/components/retire/ui";
+import { fmtCurrency } from "../format";
 
 export function PageSettings() {
   const {
@@ -61,6 +62,7 @@ export function PageSettings() {
     assumptions: Parameters<typeof updatePlan>[0]["assumptions"],
   ) => updatePlan({ assumptions });
   const a = plan.assumptions;
+  const hc = plan.profile.retirementHealthcare;
 
   const signedIn = user != null && authUser != null;
   const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
@@ -254,6 +256,11 @@ export function PageSettings() {
                 label="Taxable withdrawal gain share"
                 value={`${(a.taxableGainRatio * 100).toFixed(0)}%`}
                 source="Your modeling assumption"
+              />
+              <ReferenceRow
+                label="Retirement healthcare — before / from 65"
+                value={`${fmtCurrency(hc.preMedicarePremium + hc.outOfPocket)} / ${fmtCurrency(hc.medicarePremium + hc.outOfPocket)}`}
+                source="Yours to set, on the Profile page"
               />
             </TableBody>
           </Table>

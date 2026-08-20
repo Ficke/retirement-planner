@@ -18,6 +18,7 @@ import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { ageOn, birthYearOf } from '@/domain/age';
 import { MEDICARE_AGE } from '@/domain/constants';
+import { healthcareCostFor } from '@/domain/healthcare';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 import {
   ANNUAL_PORTFOLIO_FEE,
@@ -39,30 +40,6 @@ const TRADITIONAL_PENALTY_AGE = 60;
 
 /** An HSA distribution that is not for medical care, taken before 65. */
 const NON_QUALIFIED_HSA_PENALTY_RATE = 0.20;
-
-/**
- * Retirement healthcare for one year: premiums step down at Medicare, while
- * out-of-pocket cost barely moves across that line.
- *
- * `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
- * not on that list — HSAs cover premiums only for COBRA, coverage during
- * unemployment, Medicare, and long-term care — so folding them in would hand an
- * early retiree a large tax break they do not have.
- */
-function healthcareCostFor(
-  healthcare: SimulationPlan['profile']['retirementHealthcare'],
-  age: number,
-  yearsRetired: number,
-): { total: number; qualified: number } {
-  const growth = Math.pow(1 + healthcare.realGrowthRate, Math.max(0, yearsRetired));
-  const onMedicare = age >= MEDICARE_AGE;
-  const premium = onMedicare ? healthcare.medicarePremium : healthcare.preMedicarePremium;
-  const outOfPocket = healthcare.outOfPocket;
-  return {
-    total: (premium + outOfPocket) * growth,
-    qualified: (outOfPocket + (onMedicare ? premium : 0)) * growth,
-  };
-}
 
 /** Drain buckets in the withdrawal order until `amount` is raised or nothing is left. */
 function withdrawInOrder(accounts: ProjectionAccount[], amount: number) {

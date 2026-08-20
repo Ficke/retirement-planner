@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 
 import { usePlan } from "@/state/usePlan";
 import { ageOn, retirementSpendingOf } from "@/domain/age";
+import { healthcareCostFor } from "@/domain/healthcare";
 import type { FilingStatus, State } from "@/domain/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,8 +57,18 @@ export function PageProfile() {
   ) => updatePlan({ socialSecurity });
   const p = plan.profile;
   const ss = plan.socialSecurity;
+  const h = p.retirementHealthcare;
+  const updateHealthcare = (patch: Partial<typeof h>) =>
+    updateProfile({ retirementHealthcare: { ...h, ...patch } });
   const age = ageOn(p.birthDate, p.asOfDate);
   const retirementSpending = retirementSpendingOf(p);
+  // An already-retired plan's first modeled year is the as-of year, so it is
+  // priced at today's age rather than at the retirement age it passed already.
+  const firstRetirementAge = Math.max(age, p.retirementAge);
+  const firstYearHealthcare = healthcareCostFor(p.retirementHealthcare, firstRetirementAge, 0).total;
+  // The engine funds healthcare on top of the spending target, so a preview
+  // that showed the target alone would understate what the plan has to cover.
+  const retirementSpendingTotal = retirementSpending + firstYearHealthcare;
 
   const workingYears = Math.max(0, p.retirementAge - age);
   const finalWorkingSpending = workingYears > 0
@@ -65,7 +76,7 @@ export function PageProfile() {
     : null;
   const retirementTransition = finalWorkingSpending == null
     ? null
-    : retirementSpending - finalWorkingSpending;
+    : retirementSpendingTotal - finalWorkingSpending;
   const retirementTransitionRate = finalWorkingSpending && retirementTransition != null
     ? retirementTransition / finalWorkingSpending
     : null;
@@ -180,7 +191,7 @@ export function PageProfile() {
                 Retirement spending now
               </div>
               <div className="mt-1 font-mono text-lg font-semibold">
-                {fmtCurrency(retirementSpending)}
+                {fmtCurrency(retirementSpendingTotal)}
               </div>
               <p className="text-muted-foreground mt-1 text-sm">
                 This plan is already retired, so the target starts in the as-of year with no
@@ -199,7 +210,7 @@ export function PageProfile() {
               />
               <SpendingPreview
                 label={`First retirement year · age ${p.retirementAge}`}
-                value={retirementSpending}
+                value={retirementSpendingTotal}
                 detail={retirementTransition == null
                   ? undefined
                   : `${fmtSigned(retirementTransition)}${retirementTransitionRate == null
@@ -208,7 +219,60 @@ export function PageProfile() {
               />
             </div>
           )}
+          {firstYearHealthcare > 0 && (
+            <p className="text-muted-foreground mt-3 text-xs">
+              Includes {fmtCurrency(firstYearHealthcare)} of healthcare, set below.
+            </p>
+          )}
         </div>
+      </DashboardCard>
+
+      <DashboardCard
+        title="Retirement healthcare"
+        description="Household totals in today's dollars, funded on top of the spending target. Premiums fall at Medicare; out-of-pocket cost barely moves."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <CurrencyField
+            label="Premiums before 65"
+            value={h.preMedicarePremium}
+            onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
+          />
+          <CurrencyField
+            label="Premiums from 65"
+            value={h.medicarePremium}
+            onChange={(v) => updateHealthcare({ medicarePremium: v })}
+          />
+          <CurrencyField
+            label="Out-of-pocket"
+            value={h.outOfPocket}
+            onChange={(v) => updateHealthcare({ outOfPocket: v })}
+          />
+          <NumberField
+            label="Growth above inflation (%)"
+            value={Number((h.realGrowthRate * 100).toFixed(1))}
+            step={0.1}
+            min={-10}
+            max={10}
+            onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
+          />
+        </div>
+        <div className="bg-muted/40 border-border mt-4 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
+          <SpendingPreview
+            label="Annual cost before 65"
+            value={h.preMedicarePremium + h.outOfPocket}
+            detail="Marketplace or COBRA coverage"
+          />
+          <SpendingPreview
+            label="Annual cost from 65"
+            value={h.medicarePremium + h.outOfPocket}
+            detail="Part B, Part D, and supplemental"
+          />
+        </div>
+        <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
+          Out-of-pocket costs, and premiums once on Medicare, are what an HSA can pay tax-free.
+          Marketplace premiums are not — an HSA covers premiums only for COBRA, unemployment,
+          Medicare, and long-term care.
+        </p>
       </DashboardCard>
 
 
