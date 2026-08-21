@@ -34,9 +34,11 @@ export function birthDateFromLegacyAge(
 /**
  * The first modeled retirement year's spending, in real dollars.
  *
- * The multiplier applies to spending as it stands at retirement, not as it
- * stands today, so this exponent has to match the one the working branch of
- * the projection compounds `currentSpending` by.
+ * The multiplier is a share of the last working year's spending, not of
+ * today's, so the exponent is one short of the working years: it lands on the
+ * final year the working branch of the projection compounds, not on the year
+ * after it. A household keeping 100% of its spending then sees no step at
+ * retirement, whatever its working drift.
  */
 export function retirementSpendingOf(profile: {
   currentSpending: number;
@@ -50,7 +52,7 @@ export function retirementSpendingOf(profile: {
     0,
     profile.retirementAge - ageOn(profile.birthDate, profile.asOfDate),
   );
-  const spendingAtRetirement = profile.currentSpending
-    * Math.pow(1 + profile.workingSpendingGrowthRate, workingYears);
-  return spendingAtRetirement * profile.retirementSpendingMultiplier;
+  const finalWorkingSpending = profile.currentSpending
+    * Math.pow(1 + profile.workingSpendingGrowthRate, Math.max(0, workingYears - 1));
+  return finalWorkingSpending * profile.retirementSpendingMultiplier;
 }

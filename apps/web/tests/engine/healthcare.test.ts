@@ -77,9 +77,16 @@ describe('retirementSpendingOf', () => {
     asOfDate: '2025-01-01',
   };
 
-  it('applies the multiplier to spending as it stands at retirement', () => {
+  it('applies the multiplier to the last working year, so 100% is no step', () => {
+    // Age 35 at the as-of date, retiring at 65: the final working year is the
+    // thirtieth, which the projection compounds twenty-nine times.
     expect(retirementSpendingOf({ ...base, workingSpendingGrowthRate: 0.01 }))
-      .toBeCloseTo(50_000 * 1.01 ** 30 * 0.8, 6);
+      .toBeCloseTo(50_000 * 1.01 ** 29 * 0.8, 6);
+    expect(retirementSpendingOf({
+      ...base,
+      retirementSpendingMultiplier: 1,
+      workingSpendingGrowthRate: 0.01,
+    })).toBeCloseTo(50_000 * 1.01 ** 29, 6);
   });
 
   it('is the plain multiple when working spending does not drift', () => {

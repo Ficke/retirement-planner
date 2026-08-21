@@ -127,7 +127,7 @@ export function PageProfile() {
             onChange={(v) => updateProfile({ currentSalary: v })}
           />
           <NumberField
-            label="Salary growth (real %)"
+            label="Growth above inflation (%)"
             value={Number((p.salaryGrowthRate * 100).toFixed(1))}
             step={0.1}
             min={-10}
@@ -137,39 +137,30 @@ export function PageProfile() {
         </div>
       </DashboardCard>
 
-      <DashboardCard
-        title="Spending"
-        description="Growth rates are real — above or below inflation."
-      >
+      <DashboardCard title="Spending">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="border-border rounded-lg border p-4">
             <div className="mb-4">
-              <h3 className="font-medium">Working years</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Set the amount on the Plan page.
-              </p>
+              <h3 className="font-medium">Spending growth while working</h3>
             </div>
             <NumberField
-              label="Annual real growth (%)"
+              label="Growth above inflation (%)"
               value={Number((p.workingSpendingGrowthRate * 100).toFixed(1))}
               step={0.1}
               min={-10}
               max={10}
+              hint="The amount itself is on the Plan page."
               onChange={(v) => updateProfile({ workingSpendingGrowthRate: v / 100 })}
             />
           </div>
 
           <div className="border-border rounded-lg border p-4">
             <div className="mb-4">
-              <h3 className="font-medium">Retirement</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                The target follows today&apos;s spending, so moving the spending lever moves both.
-                Growth applies after the first modeled year of retirement.
-              </p>
+              <h3 className="font-medium">Retirement spending</h3>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <NumberField
-                label="Share of today's spending (%)"
+                label="Share of final working spending (%)"
                 value={Number((p.retirementSpendingMultiplier * 100).toFixed(0))}
                 step={1}
                 min={0}
@@ -177,7 +168,7 @@ export function PageProfile() {
                 onChange={(v) => updateProfile({ retirementSpendingMultiplier: v / 100 })}
               />
               <NumberField
-                label="Annual real growth (%)"
+                label="Growth above inflation (%)"
                 value={Number((p.retirementSpendingGrowthRate * 100).toFixed(1))}
                 step={0.1}
                 min={-10}
@@ -198,8 +189,7 @@ export function PageProfile() {
                 {fmtCurrency(retirementSpendingTotal)}
               </div>
               <p className="text-muted-foreground mt-1 text-sm">
-                This plan is already retired, so the target starts in the as-of year with no
-                elapsed-retirement growth applied.
+                Already retired, so the target starts in the as-of year.
               </p>
             </div>
           ) : (
@@ -233,7 +223,7 @@ export function PageProfile() {
 
       <DashboardCard
         title="Retirement healthcare"
-        description="Household totals in today's dollars, funded on top of the spending target. Growth above inflation compounds from today, so the plan funds what these reach by retirement."
+        description="Today's cost for the whole household, added on top of the spending target."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <CurrencyField
@@ -280,10 +270,7 @@ export function PageProfile() {
       </DashboardCard>
 
 
-      <DashboardCard
-        title="Social Security"
-        description="Claim age is a lever on the Plan page. The estimate covers one earner and is not an SSA quote."
-      >
+      <DashboardCard title="Social Security">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <SelectField
             label="Include benefits"
@@ -295,6 +282,9 @@ export function PageProfile() {
             label="Benefit source"
             value={ss.manualOverride ? "statement" : "estimate"}
             options={[["statement", "SSA statement"], ["estimate", "Salary-based estimate"]]}
+            hint={ss.manualOverride
+              ? undefined
+              : "Estimated from one earner's salary. Not an SSA quote."}
             onChange={(value) => updateSocialSecurity({ manualOverride: value === "statement" })}
           />
           {ss.manualOverride && (
@@ -362,6 +352,7 @@ function NumberField({
   step,
   min,
   max,
+  hint,
   onChange,
 }: {
   label: string;
@@ -369,11 +360,12 @@ function NumberField({
   step?: number;
   min?: number;
   max?: number;
+  hint?: string;
   onChange: (v: number) => void;
 }) {
   const id = useId();
   return (
-    <Wrap label={label} htmlFor={id}>
+    <Wrap label={label} htmlFor={id} hint={hint}>
       <Input
         id={id}
         type="number"
