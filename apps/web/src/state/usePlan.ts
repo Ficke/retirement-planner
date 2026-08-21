@@ -1,3 +1,4 @@
+import { DEFAULT_RETIREMENT_HEALTHCARE } from '@/data/tax-brackets-2025';
 import { create } from 'zustand';
 import { birthDateFromLegacyAge } from '@/domain/age';
 import type {
@@ -139,6 +140,23 @@ function newLocalAccount(data: CreateAccountData): Account {
   };
 }
 
+/**
+ * A first visit with no accounts projects a guaranteed failure, which reads as
+ * a broken app rather than an empty one. Seeding a balance is only for a plan
+ * that has never been stored: an empty accounts array is a deletion and stays
+ * empty.
+ */
+const starterAccounts: Account[] = [
+  {
+    id: 'starter-brokerage',
+    name: 'Brokerage',
+    institution: '',
+    type: 'Taxable',
+    balance: 100_000,
+    assetWeights: { stocks: 1, bonds: 0 },
+  },
+];
+
 const defaultPlan: RetirementPlan = {
   profile: {
     birthDate: `${new Date().getFullYear() - 35}-01-01`,
@@ -152,9 +170,10 @@ const defaultPlan: RetirementPlan = {
     retirementSpendingMultiplier: 1,
     retirementSpendingGrowthRate: 0.0,
     lifeExpectancy: 90,
+    retirementHealthcare: DEFAULT_RETIREMENT_HEALTHCARE,
     asOfDate: new Date().toISOString().split('T')[0],
   },
-  accounts: [],
+  accounts: starterAccounts,
   socialSecurity: {
     enabled: true,
     claimAge: 67,
@@ -242,6 +261,10 @@ export function hydratePlan(
         ?? defaultPlan.profile.retirementSpendingGrowthRate,
       // Age and birth year were once stored separately. Rebuilding the date
       // that reproduces the stored age exactly keeps results from shifting.
+      retirementHealthcare: {
+        ...defaultPlan.profile.retirementHealthcare,
+        ...(profileInput.retirementHealthcare ?? {}),
+      },
       birthDate:
         profileInput.birthDate
         ?? birthDateFromLegacyAge(
@@ -265,7 +288,7 @@ export function hydratePlan(
       useBackdoorRoth: assumptionsInput.useBackdoorRoth
         ?? (legacyContributions ? legacyContributions.roth > 0 : true),
     },
-    accounts: Array.isArray(accountsSource) ? accountsSource : [],
+    accounts: Array.isArray(accountsSource) ? accountsSource : starterAccounts,
   });
 }
 
@@ -437,13 +460,13 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
     }
     let localProfile: ReturnType<typeof loadLocalProfile> = null;
-    let localAccounts: Account[] = [];
+    let localAccounts: Account[] | null = null;
     let hydrationError: string | null = null;
     let localHydrationFailed = false;
     let localLoadError: string | null = null;
     try {
       localProfile = loadLocalProfile(ownerId);
-      localAccounts = loadLocalAccounts(ownerId) ?? [];
+      localAccounts = loadLocalAccounts(ownerId);
     } catch (error) {
       localLoadError = error instanceof Error ? error.message : 'Browser plan data is invalid';
     }

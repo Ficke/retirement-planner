@@ -1,3 +1,5 @@
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+
 export type AccountType = 'Taxable' | 'Traditional' | 'Roth' | 'HSA';
 
 export type FilingStatus = 'Single' | 'MarriedFilingJointly' | 'MarriedFilingSeparately' | 'HeadOfHousehold';
@@ -33,6 +35,25 @@ export type UpdateAccountData = Partial<Pick<
   'name' | 'institution' | 'type' | 'balance' | 'assetWeights'
 >>;
 
+/**
+ * Retirement healthcare, which is a step at Medicare eligibility rather than a
+ * share of spending. Premiums and out-of-pocket costs are separate because
+ * Medicare, and later any subsidy or surcharge, moves only the premium.
+ *
+ * All figures are household totals in real dollars as of the plan's as-of
+ * date, which is what `realGrowthRate` compounds from.
+ */
+export interface RetirementHealthcare {
+  /** Marketplace premiums before 65. */
+  preMedicarePremium: number;
+  /** Part B, Part D, and supplemental premiums from 65. */
+  medicarePremium: number;
+  /** Deductibles, coinsurance, and what no plan covers, on both sides of 65. */
+  outOfPocket: number;
+  /** Medical inflation above CPI. */
+  realGrowthRate: number;
+}
+
 export interface UserProfile {
   /**
    * Date of birth, ISO. Age and the RMD/Social-Security birth-year cohort are
@@ -56,6 +77,11 @@ export interface UserProfile {
   /** Annual real change after the first modeled retirement year. */
   retirementSpendingGrowthRate: number;
   lifeExpectancy: number;
+  /**
+   * Healthcare in retirement, carried separately from `currentSpending` because
+   * it steps down at Medicare and grows faster than everything else.
+   */
+  retirementHealthcare: RetirementHealthcare;
   asOfDate: string; // ISO date string for when salary/projections are calculated from
 }
 
@@ -125,7 +151,7 @@ export interface SimulationProfile
 }
 
 export interface SimulationPlan extends Omit<RetirementPlan, 'accounts' | 'profile'> {
-  schemaVersion: 3;
+  schemaVersion: typeof PLAN_SCHEMA_VERSION;
   profile: SimulationProfile;
   accounts: SimulationAccount[];
 }

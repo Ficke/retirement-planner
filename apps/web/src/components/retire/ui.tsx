@@ -170,11 +170,19 @@ export function DashboardCard({
   contentClassName?: string;
 }) {
   const hasHeader = title || actions || description;
+  // A card's title is the only thing distinguishing fields that share a label
+  // with fields in the next card. Naming the group hands a screen reader the
+  // context the eye takes from the heading, so the labels stay short.
+  const titleId = React.useId();
   return (
-    <Card className={className}>
+    <Card
+      className={className}
+      role={title ? "group" : undefined}
+      aria-labelledby={title ? titleId : undefined}
+    >
       {hasHeader && (
         <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-          {title && <CardTitle>{title}</CardTitle>}
+          {title && <CardTitle id={titleId}>{title}</CardTitle>}
           {description && <CardDescription>{description}</CardDescription>}
           {actions && (
             <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">

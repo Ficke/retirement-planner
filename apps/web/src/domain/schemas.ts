@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ageOn, birthDateFromLegacyAge } from '@/domain/age';
+import type { UserProfile } from '@/domain/types';
 
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const [year, month, day] = value.split('-').map(Number);
@@ -48,6 +49,14 @@ const profileBaseShape = {
   workingSpendingGrowthRate: z.number().min(-0.1, "Working spending growth rate must be reasonable").max(0.1, "Working spending growth rate must be reasonable"),
   retirementSpendingGrowthRate: z.number().min(-0.1, "Retirement spending growth rate must be reasonable").max(0.1, "Retirement spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),
+  retirementHealthcare: z.object({
+    preMedicarePremium: z.number().min(0, "Premium must be non-negative").max(1_000_000),
+    medicarePremium: z.number().min(0, "Premium must be non-negative").max(1_000_000),
+    outOfPocket: z.number().min(0, "Out-of-pocket cost must be non-negative").max(1_000_000),
+    realGrowthRate: z.number()
+      .min(-0.1, "Healthcare growth rate must be reasonable")
+      .max(0.1, "Healthcare growth rate must be reasonable"),
+  }),
   asOfDate: isoDateSchema,
 };
 
@@ -120,6 +129,12 @@ export const legacyStoredProfileSchema = z
         ?? 0,
       birthDate:
         rest.birthDate ?? birthDateFromLegacyAge(age ?? 35, birthYear, rest.asOfDate),
+      // A bundle built before healthcare existed priced none of it, so zeros --
+      // not the current defaults -- are what keep the plan it is saving the
+      // plan it thinks it is saving.
+      retirementHealthcare:
+        (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
+        ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       // A plan with no working-year spending has no ratio to recover.
       retirementSpendingMultiplier: currentSpending > 0 ? target / currentSpending : 1,
     };
@@ -153,6 +168,12 @@ export const legacySimulationProfileSchema = z
       ?? 0,
     birthDate: rest.birthDate ?? birthDateFromLegacyAge(age ?? 35, birthYear, rest.asOfDate),
     retirementSpending: retirementSpending ?? desiredSpending ?? rest.currentSpending ?? 0,
+    // A bundle built before healthcare existed priced none of it, so zeros --
+    // not the current defaults -- are what reproduce the projection it expects.
+    // Matches the Rust service, where the field carries #[serde(default)].
+    retirementHealthcare:
+      (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
+      ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
   }))
   .pipe(simulationProfileSchema);
 

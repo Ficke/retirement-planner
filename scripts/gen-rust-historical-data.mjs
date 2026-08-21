@@ -17,12 +17,12 @@ const rsPath = join(root, 'rust-simulation-service/src/simulation/historical_dat
 const checkOnly = process.argv.includes('--check');
 
 const ts = readFileSync(tsPath, 'utf8');
-const rowRe = /year:\s*(\d{4}),\s*stock_return:\s*(-?[\d.]+),\s*bond_return:\s*(-?[\d.]+),\s*inflation_rate:\s*(-?[\d.]+)/g;
+const rowRe = /year:\s*(\d{4}),\s*stock_return:\s*(-?[\d.]+),\s*bond_return:\s*(-?[\d.]+),\s*inflation_rate:\s*(-?[\d.]+),\s*dividend_yield:\s*(-?[\d.]+)/g;
 
 const rows = [];
 let m;
 while ((m = rowRe.exec(ts))) {
-  rows.push({ year: m[1], stock: m[2], bond: m[3], inflation: m[4] });
+  rows.push({ year: m[1], stock: m[2], bond: m[3], inflation: m[4], dividend: m[5] });
 }
 if (rows.length < 90) {
   throw new Error(`Parsed only ${rows.length} rows from ${tsPath} — parser or data problem`);
@@ -30,9 +30,13 @@ if (rows.length < 90) {
 
 for (let index = 0; index < rows.length; index++) {
   const row = rows[index];
-  const values = [row.stock, row.bond, row.inflation].map(Number);
+  const values = [row.stock, row.bond, row.inflation, row.dividend].map(Number);
   if (!values.every(Number.isFinite) || values.some((value) => value <= -1)) {
     throw new Error(`Invalid return data for ${row.year} in ${tsPath}`);
+  }
+  // A dividend yield outside this range is a decimal-point slip, not a market.
+  if (Number(row.dividend) < 0 || Number(row.dividend) > 0.2) {
+    throw new Error(`Implausible dividend yield ${row.dividend} for ${row.year} in ${tsPath}`);
   }
   if (index > 0 && Number(row.year) !== Number(rows[index - 1].year) + 1) {
     throw new Error(
@@ -50,6 +54,7 @@ const rustRows = rows
         stock_return: ${num(r.stock)},
         bond_return: ${num(r.bond)},
         inflation_rate: ${num(r.inflation)},
+        dividend_yield: ${num(r.dividend)},
     },`)
   .join('\n');
 
@@ -62,8 +67,9 @@ const out = `// This file is generated; do not edit it by hand.
 // Regenerate it with: node scripts/gen-rust-historical-data.mjs
 //
 // Historical US market returns, ${first}-${last} (${rows.length} years).
-// Stocks: S&P 500 total return; Bonds: 10-year US Treasury total return
-// (Damodaran data library, NYU Stern). Inflation: CPI-U Dec/Dec (BLS).
+// Stocks: S&P 500 total return; Bonds: 10-year US Treasury total return;
+// dividend yield: dividends over the opening index level (Damodaran data
+// library, NYU Stern). Inflation: CPI-U Dec/Dec (BLS).
 // Returns are NOMINAL; sampling converts to real returns per-year.
 
 use serde::{Deserialize, Serialize};
@@ -74,6 +80,7 @@ pub struct AnnualMarketReturn {
     pub stock_return: f64,
     pub bond_return: f64,
     pub inflation_rate: f64,
+    pub dividend_yield: f64,
 }
 
 pub const HISTORICAL_RETURNS: &[AnnualMarketReturn] = &[

@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { projectScenario } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 describe('HSA Withdrawal Logic Fix', () => {
   // Create a test plan with high spending that should trigger withdrawal priority issues
   const createTestPlan = (): SimulationPlan => ({
-    schemaVersion: 3,
+    schemaVersion: PLAN_SCHEMA_VERSION,
     profile: {
       birthDate: '1949-01-01', // Start well after RMD age
       state: 'CA',
@@ -18,6 +19,7 @@ describe('HSA Withdrawal Logic Fix', () => {
       retirementSpending: 120000, // High spending to force withdrawals
       retirementSpendingGrowthRate: 0,
       lifeExpectancy: 90,
+      retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       asOfDate: '2024-01-01',
     },
     accounts: [

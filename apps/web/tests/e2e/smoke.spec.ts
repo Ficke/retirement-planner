@@ -95,10 +95,24 @@ test('every sidebar page is reachable', async ({ page }) => {
   }
 });
 
+test('growth fields sharing a label are told apart by their group', async ({ page }) => {
+  await gotoApp(page);
+  await navItem(page, 'Profile').click();
+
+  // Three fields on this page are labeled "Growth above inflation (%)", so
+  // addressing one without its group is a strict-mode violation. That is the
+  // ambiguity a screen reader hits too.
+  const label = 'Growth above inflation (%)';
+  for (const group of ['Spending growth while working', 'Retirement spending', 'Retirement healthcare']) {
+    await expect(page.getByRole('group', { name: group }).getByLabel(label)).toBeVisible();
+  }
+  await expect(page.getByLabel('Salary growth above inflation (%)')).toBeVisible();
+});
+
 test('signed out, the app runs in local mode and offers sign-in', async ({ page }) => {
   await gotoApp(page);
 
-  await expect(page.getByText('Guest — data stays in this browser')).toBeVisible();
+  await expect(page.getByText('Guest. Data stays in this browser.')).toBeVisible();
   await expect(navItem(page, 'Sign in')).toBeVisible();
 
   await navItem(page, 'Settings').click();

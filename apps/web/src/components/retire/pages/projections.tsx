@@ -374,7 +374,7 @@ export function ProjectionDetails({
           <div className="text-muted-foreground flex h-[340px] items-center justify-center text-sm">
             {isSimulating
               ? "Running simulation…"
-              : "No projection data — adjust your plan to run."}
+              : "No projection data. Adjust your plan to run."}
           </div>
         ) : (
           <WealthFanChart
@@ -403,7 +403,7 @@ export function ProjectionDetails({
           <div className="text-muted-foreground flex h-[320px] items-center justify-center text-sm">
             {isSimulating
               ? "Running simulation…"
-              : "No projection data — adjust your plan to run."}
+              : "No projection data. Adjust your plan to run."}
           </div>
         ) : (
           <IncomeSourcesChart projections={cashFlowRows} height={320} />

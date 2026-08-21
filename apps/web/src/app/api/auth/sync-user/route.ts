@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       const limited = await rateLimit(`invite:${ip}`, INVITE_RATE_LIMIT);
       if (!limited.success) {
         return NextResponse.json(
-          { error: 'Too many signup attempts — try again later' },
+          { error: 'Too many signup attempts. Try again later.' },
           { status: 429, headers: { 'Retry-After': String(Math.ceil((limited.reset - Date.now()) / 1000)) } }
         );
       }

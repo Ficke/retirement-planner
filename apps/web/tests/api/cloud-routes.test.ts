@@ -49,6 +49,7 @@ import { PUT as saveProfile } from '@/app/api/profile/route';
 import { POST as runBatch } from '@/app/api/simulation/batch/route';
 import { POST as runMonteCarlo } from '@/app/api/simulation/monte-carlo/route';
 import { POST as runProbe } from '@/app/api/internal/simulation-probe/route';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 const owner = { id: 'firebase-owner', email: 'owner@example.test', name: null };
 const accountId = '8dc6c282-ffae-4b80-874d-4ee26ecf6604';
@@ -75,6 +76,7 @@ const profile = {
   retirementSpendingMultiplier: 1,
   retirementSpendingGrowthRate: 0.02,
   lifeExpectancy: 90,
+  retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
   asOfDate: '2026-01-01',
 };
 
@@ -229,7 +231,7 @@ describe('cloud API authorization boundaries', () => {
 
 describe('simulation proxy response streaming', () => {
   const simulationPlan = {
-    schemaVersion: 3,
+    schemaVersion: PLAN_SCHEMA_VERSION,
     profile: { ...profile, retirementSpending: 50_000 },
     accounts: [{
       type: 'Taxable',

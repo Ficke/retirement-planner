@@ -38,13 +38,13 @@ export interface SensitivityAnalysisResults {
   retirementAge: RetirementAgeAnalysisResult[];
 }
 
-const MAIN_PATHS = 5000;
+export const MAIN_PATHS = 5000;
 // The headline and every sensitivity scenario share one root seed, so path i
 // draws the same market returns at every grid point. That makes sampling error
-// common-mode along a curve — the shape stays readable at path counts far
-// below what an absolute probability would need. The main simulation, not
-// these curves, is what reports the headline number.
-const SWEEP_PATHS = 300;
+// common-mode along a curve: the shape stays readable at path counts far below
+// what an absolute probability would need. The main simulation, not these
+// curves, is what reports the headline number.
+export const SWEEP_PATHS = 1000;
 
 interface Scenario {
   id: string;

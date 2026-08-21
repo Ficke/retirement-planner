@@ -124,6 +124,25 @@ export const CA_STANDARD_DEDUCTIONS_2025: Record<FilingStatus, number> = {
   HeadOfHousehold: 11412,
 };
 
+/**
+ * The tax year every bracket, deduction, and limit here is stated in. The
+ * engines work in real dollars, so indexed figures stay fixed against it;
+ * thresholds Congress never indexed are eroded away from it instead.
+ */
+export const TAX_LAW_YEAR = 2025;
+
+/**
+ * The OBBBA enhanced senior deduction — per qualifying individual, phased out
+ * on the household total, and scheduled to lapse after 2028.
+ */
+export const OBBBA_SENIOR_DEDUCTION = {
+  perPerson: 6_000,
+  phaseoutStartJoint: 150_000,
+  phaseoutStartOther: 75_000,
+  phaseoutRate: 0.06,
+  lastYear: 2028,
+} as const;
+
 // 2025 Retirement Account Contribution Limits
 export const RETIREMENT_LIMITS_2025 = {
   // 401(k) / 403(b) / 457(b) plans
@@ -146,6 +165,25 @@ export const RETIREMENT_LIMITS_2025 = {
   hsa_individual: 4300,
   hsa_family: 8550,
   hsa_catchup: 1000, // Age 55+
+} as const;
+
+/**
+ * Retirement healthcare defaults, per household, in real 2026 dollars.
+ *
+ * Premiums assume one person: the national benchmark silver plan at 60 runs
+ * about $15,900 a year unsubsidized before Medicare, and Part B ($202.90/mo),
+ * Part D, and a supplement come to roughly $4,650 after it. Out-of-pocket
+ * covers deductibles, coinsurance, and the dental, vision, and hearing care
+ * Medicare does not, none of which Medicare eligibility changes.
+ *
+ * Growth is medical inflation above CPI, compounded from the as-of date: 2%
+ * real over thirty years is 1.8x.
+ */
+export const DEFAULT_RETIREMENT_HEALTHCARE = {
+  preMedicarePremium: 15_900,
+  medicarePremium: 4_650,
+  outOfPocket: 3_000,
+  realGrowthRate: 0.02,
 } as const;
 
 // 2025 FICA and Payroll Tax Limits

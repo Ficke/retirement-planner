@@ -10,9 +10,10 @@ import { describe, it, expect } from 'vitest';
 import { projectScenario } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from '../test-helpers';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 const plan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1981-01-01',
     state: 'TX',
@@ -25,6 +26,7 @@ const plan: SimulationPlan = {
     retirementSpending: 50000,
     retirementSpendingGrowthRate: 0.025,
     lifeExpectancy: 90,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [

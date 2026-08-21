@@ -31,10 +31,28 @@ export function birthDateFromLegacyAge(
   return asOfYear - year === age ? `${year}-01-01` : `${year}-12-31`;
 }
 
-/** The first modeled retirement year's spending, in real dollars. */
+/**
+ * The first modeled retirement year's spending, in real dollars.
+ *
+ * The multiplier is a share of the last working year's spending, not of
+ * today's, so the exponent is one short of the working years: it lands on the
+ * final year the working branch of the projection compounds, not on the year
+ * after it. A household keeping 100% of its spending then sees no step at
+ * retirement, whatever its working drift.
+ */
 export function retirementSpendingOf(profile: {
   currentSpending: number;
   retirementSpendingMultiplier: number;
+  workingSpendingGrowthRate: number;
+  retirementAge: number;
+  birthDate: string;
+  asOfDate: string;
 }): number {
-  return profile.currentSpending * profile.retirementSpendingMultiplier;
+  const workingYears = Math.max(
+    0,
+    profile.retirementAge - ageOn(profile.birthDate, profile.asOfDate),
+  );
+  const finalWorkingSpending = profile.currentSpending
+    * Math.pow(1 + profile.workingSpendingGrowthRate, Math.max(0, workingYears - 1));
+  return finalWorkingSpending * profile.retirementSpendingMultiplier;
 }

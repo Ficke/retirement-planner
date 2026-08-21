@@ -90,6 +90,7 @@ describe('State Management - Simple Invalidation Logic', () => {
   it('migrates legacy spending fields into explicit working and retirement phases', () => {
     const migrated = hydratePlan({
       birthDate: '1986-01-01',
+      retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       asOfDate: '2026-01-01',
       currentSpending: 48_000,
       desiredSpending: 60_000,
@@ -157,6 +158,16 @@ describe('State Management - Simple Invalidation Logic', () => {
       [],
     );
     expect(migrated.assumptions.useBackdoorRoth).toBe(false);
+  });
+
+  it('seeds a starter balance for a plan that was never stored, but not for a cleared one', () => {
+    const fresh = hydratePlan(null, null, null, null);
+    expect(fresh.accounts).toHaveLength(1);
+    expect(fresh.accounts[0].balance).toBe(100_000);
+    expect(fresh.accounts[0].assetWeights.stocks).toBe(1);
+
+    const cleared = hydratePlan(null, null, null, []);
+    expect(cleared.accounts).toEqual([]);
   });
 });
 

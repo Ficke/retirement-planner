@@ -1,12 +1,21 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 3;
+pub const PLAN_SCHEMA_VERSION: u32 = 5;
+
+/// Medicare eligibility, which is where retirement premiums step down.
+pub const MEDICARE_AGE: u32 = 65;
 
 /// Version that introduced phase-based spending. Older requests carry a flat
 /// working amount and compound retirement growth from the as-of year. Gating
 /// on this rather than on the current version is what keeps the next schema
 /// bump from reverting the previous version to that older math.
 pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
+
+/// Version that reworked retirement healthcare. Older requests compounded real
+/// growth from the first retirement year rather than the as-of date, and paid
+/// the entered premium whatever the household's income, with no marketplace
+/// credit before Medicare and no IRMAA surcharge after it.
+pub const HEALTHCARE_MODEL_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -18,7 +27,7 @@ pub enum AccountType {
     Hsa,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FilingStatus {
     Single,
     MarriedFilingJointly,
@@ -81,8 +90,30 @@ pub struct UserProfile {
     pub retirement_spending_growth_rate: f64,
     #[serde(rename = "lifeExpectancy")]
     pub life_expectancy: u32,
+    /// Healthcare in retirement, carried separately from `current_spending`
+    /// because it steps down at Medicare and grows faster than everything else.
+    #[serde(rename = "retirementHealthcare", default)]
+    pub retirement_healthcare: RetirementHealthcare,
     #[serde(rename = "asOfDate")]
     pub as_of_date: String,
+}
+
+/// Retirement healthcare, which is a step at Medicare eligibility rather than a
+/// share of spending. Premiums and out-of-pocket costs are separate because
+/// Medicare, and later any subsidy or surcharge, moves only the premium.
+///
+/// All figures are household totals in real dollars. A request that predates
+/// this field gets zeros, which reproduces the projection it would have had.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RetirementHealthcare {
+    #[serde(rename = "preMedicarePremium", default)]
+    pub pre_medicare_premium: f64,
+    #[serde(rename = "medicarePremium", default)]
+    pub medicare_premium: f64,
+    #[serde(rename = "outOfPocket", default)]
+    pub out_of_pocket: f64,
+    #[serde(rename = "realGrowthRate", default)]
+    pub real_growth_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,7 +310,7 @@ fn default_use_historical_bootstrap() -> bool {
     true
 }
 fn default_block_size() -> usize {
-    3
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

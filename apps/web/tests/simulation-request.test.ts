@@ -5,10 +5,11 @@ import {
   MAX_PATHS,
   MAX_BATCH_SIMULATIONS,
 } from '@/lib/simulation-request';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
-  schemaVersion: 3,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1991-01-01',
     state: 'CA',
@@ -21,6 +22,7 @@ const validPlan = {
     retirementSpending: 50000,
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 90,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2026-01-01',
   },
   accounts: [
@@ -46,6 +48,8 @@ const legacyPlan = {
     workingSpendingGrowthRate: undefined,
     retirementSpending: undefined,
     retirementSpendingGrowthRate: undefined,
+    // A bundle this old predates the healthcare block entirely.
+    retirementHealthcare: undefined,
     desiredSpending: 55000,
     spendingGrowthRate: 0.02,
   },
@@ -70,6 +74,20 @@ describe('simulation request limits', () => {
     const result = monteCarloRequestSchema.safeParse({ plan: validPlan, config: validConfig });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.plan.assumptions.randomSeed).toBe(42);
+  });
+
+  it('prices no healthcare for a bundle that predates it, rather than rejecting it', () => {
+    // The legacy branch exists so a browser mid-rollout keeps working. Requiring
+    // a block that bundle never sent would 400 exactly the clients it protects.
+    const result = monteCarloRequestSchema.safeParse({ plan: legacyPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.plan.profile.retirementHealthcare).toEqual({
+      preMedicarePremium: 0,
+      medicarePremium: 0,
+      outOfPocket: 0,
+      realGrowthRate: 0,
+    });
   });
 
   it('accepts and normalizes a legacy browser request without changing its semantics version', () => {
@@ -97,7 +115,7 @@ describe('simulation request limits', () => {
 
   it('rejects a request from a newer unsupported schema', () => {
     expect(monteCarloRequestSchema.safeParse({
-      plan: { ...validPlan, schemaVersion: 4 },
+      plan: { ...validPlan, schemaVersion: PLAN_SCHEMA_VERSION + 1 },
       config: validConfig,
     }).success).toBe(false);
   });

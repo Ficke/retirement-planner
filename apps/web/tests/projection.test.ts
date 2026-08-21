@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { countSweepSuccesses, projectScenario, projectScenarioSummary, createRNG, getBootstrapMarketReturns, BlockBootstrapGenerator, createMarketReturnsGenerator } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1990-01-01',
     state: 'CA',
@@ -17,6 +18,7 @@ const testPlan: SimulationPlan = {
     retirementSpending: 80000,
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2025-01-01',
   },
   accounts: [
@@ -146,6 +148,7 @@ describe('Projection Engine', () => {
         workingSpendingGrowthRate: 0.1,
         retirementSpending: 70_000,
         retirementSpendingGrowthRate: 0.05,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
@@ -170,6 +173,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 69,
         retirementSpending: 50_000,
         retirementSpendingGrowthRate: 0.1,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
@@ -323,6 +327,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 60_000,
         retirementSpendingGrowthRate: 0.1,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-07-02',
         state: 'TX',
       },
@@ -356,6 +361,7 @@ describe('Projection Engine', () => {
         workingSpendingGrowthRate: 0,
         retirementSpending: 30_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -393,6 +399,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 81,
         currentSalary: 100_000,
         currentSpending: 60_000,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -422,6 +429,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 50_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'TX',
       },
@@ -459,6 +467,7 @@ describe('Projection Engine', () => {
         lifeExpectancy: 68,
         retirementSpending: 1_000_000_000,
         retirementSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
         state: 'CA',
       },
@@ -526,6 +535,7 @@ describe('Projection Engine', () => {
         salaryGrowthRate: 0,
         currentSpending: 250_000,
         workingSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
         asOfDate: '2025-01-01',
       },
       accounts: [
@@ -550,6 +560,49 @@ describe('Projection Engine', () => {
     expect(working[1].insufficientFunds).toBe(false);
   });
 
+  it.each([
+    ['Traditional' as const, 0.10],
+    ['HSA' as const, 0.20],
+  ])('funds a working-year shortfall from a penalized %s bucket exactly once', (type, rate) => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        birthDate: '1986-01-01',
+        state: 'TX',
+        filingStatus: 'Single',
+        retirementAge: 60,
+        lifeExpectancy: 61,
+        currentSalary: 50_000,
+        salaryGrowthRate: 0,
+        currentSpending: 120_000,
+        workingSpendingGrowthRate: 0,
+        retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        asOfDate: '2026-01-01',
+      },
+      accounts: [
+        createTestAccount({ type, balance: 5_000_000, assetWeights: { stocks: 0.6, bonds: 0.4 } }),
+      ],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+      assumptions: createTestProjectionSettings({ randomSeed: 5 }),
+    };
+
+    const year = projectScenario(plan, { paths: 1, seed: 5 })
+      .projections.filter((projection) => !projection.isRetired)[1];
+
+    // A $5M portfolio funds a $70k gap; the household is 40, so every dollar of
+    // it is penalized, and the penalty must not feed a draw that re-penalizes.
+    expect(year.insufficientFunds).toBe(false);
+    // Funded to within the tolerance the loop stops at, not merely close.
+    expect(year.spending).toBeGreaterThan(120_000 - 1);
+    expect(year.spending).toBeLessThanOrEqual(120_000);
+    const drawn = type === 'Traditional' ? year.withdrawalTraditional : year.withdrawalHSA;
+    expect(drawn).toBeGreaterThan(0);
+    expect(year.taxes).toBeGreaterThan(drawn * rate);
+    // Salary plus the draw, less taxes and the penalty, has to cover spending.
+    expect(year.income + drawn - year.taxes).toBeCloseTo(year.spending, 6);
+  });
+
   it('fails only when the portfolio itself runs out mid-career', () => {
     const overspending = {
       ...testPlan.profile,
@@ -560,6 +613,7 @@ describe('Projection Engine', () => {
       salaryGrowthRate: 0,
       currentSpending: 250_000,
       workingSpendingGrowthRate: 0,
+      retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
       asOfDate: '2025-01-01',
     };
     const base: SimulationPlan = {

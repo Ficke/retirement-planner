@@ -275,6 +275,9 @@ jobs:
       - name: Check generated historical data
         run: node scripts/gen-rust-historical-data.mjs --check
 
+      - name: Check generated state tax table
+        run: node scripts/gen-rust-state-tax.mjs --check
+
       - name: Build Rust service
         working-directory: rust-simulation-service
         run: cargo build --release

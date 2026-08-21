@@ -20,10 +20,12 @@ export function calculateRmd(
     return 0;
   }
 
+  // Ages past the table's end keep its final factor; ages below its start have
+  // no factor at all, and inventing one would distribute a plausible-looking
+  // wrong amount instead of failing.
   const distributionFactor = RMD_UNIFORM_LIFETIME_TABLE[Math.min(age, 120)];
   if (!distributionFactor) {
-    // Fallback for ages beyond table
-    return previousYearEndBalance / 2.0;
+    throw new RangeError(`No RMD distribution factor for age ${age}`);
   }
 
   return previousYearEndBalance / distributionFactor;

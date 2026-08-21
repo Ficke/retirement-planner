@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 
 import { usePlan } from "@/state/usePlan";
 import { ageOn, retirementSpendingOf } from "@/domain/age";
+import { healthcareCostFor } from "@/domain/healthcare";
 import type { FilingStatus, State } from "@/domain/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,8 +57,22 @@ export function PageProfile() {
   ) => updatePlan({ socialSecurity });
   const p = plan.profile;
   const ss = plan.socialSecurity;
+  const h = p.retirementHealthcare;
+  const updateHealthcare = (patch: Partial<typeof h>) =>
+    updateProfile({ retirementHealthcare: { ...h, ...patch } });
   const age = ageOn(p.birthDate, p.asOfDate);
   const retirementSpending = retirementSpendingOf(p);
+  // An already-retired plan's first modeled year is the as-of year, so it is
+  // priced at today's age rather than at the retirement age it passed already.
+  const firstRetirementAge = Math.max(age, p.retirementAge);
+  const firstYearHealthcare = healthcareCostFor(
+    p.retirementHealthcare,
+    firstRetirementAge,
+    Math.max(0, p.retirementAge - age),
+  ).total;
+  // The engine funds healthcare on top of the spending target, so a preview
+  // that showed the target alone would understate what the plan has to cover.
+  const retirementSpendingTotal = retirementSpending + firstYearHealthcare;
 
   const workingYears = Math.max(0, p.retirementAge - age);
   const finalWorkingSpending = workingYears > 0
@@ -65,7 +80,7 @@ export function PageProfile() {
     : null;
   const retirementTransition = finalWorkingSpending == null
     ? null
-    : retirementSpending - finalWorkingSpending;
+    : retirementSpendingTotal - finalWorkingSpending;
   const retirementTransitionRate = finalWorkingSpending && retirementTransition != null
     ? retirementTransition / finalWorkingSpending
     : null;
@@ -112,7 +127,7 @@ export function PageProfile() {
             onChange={(v) => updateProfile({ currentSalary: v })}
           />
           <NumberField
-            label="Salary growth (real %)"
+            label="Salary growth above inflation (%)"
             value={Number((p.salaryGrowthRate * 100).toFixed(1))}
             step={0.1}
             min={-10}
@@ -122,39 +137,24 @@ export function PageProfile() {
         </div>
       </DashboardCard>
 
-      <DashboardCard
-        title="Spending"
-        description="Growth rates are real — above or below inflation."
-      >
+      <DashboardCard title="Spending">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Working years</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Set the amount on the Plan page.
-              </p>
-            </div>
+          <SubCard title="Spending growth while working">
             <NumberField
-              label="Annual real growth (%)"
+              label="Growth above inflation (%)"
               value={Number((p.workingSpendingGrowthRate * 100).toFixed(1))}
               step={0.1}
               min={-10}
               max={10}
+              hint="The amount itself is on the Plan page."
               onChange={(v) => updateProfile({ workingSpendingGrowthRate: v / 100 })}
             />
-          </div>
+          </SubCard>
 
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Retirement</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                The target follows today&apos;s spending, so moving the spending lever moves both.
-                Growth applies after the first modeled year of retirement.
-              </p>
-            </div>
+          <SubCard title="Retirement spending">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <NumberField
-                label="Share of today's spending (%)"
+                label="Share of final working spending (%)"
                 value={Number((p.retirementSpendingMultiplier * 100).toFixed(0))}
                 step={1}
                 min={0}
@@ -162,7 +162,7 @@ export function PageProfile() {
                 onChange={(v) => updateProfile({ retirementSpendingMultiplier: v / 100 })}
               />
               <NumberField
-                label="Annual real growth (%)"
+                label="Growth above inflation (%)"
                 value={Number((p.retirementSpendingGrowthRate * 100).toFixed(1))}
                 step={0.1}
                 min={-10}
@@ -170,7 +170,7 @@ export function PageProfile() {
                 onChange={(v) => updateProfile({ retirementSpendingGrowthRate: v / 100 })}
               />
             </div>
-          </div>
+          </SubCard>
         </div>
 
         <div className="bg-muted/40 border-border mt-4 rounded-lg border p-4">
@@ -180,11 +180,10 @@ export function PageProfile() {
                 Retirement spending now
               </div>
               <div className="mt-1 font-mono text-lg font-semibold">
-                {fmtCurrency(retirementSpending)}
+                {fmtCurrency(retirementSpendingTotal)}
               </div>
               <p className="text-muted-foreground mt-1 text-sm">
-                This plan is already retired, so the target starts in the as-of year with no
-                elapsed-retirement growth applied.
+                Already retired, so the target starts in the as-of year.
               </p>
             </div>
           ) : (
@@ -199,7 +198,7 @@ export function PageProfile() {
               />
               <SpendingPreview
                 label={`First retirement year · age ${p.retirementAge}`}
-                value={retirementSpending}
+                value={retirementSpendingTotal}
                 detail={retirementTransition == null
                   ? undefined
                   : `${fmtSigned(retirementTransition)}${retirementTransitionRate == null
@@ -208,14 +207,64 @@ export function PageProfile() {
               />
             </div>
           )}
+          {firstYearHealthcare > 0 && (
+            <p className="text-muted-foreground mt-3 text-xs">
+              Includes {fmtCurrency(firstYearHealthcare)} of healthcare, set below.
+            </p>
+          )}
         </div>
       </DashboardCard>
 
-
       <DashboardCard
-        title="Social Security"
-        description="Claim age is a lever on the Plan page. The estimate covers one earner and is not an SSA quote."
+        title="Retirement healthcare"
+        description="Today's cost for the whole household, added on top of the spending target."
       >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <CurrencyField
+            label="Premiums before 65"
+            value={h.preMedicarePremium}
+            onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
+          />
+          <CurrencyField
+            label="Premiums from 65"
+            value={h.medicarePremium}
+            onChange={(v) => updateHealthcare({ medicarePremium: v })}
+          />
+          <CurrencyField
+            label="Out-of-pocket"
+            value={h.outOfPocket}
+            onChange={(v) => updateHealthcare({ outOfPocket: v })}
+          />
+          <NumberField
+            label="Growth above inflation (%)"
+            value={Number((h.realGrowthRate * 100).toFixed(1))}
+            step={0.1}
+            min={-10}
+            max={10}
+            onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
+          />
+        </div>
+        <div className="bg-muted/40 border-border mt-4 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
+          <SpendingPreview
+            label="Before 65"
+            value={h.preMedicarePremium + h.outOfPocket}
+            detail="Marketplace or COBRA coverage"
+          />
+          <SpendingPreview
+            label="From 65"
+            value={h.medicarePremium + h.outOfPocket}
+            detail="Part B, Part D, and supplemental"
+          />
+        </div>
+        <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
+          An HSA can pay out-of-pocket costs tax-free, and premiums once you are on Medicare.
+          It cannot pay marketplace premiums. The only premiums it covers are COBRA,
+          unemployment, Medicare, and long-term care.
+        </p>
+      </DashboardCard>
+
+
+      <DashboardCard title="Social Security">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <SelectField
             label="Include benefits"
@@ -227,6 +276,9 @@ export function PageProfile() {
             label="Benefit source"
             value={ss.manualOverride ? "statement" : "estimate"}
             options={[["statement", "SSA statement"], ["estimate", "Salary-based estimate"]]}
+            hint={ss.manualOverride
+              ? undefined
+              : "Estimated from one earner's salary. Not an SSA quote."}
             onChange={(value) => updateSocialSecurity({ manualOverride: value === "statement" })}
           />
           {ss.manualOverride && (
@@ -268,6 +320,21 @@ function Wrap({
   );
 }
 
+/**
+ * A titled block inside a card. Named as a group for the same reason the cards
+ * are: both growth fields here read "Growth above inflation" and only the
+ * heading says which is which.
+ */
+function SubCard({ title, children }: { title: string; children: React.ReactNode }) {
+  const titleId = useId();
+  return (
+    <div className="border-border rounded-lg border p-4" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="mb-4 font-medium">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
 function SpendingPreview({
   label,
   value,
@@ -294,6 +361,7 @@ function NumberField({
   step,
   min,
   max,
+  hint,
   onChange,
 }: {
   label: string;
@@ -301,11 +369,12 @@ function NumberField({
   step?: number;
   min?: number;
   max?: number;
+  hint?: string;
   onChange: (v: number) => void;
 }) {
   const id = useId();
   return (
-    <Wrap label={label} htmlFor={id}>
+    <Wrap label={label} htmlFor={id} hint={hint}>
       <Input
         id={id}
         type="number"

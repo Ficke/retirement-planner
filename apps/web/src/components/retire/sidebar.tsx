@@ -166,7 +166,7 @@ export function Sidebar({
           <div className={cn("flex flex-col gap-1.5 p-3", collapsed && "items-center p-2")}>
             {!collapsed && (
               <span className="text-muted-foreground text-[11px] leading-snug">
-                Guest — data stays in this browser
+                Guest. Data stays in this browser.
               </span>
             )}
             <Button

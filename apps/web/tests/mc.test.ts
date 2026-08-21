@@ -8,6 +8,7 @@ import {
 } from '@/engine/mc';
 import { countSweepSuccesses, projectScenario } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 vi.mock('comlink', () => ({
   wrap: (worker: { remote: unknown }) => worker.remote,
@@ -19,7 +20,7 @@ afterEach(() => {
 });
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 3,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1990-01-01',
     state: 'CA', 
@@ -32,6 +33,7 @@ const testPlan: SimulationPlan = {
     retirementSpending: 60000,
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
     asOfDate: '2025-01-01',
   },
   accounts: [

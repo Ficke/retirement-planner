@@ -1,6 +1,68 @@
 //! Federal, state, and FICA tax. Semantics are shared with the browser engine
 //! in apps/web/src/engine/tax.ts.
+use crate::simulation::historical_data::HISTORICAL_RETURNS;
+use crate::simulation::state_tax::{state_brackets, state_standard_deduction, state_tax_profile};
 use crate::types::{AnnualContributions, FilingStatus, State};
+
+/// The tax year every bracket, deduction, and limit here is stated in.
+pub const TAX_LAW_YEAR: i32 = 2025;
+
+/// The OBBBA enhanced senior deduction — per qualifying individual, phased out
+/// on the household total, and scheduled to lapse after 2028.
+const OBBBA_PER_PERSON: f64 = 6_000.0;
+const OBBBA_PHASEOUT_START_JOINT: f64 = 150_000.0;
+const OBBBA_PHASEOUT_START_OTHER: f64 = 75_000.0;
+const OBBBA_PHASEOUT_RATE: f64 = 0.06;
+const OBBBA_LAST_YEAR: i32 = 2028;
+
+/// Long-run CPI, derived from the same dataset the engines sample, used only to
+/// erode thresholds Congress never indexed.
+static LONG_RUN_INFLATION: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
+    let total: f64 = HISTORICAL_RETURNS.iter().map(|r| r.inflation_rate).sum();
+    total / HISTORICAL_RETURNS.len() as f64
+});
+
+/// The people a plan models. Ages drive per-person deductions; filing status is
+/// a separate fact, because a married couple with one earner still files jointly.
+#[derive(Debug, Clone)]
+pub struct Household {
+    pub filing_status: FilingStatus,
+    /// One age, or two when the plan models a spouse.
+    pub ages: Vec<u32>,
+}
+
+impl Household {
+    pub fn new(filing_status: FilingStatus, ages: Vec<u32>) -> Self {
+        Self {
+            filing_status,
+            ages,
+        }
+    }
+
+    pub fn single(filing_status: FilingStatus, age: u32) -> Self {
+        Self::new(filing_status, vec![age])
+    }
+
+    fn primary_age(&self) -> u32 {
+        self.ages.first().copied().unwrap_or(0)
+    }
+
+    fn seniors(&self) -> usize {
+        self.ages.iter().filter(|age| **age >= 65).count()
+    }
+}
+
+/// A threshold Congress wrote in nominal dollars and never indexed, expressed in
+/// the real dollars the engines work in. Regular brackets and the standard
+/// deduction are inflation-indexed, so they stay fixed in real terms; these do
+/// the opposite and shrink every year.
+fn frozen_threshold(nominal_2025: f64, tax_year: i32) -> f64 {
+    let years = tax_year - TAX_LAW_YEAR;
+    if years <= 0 {
+        return nominal_2025;
+    }
+    nominal_2025 / (1.0 + *LONG_RUN_INFLATION).powi(years)
+}
 
 #[derive(Debug, Clone)]
 pub struct TaxBracket {
@@ -20,8 +82,10 @@ pub struct TaxResult {
 pub struct WorkingCashFlowResult {
     pub tax: TaxResult,
     pub contributions: AnnualContributions,
-    /// Spending above after-tax income. The portfolio covers it; not a failure.
-    pub funding_gap: f64,
+    /// Cash left once taxes, spending, and pretax contributions are paid.
+    /// Negative means the portfolio has to cover the difference; that is a
+    /// drawdown, not a failure.
+    pub net_cash_flow: f64,
 }
 
 /// Income reaching the household from somewhere other than wages — RMDs and
@@ -198,265 +262,123 @@ fn get_federal_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
     }
 }
 
-fn get_ca_brackets(filing_status: &FilingStatus) -> Vec<TaxBracket> {
-    match filing_status {
-        FilingStatus::Single => vec![
-            TaxBracket {
-                min: 0.0,
-                max: Some(11079.0),
-                rate: 0.01,
-            },
-            TaxBracket {
-                min: 11079.0,
-                max: Some(26264.0),
-                rate: 0.02,
-            },
-            TaxBracket {
-                min: 26264.0,
-                max: Some(41452.0),
-                rate: 0.04,
-            },
-            TaxBracket {
-                min: 41452.0,
-                max: Some(57542.0),
-                rate: 0.06,
-            },
-            TaxBracket {
-                min: 57542.0,
-                max: Some(72724.0),
-                rate: 0.08,
-            },
-            TaxBracket {
-                min: 72724.0,
-                max: Some(371479.0),
-                rate: 0.093,
-            },
-            TaxBracket {
-                min: 371479.0,
-                max: Some(445771.0),
-                rate: 0.103,
-            },
-            TaxBracket {
-                min: 445771.0,
-                max: Some(742953.0),
-                rate: 0.113,
-            },
-            TaxBracket {
-                min: 742953.0,
-                max: Some(1000000.0),
-                rate: 0.123,
-            },
-            TaxBracket {
-                min: 1000000.0,
-                max: None,
-                rate: 0.133,
-            },
-        ],
-        FilingStatus::MarriedFilingJointly => vec![
-            TaxBracket {
-                min: 0.0,
-                max: Some(22158.0),
-                rate: 0.01,
-            },
-            TaxBracket {
-                min: 22158.0,
-                max: Some(52528.0),
-                rate: 0.02,
-            },
-            TaxBracket {
-                min: 52528.0,
-                max: Some(82904.0),
-                rate: 0.04,
-            },
-            TaxBracket {
-                min: 82904.0,
-                max: Some(115084.0),
-                rate: 0.06,
-            },
-            TaxBracket {
-                min: 115084.0,
-                max: Some(145448.0),
-                rate: 0.08,
-            },
-            TaxBracket {
-                min: 145448.0,
-                max: Some(742958.0),
-                rate: 0.093,
-            },
-            TaxBracket {
-                min: 742958.0,
-                max: Some(891542.0),
-                rate: 0.103,
-            },
-            // The 1% Mental Health Services Tax starts inside the statutory
-            // 11.3% bracket, so that bracket is split at $1,000,000.
-            TaxBracket {
-                min: 891542.0,
-                max: Some(1000000.0),
-                rate: 0.113,
-            },
-            TaxBracket {
-                min: 1000000.0,
-                max: Some(1485906.0),
-                rate: 0.123,
-            },
-            TaxBracket {
-                min: 1485906.0,
-                max: None,
-                rate: 0.133,
-            },
-        ],
-        FilingStatus::MarriedFilingSeparately => vec![
-            TaxBracket {
-                min: 0.0,
-                max: Some(11079.0),
-                rate: 0.01,
-            },
-            TaxBracket {
-                min: 11079.0,
-                max: Some(26264.0),
-                rate: 0.02,
-            },
-            TaxBracket {
-                min: 26264.0,
-                max: Some(41452.0),
-                rate: 0.04,
-            },
-            TaxBracket {
-                min: 41452.0,
-                max: Some(57542.0),
-                rate: 0.06,
-            },
-            TaxBracket {
-                min: 57542.0,
-                max: Some(72724.0),
-                rate: 0.08,
-            },
-            TaxBracket {
-                min: 72724.0,
-                max: Some(371479.0),
-                rate: 0.093,
-            },
-            TaxBracket {
-                min: 371479.0,
-                max: Some(445771.0),
-                rate: 0.103,
-            },
-            TaxBracket {
-                min: 445771.0,
-                max: Some(742953.0),
-                rate: 0.113,
-            },
-            TaxBracket {
-                min: 742953.0,
-                max: Some(1000000.0),
-                rate: 0.123,
-            },
-            TaxBracket {
-                min: 1000000.0,
-                max: None,
-                rate: 0.133,
-            },
-        ],
-        FilingStatus::HeadOfHousehold => vec![
-            TaxBracket {
-                min: 0.0,
-                max: Some(22173.0),
-                rate: 0.01,
-            },
-            TaxBracket {
-                min: 22173.0,
-                max: Some(52530.0),
-                rate: 0.02,
-            },
-            TaxBracket {
-                min: 52530.0,
-                max: Some(67716.0),
-                rate: 0.04,
-            },
-            TaxBracket {
-                min: 67716.0,
-                max: Some(83805.0),
-                rate: 0.06,
-            },
-            TaxBracket {
-                min: 83805.0,
-                max: Some(98990.0),
-                rate: 0.08,
-            },
-            TaxBracket {
-                min: 98990.0,
-                max: Some(505208.0),
-                rate: 0.093,
-            },
-            TaxBracket {
-                min: 505208.0,
-                max: Some(606251.0),
-                rate: 0.103,
-            },
-            TaxBracket {
-                min: 606251.0,
-                max: Some(1000000.0),
-                rate: 0.113,
-            },
-            TaxBracket {
-                min: 1000000.0,
-                max: Some(1010417.0),
-                rate: 0.123,
-            },
-            TaxBracket {
-                min: 1010417.0,
-                max: None,
-                rate: 0.133,
-            },
-        ],
-    }
-}
-
-fn get_standard_deduction(
-    filing_status: &FilingStatus,
-    age: u32,
+/// The standard deduction the household actually gets. The additional senior
+/// amount and the OBBBA enhanced deduction are both per qualifying individual,
+/// so a couple where both are 65 or older receives two of each.
+pub fn deduction_for(
+    household: &Household,
+    tax_year: i32,
     modified_adjusted_gross_income: f64,
 ) -> f64 {
+    let filing_status = &household.filing_status;
     let base = match filing_status {
         FilingStatus::Single => 15750.0,
         FilingStatus::MarriedFilingJointly => 31500.0,
         FilingStatus::MarriedFilingSeparately => 15750.0,
         FilingStatus::HeadOfHousehold => 23625.0,
     };
+    let seniors = household.seniors();
+    if seniors == 0 {
+        return base;
+    }
 
-    let additional = if age >= 65 {
-        match filing_status {
-            FilingStatus::Single => 2000.0,
-            FilingStatus::MarriedFilingJointly => 1600.0,
-            FilingStatus::MarriedFilingSeparately => 1600.0,
-            FilingStatus::HeadOfHousehold => 2000.0,
-        }
-    } else {
-        0.0
+    let per_senior = match filing_status {
+        FilingStatus::Single => 2000.0,
+        FilingStatus::MarriedFilingJointly => 1600.0,
+        FilingStatus::MarriedFilingSeparately => 1600.0,
+        FilingStatus::HeadOfHousehold => 2000.0,
     };
+    let deduction = base + seniors as f64 * per_senior;
 
-    let enhanced = if age >= 65 && !matches!(filing_status, FilingStatus::MarriedFilingSeparately) {
-        let phaseout_start = if matches!(filing_status, FilingStatus::MarriedFilingJointly) {
-            150_000.0
-        } else {
-            75_000.0
-        };
-        (6_000.0 - (modified_adjusted_gross_income - phaseout_start).max(0.0) * 0.06).max(0.0)
+    // Married filing separately is not eligible, and the enhanced deduction is
+    // scheduled to lapse after 2028. Its phaseout applies to the household total
+    // rather than to each person's share.
+    if matches!(filing_status, FilingStatus::MarriedFilingSeparately) || tax_year > OBBBA_LAST_YEAR
+    {
+        return deduction;
+    }
+
+    let phaseout_start = if matches!(filing_status, FilingStatus::MarriedFilingJointly) {
+        OBBBA_PHASEOUT_START_JOINT
     } else {
-        0.0
+        OBBBA_PHASEOUT_START_OTHER
     };
-
-    base + additional + enhanced
+    let reduction =
+        (modified_adjusted_gross_income - phaseout_start).max(0.0) * OBBBA_PHASEOUT_RATE;
+    deduction + (seniors as f64 * OBBBA_PER_PERSON - reduction).max(0.0)
 }
 
-fn get_ca_standard_deduction(filing_status: &FilingStatus) -> f64 {
-    match filing_status {
-        FilingStatus::Single => 5706.0,
-        FilingStatus::MarriedFilingJointly => 11412.0,
-        FilingStatus::MarriedFilingSeparately => 5706.0,
-        FilingStatus::HeadOfHousehold => 11412.0,
-    }
+/// Federal income tax on one year, whether or not wages are still coming in.
+///
+/// Qualified dividends and long-term gains stack on top of ordinary income for
+/// rate determination, and any standard deduction ordinary income did not use is
+/// applied to them first. Working and retirement years differ only in what they
+/// put into `ordinary` — which is why they share this and not two copies of it.
+pub fn federal_tax_on(
+    ordinary: f64,
+    qualified: f64,
+    deduction: f64,
+    filing_status: &FilingStatus,
+    tax_year: i32,
+) -> f64 {
+    let brackets = get_federal_brackets(filing_status);
+    let taxable_income = (ordinary - deduction).max(0.0);
+    let ordinary_tax = calculate_progressive_tax(taxable_income, &brackets);
+
+    let unused_deduction = (deduction - ordinary).max(0.0);
+    let taxable_qualified = (qualified - unused_deduction).max(0.0);
+    let ltcg_tax = calculate_ltcg_tax(taxable_income, taxable_qualified, filing_status);
+
+    let net_investment_income_threshold = match filing_status {
+        FilingStatus::MarriedFilingJointly => 250_000.0,
+        FilingStatus::MarriedFilingSeparately => 125_000.0,
+        _ => 200_000.0,
+    };
+    let net_investment_income_tax = 0.038
+        * qualified.max(0.0).min(
+            (ordinary + qualified - frozen_threshold(net_investment_income_threshold, tax_year))
+                .max(0.0),
+        );
+
+    ordinary_tax + ltcg_tax + net_investment_income_tax
+}
+
+pub struct StateTaxInput {
+    pub wages: f64,
+    pub other_ordinary: f64,
+    pub qualified: f64,
+    pub social_security: f64,
+    pub pretax_hsa: f64,
+    pub pretax_traditional: f64,
+}
+
+/// State income tax from the state's own profile. A state with no income tax and
+/// a state nobody has modeled yet both produce zero here.
+pub fn state_tax_of(state: &State, filing_status: &FilingStatus, input: &StateTaxInput) -> f64 {
+    let (Some(brackets), Some(deduction)) = (
+        state_brackets(state, filing_status),
+        state_standard_deduction(state, filing_status),
+    ) else {
+        return 0.0;
+    };
+    let profile = state_tax_profile(state);
+
+    let deductible_pretax = if profile.conforms_to_federal_hsa {
+        input.pretax_hsa + input.pretax_traditional
+    } else {
+        input.pretax_traditional
+    };
+    let social_security = if profile.social_security_exempt {
+        0.0
+    } else {
+        input.social_security
+    };
+
+    let taxable_income = (input.wages + input.other_ordinary + input.qualified + social_security
+        - deductible_pretax
+        - deduction)
+        .max(0.0);
+    calculate_progressive_tax(taxable_income, &brackets)
 }
 
 fn get_k401_contribution_limit(age: u32) -> f64 {
@@ -507,59 +429,66 @@ pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
 
 /// Tax on a working year. Contribution targets are clamped to statutory
 /// limits and to what the income can actually fund.
+/// Federal, state, and FICA tax on a working year. Contribution targets are
+/// clamped to statutory limits and to what the income can actually fund.
 fn calculate_tax(
     gross_income: f64,
     qualified_income: f64,
-    age: u32,
-    filing_status: &FilingStatus,
+    household: &Household,
     state: &State,
+    tax_year: i32,
     requested: &PretaxContributionTargets,
     other_ordinary_income: f64,
 ) -> TaxResult {
-    let hsa_max = get_hsa_contribution_limit(age);
-    let k401_max = get_k401_contribution_limit(age);
-    let federal_brackets = get_federal_brackets(filing_status);
-    let hsa_contribution = requested.hsa.clamp(0.0, hsa_max).min(gross_income);
+    let filing_status = &household.filing_status;
+    let primary_age = household.primary_age();
+    let hsa_contribution = requested
+        .hsa
+        .clamp(0.0, get_hsa_contribution_limit(primary_age))
+        .min(gross_income);
     let k401_contribution = requested
         .traditional
-        .clamp(0.0, k401_max)
+        .clamp(0.0, get_k401_contribution_limit(primary_age))
         .min((gross_income - hsa_contribution).max(0.0));
 
-    let after_hsa_income = gross_income - hsa_contribution;
-    let after_k401_income = after_hsa_income - k401_contribution;
-    let standard_deduction = get_standard_deduction(
+    let after_pretax_wages = gross_income - hsa_contribution - k401_contribution;
+    let ordinary = after_pretax_wages + other_ordinary_income;
+    let deduction = deduction_for(household, tax_year, ordinary + qualified_income);
+    let federal_tax = federal_tax_on(
+        ordinary,
+        qualified_income,
+        deduction,
         filing_status,
-        age,
-        after_k401_income + other_ordinary_income + qualified_income,
+        tax_year,
     );
-    let federal_taxable_income =
-        (after_k401_income + other_ordinary_income - standard_deduction).max(0.0);
-    let federal_tax = calculate_progressive_tax(federal_taxable_income, &federal_brackets);
 
-    let state_tax = match state {
-        State::CA => {
-            let ca_deduction = get_ca_standard_deduction(filing_status);
-            // California does not conform to the federal HSA deduction.
-            let ca_taxable =
-                (gross_income + other_ordinary_income - k401_contribution - ca_deduction).max(0.0);
-            let ca_brackets = get_ca_brackets(filing_status);
-            calculate_progressive_tax(ca_taxable, &ca_brackets)
-        }
-        _ => 0.0,
-    };
+    let state_tax = state_tax_of(
+        state,
+        filing_status,
+        &StateTaxInput {
+            wages: gross_income,
+            other_ordinary: other_ordinary_income,
+            qualified: qualified_income,
+            social_security: 0.0,
+            pretax_hsa: hsa_contribution,
+            pretax_traditional: k401_contribution,
+        },
+    );
 
     const FICA_WAGE_BASE: f64 = 176100.0;
     const SOCIAL_SECURITY_RATE: f64 = 0.062;
     const MEDICARE_RATE: f64 = 0.0145;
-    const MEDICARE_ADDITIONAL_THRESHOLD: f64 = 200000.0;
     const MEDICARE_ADDITIONAL_RATE: f64 = 0.009;
     let social_security_tax = gross_income.min(FICA_WAGE_BASE) * SOCIAL_SECURITY_RATE;
     let medicare_tax = gross_income * MEDICARE_RATE;
-    let additional_medicare_threshold = match filing_status {
-        FilingStatus::MarriedFilingJointly => 250_000.0,
-        FilingStatus::MarriedFilingSeparately => 125_000.0,
-        _ => MEDICARE_ADDITIONAL_THRESHOLD,
-    };
+    let additional_medicare_threshold = frozen_threshold(
+        match filing_status {
+            FilingStatus::MarriedFilingJointly => 250_000.0,
+            FilingStatus::MarriedFilingSeparately => 125_000.0,
+            _ => 200_000.0,
+        },
+        tax_year,
+    );
     let additional_medicare_tax = if gross_income > additional_medicare_threshold {
         (gross_income - additional_medicare_threshold) * MEDICARE_ADDITIONAL_RATE
     } else {
@@ -567,10 +496,8 @@ fn calculate_tax(
     };
     let fica_tax = social_security_tax + medicare_tax + additional_medicare_tax;
 
-    let total_tax = federal_tax + state_tax + fica_tax;
-
     TaxResult {
-        total_tax,
+        total_tax: federal_tax + state_tax + fica_tax,
         hsa_contribution,
         k401_contribution,
     }
@@ -583,29 +510,29 @@ fn calculate_tax(
 pub fn calculate_working_cash_flow(
     gross_income: f64,
     annual_spending: f64,
-    age: u32,
-    filing_status: &FilingStatus,
+    household: &Household,
     state: &State,
+    tax_year: i32,
     policy: &ContributionPolicy,
     other: OtherIncome,
 ) -> WorkingCashFlowResult {
+    let primary_age = household.primary_age();
     let hsa_max = if policy.hsa_eligible {
-        get_hsa_contribution_limit(age)
+        get_hsa_contribution_limit(primary_age)
     } else {
         0.0
     };
-    let k401_max = get_k401_contribution_limit(age);
-    let mut requested = PretaxContributionTargets {
-        hsa: 0.0,
-        traditional: 0.0,
-    };
+    let k401_max = get_k401_contribution_limit(primary_age);
     let mut tax = calculate_tax(
         gross_income,
         other.qualified,
-        age,
-        filing_status,
+        household,
         state,
-        &requested,
+        tax_year,
+        &PretaxContributionTargets {
+            hsa: 0.0,
+            traditional: 0.0,
+        },
         other.ordinary,
     );
     for _ in 0..4 {
@@ -613,14 +540,13 @@ pub fn calculate_working_cash_flow(
             (gross_income + other.ordinary - tax.total_tax - annual_spending).max(0.0);
         let hsa = hsa_max.min(available_before_contributions);
         let traditional = k401_max.min((available_before_contributions - hsa).max(0.0));
-        requested = PretaxContributionTargets { hsa, traditional };
         tax = calculate_tax(
             gross_income,
             other.qualified,
-            age,
-            filing_status,
+            household,
             state,
-            &requested,
+            tax_year,
+            &PretaxContributionTargets { hsa, traditional },
             other.ordinary,
         );
     }
@@ -630,10 +556,9 @@ pub fn calculate_working_cash_flow(
         - annual_spending
         - tax.hsa_contribution
         - tax.k401_contribution;
-    let funding_gap = (-cash_after_pretax_and_spending).max(0.0);
     let after_tax_budget = cash_after_pretax_and_spending.max(0.0);
     let roth = if policy.use_backdoor_roth {
-        get_ira_contribution_limit(age).min(after_tax_budget)
+        get_ira_contribution_limit(primary_age).min(after_tax_budget)
     } else {
         0.0
     };
@@ -648,86 +573,65 @@ pub fn calculate_working_cash_flow(
     WorkingCashFlowResult {
         tax,
         contributions,
-        funding_gap,
+        net_cash_flow: cash_after_pretax_and_spending,
     }
 }
 
-/// Calculate tax on retirement income (no FICA, no retirement contributions)
-/// Matches TypeScript calculateRetirementTax() function
+/// Tax on a retirement year. Wages have stopped, so there is no FICA and no
+/// contribution to deduct; Social Security is taxed under its own rules.
 pub fn calculate_retirement_tax(
     traditional_withdrawals: f64,
     social_security_benefit: f64,
     qualified_income: f64,
-    age: u32,
-    filing_status: &FilingStatus,
+    household: &Household,
     state: &State,
+    tax_year: i32,
 ) -> TaxResult {
-    // Calculate taxable portion of Social Security
+    let filing_status = &household.filing_status;
     let taxable_ss = calculate_taxable_social_security(
         traditional_withdrawals,
         social_security_benefit,
         qualified_income,
         filing_status,
+        tax_year,
     );
 
-    // Total ordinary income
-    let total_ordinary_income = traditional_withdrawals + taxable_ss;
-
-    // Federal tax
-    let standard_deduction =
-        get_standard_deduction(filing_status, age, total_ordinary_income + qualified_income);
-    let federal_taxable_income = (total_ordinary_income - standard_deduction).max(0.0);
-    let federal_brackets = get_federal_brackets(filing_status);
-    let federal_tax = calculate_progressive_tax(federal_taxable_income, &federal_brackets);
-
-    // LTCG tax on qualified income
-    let unused_standard_deduction = (standard_deduction - total_ordinary_income).max(0.0);
-    let taxable_qualified_income = (qualified_income - unused_standard_deduction).max(0.0);
-    let ltcg_tax = calculate_ltcg_tax(
-        federal_taxable_income,
-        taxable_qualified_income,
+    let ordinary = traditional_withdrawals + taxable_ss;
+    let deduction = deduction_for(household, tax_year, ordinary + qualified_income);
+    let federal_tax = federal_tax_on(
+        ordinary,
+        qualified_income,
+        deduction,
         filing_status,
+        tax_year,
     );
-    let net_investment_income_threshold = match filing_status {
-        FilingStatus::MarriedFilingJointly => 250_000.0,
-        FilingStatus::MarriedFilingSeparately => 125_000.0,
-        _ => 200_000.0,
-    };
-    let net_investment_income_tax = 0.038
-        * qualified_income.min(
-            (total_ordinary_income + qualified_income - net_investment_income_threshold).max(0.0),
-        );
-    let total_federal_tax = federal_tax + ltcg_tax + net_investment_income_tax;
 
-    // State tax
-    let state_tax = match state {
-        State::CA => {
-            let ca_deduction = get_ca_standard_deduction(filing_status);
-            // California excludes Social Security and taxes capital gains as ordinary income.
-            let ca_total_income = traditional_withdrawals + qualified_income;
-            let ca_taxable = (ca_total_income - ca_deduction).max(0.0);
-            let ca_brackets = get_ca_brackets(filing_status);
-            calculate_progressive_tax(ca_taxable, &ca_brackets)
-        }
-        _ => 0.0,
-    };
-
-    // No FICA in retirement
-    let total_tax = total_federal_tax + state_tax;
+    let state_tax = state_tax_of(
+        state,
+        filing_status,
+        &StateTaxInput {
+            wages: 0.0,
+            other_ordinary: traditional_withdrawals,
+            qualified: qualified_income,
+            social_security: social_security_benefit,
+            pretax_hsa: 0.0,
+            pretax_traditional: 0.0,
+        },
+    );
 
     TaxResult {
-        total_tax,
+        total_tax: federal_tax + state_tax,
         hsa_contribution: 0.0,
         k401_contribution: 0.0,
     }
 }
 
-/// Calculate taxable portion of Social Security benefits
 pub fn calculate_taxable_social_security(
     other_income: f64,
     social_security_benefit: f64,
     qualified_income: f64,
     filing_status: &FilingStatus,
+    tax_year: i32,
 ) -> f64 {
     if social_security_benefit == 0.0 {
         return 0.0;
@@ -736,13 +640,16 @@ pub fn calculate_taxable_social_security(
     // Combined income = AGI + nontaxable interest + 50% of SS benefits
     let combined_income = other_income + qualified_income + (social_security_benefit * 0.5);
 
-    // IRS thresholds
-    let (tier1, tier2) = match filing_status {
+    // Fixed in nominal dollars since 1984, so in the real dollars the engine
+    // works in they shrink every year and take a larger share of every benefit.
+    let (nominal_tier1, nominal_tier2) = match filing_status {
         FilingStatus::Single => (25000.0, 34000.0),
         FilingStatus::MarriedFilingJointly => (32000.0, 44000.0),
         FilingStatus::MarriedFilingSeparately => (0.0, 0.0),
         FilingStatus::HeadOfHousehold => (25000.0, 34000.0),
     };
+    let tier1 = frozen_threshold(nominal_tier1, tax_year);
+    let tier2 = frozen_threshold(nominal_tier2, tax_year);
 
     if combined_income <= tier1 {
         0.0
@@ -872,15 +779,67 @@ mod tests {
 
     #[test]
     fn applies_2025_enhanced_senior_deduction() {
+        let single_at_65 = Household::single(FilingStatus::Single, 65);
+        assert_eq!(deduction_for(&single_at_65, 2026, 50_000.0), 23_750.0);
+        assert_eq!(deduction_for(&single_at_65, 2026, 175_000.0), 17_750.0);
+    }
+
+    #[test]
+    fn enhanced_senior_deduction_lapses_after_2028() {
+        let single_at_65 = Household::single(FilingStatus::Single, 65);
+        assert_eq!(deduction_for(&single_at_65, 2028, 50_000.0), 23_750.0);
+        assert_eq!(deduction_for(&single_at_65, 2029, 50_000.0), 17_750.0);
+    }
+
+    #[test]
+    fn senior_amounts_are_per_person() {
+        let one = Household::new(FilingStatus::MarriedFilingJointly, vec![66, 60]);
+        let both = Household::new(FilingStatus::MarriedFilingJointly, vec![66, 67]);
+        // Each qualifying spouse adds $1,600 and another $6,000 of OBBBA.
         assert_eq!(
-            get_standard_deduction(&FilingStatus::Single, 65, 50_000.0),
-            23_750.0
+            deduction_for(&both, 2026, 50_000.0) - deduction_for(&one, 2026, 50_000.0),
+            7_600.0
         );
-        assert_eq!(
-            get_standard_deduction(&FilingStatus::Single, 65, 175_000.0),
-            17_750.0
+    }
+
+    #[test]
+    fn frozen_thresholds_shrink_in_real_terms() {
+        assert_eq!(frozen_threshold(25_000.0, 2025), 25_000.0);
+        assert!(frozen_threshold(25_000.0, 2045) < 15_000.0);
+    }
+
+    #[test]
+    fn taxes_capital_gains_realized_in_a_working_year() {
+        let policy = ContributionPolicy {
+            hsa_eligible: false,
+            use_backdoor_roth: false,
+        };
+        let household = Household::single(FilingStatus::Single, 45);
+        let wages_only = calculate_working_cash_flow(
+            200_000.0,
+            60_000.0,
+            &household,
+            &State::CA,
+            2026,
+            &policy,
+            OtherIncome {
+                ordinary: 0.0,
+                qualified: 0.0,
+            },
         );
-        assert_eq!(get_ca_standard_deduction(&FilingStatus::Single), 5_706.0);
+        let with_gains = calculate_working_cash_flow(
+            200_000.0,
+            60_000.0,
+            &household,
+            &State::CA,
+            2026,
+            &policy,
+            OtherIncome {
+                ordinary: 0.0,
+                qualified: 100_000.0,
+            },
+        );
+        assert!(with_gains.tax.total_tax > wages_only.tax.total_tax);
     }
 
     #[test]
@@ -888,9 +847,9 @@ mod tests {
         let result = calculate_working_cash_flow(
             100_000.0,
             50_000.0,
-            40,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 40),
             &State::TX,
+            2026,
             &ContributionPolicy {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
@@ -911,9 +870,9 @@ mod tests {
         let result = calculate_working_cash_flow(
             500_000.0,
             40_000.0,
-            40,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 40),
             &State::TX,
+            2026,
             &ContributionPolicy {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
@@ -932,9 +891,9 @@ mod tests {
         let eligible = calculate_working_cash_flow(
             200_000.0,
             40_000.0,
-            40,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 40),
             &State::TX,
+            2026,
             &ContributionPolicy {
                 hsa_eligible: true,
                 use_backdoor_roth: true,
@@ -944,9 +903,9 @@ mod tests {
         let ineligible = calculate_working_cash_flow(
             200_000.0,
             40_000.0,
-            40,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 40),
             &State::TX,
+            2026,
             &ContributionPolicy {
                 hsa_eligible: false,
                 use_backdoor_roth: false,
@@ -961,20 +920,20 @@ mod tests {
     }
 
     #[test]
-    fn working_cash_flow_reports_a_funding_gap() {
+    fn working_cash_flow_reports_a_shortfall() {
         let underfunded = calculate_working_cash_flow(
             50_000.0,
             60_000.0,
-            40,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 40),
             &State::TX,
+            2026,
             &ContributionPolicy {
                 hsa_eligible: false,
                 use_backdoor_roth: false,
             },
             OtherIncome::default(),
         );
-        assert!(underfunded.funding_gap > 10_000.0);
+        assert!(underfunded.net_cash_flow < -10_000.0);
     }
 
     #[test]
@@ -986,18 +945,18 @@ mod tests {
         let wages_only = calculate_working_cash_flow(
             100_000.0,
             60_000.0,
-            75,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 75),
             &State::TX,
+            2026,
             &policy,
             OtherIncome::default(),
         );
         let with_rmd = calculate_working_cash_flow(
             100_000.0,
             60_000.0,
-            75,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 75),
             &State::TX,
+            2026,
             &policy,
             OtherIncome {
                 ordinary: 40_000.0,
@@ -1007,9 +966,9 @@ mod tests {
         let rmd_misclassified_as_wages = calculate_working_cash_flow(
             140_000.0,
             60_000.0,
-            75,
-            &FilingStatus::Single,
+            &Household::single(FilingStatus::Single, 75),
             &State::TX,
+            2026,
             &policy,
             OtherIncome::default(),
         );
@@ -1023,14 +982,32 @@ mod tests {
     #[test]
     fn social_security_first_tier_uses_half_the_excess() {
         let taxable =
-            calculate_taxable_social_security(20_000.0, 20_000.0, 0.0, &FilingStatus::Single);
+            calculate_taxable_social_security(20_000.0, 20_000.0, 0.0, &FilingStatus::Single, 2025);
         assert_eq!(taxable, 2_500.0);
     }
 
     #[test]
     fn applies_net_investment_income_tax_above_threshold() {
-        let result =
-            calculate_retirement_tax(0.0, 0.0, 250_000.0, 64, &FilingStatus::Single, &State::TX);
-        assert!((result.total_tax - 29_770.0).abs() < 0.01);
+        let at_law_year = calculate_retirement_tax(
+            0.0,
+            0.0,
+            250_000.0,
+            &Household::single(FilingStatus::Single, 64),
+            &State::TX,
+            TAX_LAW_YEAR,
+        );
+        assert!((at_law_year.total_tax - 29_770.0).abs() < 0.01);
+
+        // The $200,000 threshold is fixed in nominal dollars, so in real terms
+        // it shrinks and catches more of the same income every year.
+        let twenty_years_on = calculate_retirement_tax(
+            0.0,
+            0.0,
+            250_000.0,
+            &Household::single(FilingStatus::Single, 64),
+            &State::TX,
+            TAX_LAW_YEAR + 20,
+        );
+        assert!(twenty_years_on.total_tax > at_law_year.total_tax);
     }
 }
