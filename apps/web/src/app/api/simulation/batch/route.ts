@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const limited = await rateLimit(`simulate:${user.id}`, SIMULATION_RATE_LIMIT);
     if (!limited.success) {
       return NextResponse.json(
-        { error: 'Too many simulation requests — slow down and retry shortly' },
+        { error: 'Too many simulation requests. Slow down and retry shortly.' },
         { status: 429, headers: { 'Retry-After': String(Math.ceil((limited.reset - Date.now()) / 1000)) } }
       );
     }
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     );
     if (!pathLimit.success) {
       return NextResponse.json(
-        { error: 'Simulation compute quota exceeded — retry shortly' },
+        { error: 'Simulation compute quota exceeded. Retry shortly.' },
         { status: 429, headers: { 'Retry-After': String(Math.ceil((pathLimit.reset - Date.now()) / 1000)) } },
       );
     }

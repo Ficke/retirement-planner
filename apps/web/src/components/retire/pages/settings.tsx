@@ -89,7 +89,7 @@ export function PageSettings() {
                 ? cloudReady
                   ? "Cloud syncs across devices. Browser-only mode copies the current plan but never uploads later edits; switching back reloads the cloud copy. Browser-only data is lost if you clear this browser."
                   : "Your identity is signed in, but its cloud data record is unavailable. This account remains isolated in browser-only storage until cloud setup succeeds."
-                : "You're not signed in, so your profile and accounts exist only in this browser — nothing is stored in the cloud. Sign in to keep your plan and use it across devices."
+                : "You're not signed in, so your profile and accounts exist only in this browser. Nothing is stored in the cloud. Sign in to keep your plan and use it across devices."
             }
             badge={
               <Badge variant="secondary" className="bg-info/15 text-info gap-1.5">
@@ -146,7 +146,7 @@ export function PageSettings() {
             label="Where simulations run"
             helper={
               signedIn
-                ? "Cloud sends balances and allocations — never account names — and stores nothing. Local never leaves this device."
+                ? "Cloud sends balances and allocations, never account names, and stores nothing. Local never leaves this device."
                 : "Simulations run on this device. The cloud engine needs an account."
             }
             badge={

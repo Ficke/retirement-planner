@@ -263,9 +263,9 @@ export function PageProfile() {
           />
         </div>
         <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
-          Out-of-pocket costs, and premiums once on Medicare, are what an HSA can pay tax-free.
-          Marketplace premiums are not — an HSA covers premiums only for COBRA, unemployment,
-          Medicare, and long-term care.
+          An HSA can pay out-of-pocket costs tax-free, and premiums once you are on Medicare.
+          It cannot pay marketplace premiums. The only premiums it covers are COBRA,
+          unemployment, Medicare, and long-term care.
         </p>
       </DashboardCard>
 

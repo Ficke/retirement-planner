@@ -68,9 +68,9 @@ struct HealthcareCost {
 /// Medicare age; out-of-pocket cost is one figure on both sides of it.
 ///
 /// `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
-/// not on that list — HSAs cover premiums only for COBRA, coverage during
-/// unemployment, Medicare, and long-term care — so folding them in would hand an
-/// early retiree a large tax break they do not have.
+/// not on that list. An HSA covers premiums only for COBRA, unemployment,
+/// Medicare, and long-term care, so folding them in would hand an early retiree
+/// a tax break they do not have.
 /// What the household's income makes of its premium. Both tests look backward:
 /// IRMAA because that is the law, the marketplace credit because healthcare is
 /// priced before the year's withdrawals are known and enrollment rests on an

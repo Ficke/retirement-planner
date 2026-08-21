@@ -111,7 +111,7 @@ export default function SignInPage() {
               <Link href="/" className="hover:underline">
                 Continue without an account
               </Link>{' '}
-              — your data stays in this browser
+              Your data stays in this browser.
             </p>
           </form>
         </CardContent>

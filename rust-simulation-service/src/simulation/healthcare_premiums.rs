@@ -1,13 +1,12 @@
 //! Income-tested healthcare premiums: the ACA premium tax credit before
 //! Medicare, and the IRMAA surcharge after it.
 //!
-//! Both are the reason a withdrawal decision is also a healthcare decision. A
-//! Roth conversion at 63 raises the Medicare premium at 65; a year of large
-//! Traditional draws before 65 can cost more in lost subsidy than it saves in
-//! tax.
+//! Both make a withdrawal decision a healthcare decision. A Roth conversion at
+//! 63 raises the Medicare premium at 65, and large Traditional draws before 65
+//! can cost more in lost subsidy than they save in tax.
 //!
-//! These are indexed annually and are stated here for 2026. Mirrors
-//! `data/healthcare-premiums.ts`; both change together.
+//! Indexed annually, stated here for 2026. Mirrors
+//! `data/healthcare-premiums.ts` and both change together.
 
 use crate::types::FilingStatus;
 
@@ -26,10 +25,10 @@ pub fn federal_poverty_level(household_size: u32) -> f64 {
 /// interpolated within each band (IRC 36B(b)(3)(A)(i), indexed for 2026 by
 /// Rev. Proc. 2025-25).
 ///
-/// There is no band above 400%: that is the subsidy cliff, which returned on
-/// 2026-01-01 when the enhanced credits lapsed. One dollar over and the whole
-/// credit is gone, and that discontinuity is what makes managing MAGI worth
-/// modeling.
+/// There is no band above 400%. That is the subsidy cliff, which returned on
+/// 2026-01-01 when the enhanced credits lapsed: one dollar over and the whole
+/// credit is gone. It is a cliff here too, not a taper, because the
+/// discontinuity is what makes managing MAGI worth modeling.
 struct ApplicablePercentageBand {
     upper_fpl_ratio: f64,
     start_percent: f64,
@@ -71,16 +70,14 @@ const APPLICABLE_PERCENTAGE_BANDS: [ApplicablePercentageBand; 6] = [
 
 pub const SUBSIDY_CLIFF_FPL_RATIO: f64 = 4.0;
 
-/// A credit needs income to be measured against. Below the poverty level there
-/// is none, which is the Medicaid population: expansion states cover them and
-/// non-expansion states leave them in the coverage gap, and neither is a
-/// premium this model can price. They pay list here, which is the pessimistic
-/// reading and keeps a plan from being handed free coverage for holding MAGI
-/// near zero.
+/// The credit starts at the poverty level. Below it is the Medicaid population:
+/// expansion states cover them, non-expansion states leave them in the coverage
+/// gap, and this model can price neither. They pay list here, so a plan is not
+/// handed free coverage for holding MAGI at zero.
 pub const SUBSIDY_FLOOR_FPL_RATIO: f64 = 1.0;
 
 /// What the household is expected to pay toward the benchmark plan, or `None`
-/// when no credit reaches it -- over the cliff, or under the floor.
+/// when no credit reaches it: over the cliff, or under the floor.
 pub fn expected_premium_contribution(magi: f64, household_size: u32) -> Option<f64> {
     let fpl_ratio = magi / federal_poverty_level(household_size);
     if !(SUBSIDY_FLOOR_FPL_RATIO..=SUBSIDY_CLIFF_FPL_RATIO).contains(&fpl_ratio) {

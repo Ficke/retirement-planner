@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const limited = await rateLimit(`simulation-probe:${ip}`, SIMULATION_RATE_LIMIT);
     if (!limited.success) {
       return NextResponse.json(
-        { error: 'Too many probe requests — slow down and retry shortly' },
+        { error: 'Too many probe requests. Slow down and retry shortly.' },
         { status: 429, headers: { 'Retry-After': String(Math.ceil((limited.reset - Date.now()) / 1000)) } }
       );
     }

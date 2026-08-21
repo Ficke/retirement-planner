@@ -20,15 +20,14 @@ export interface PremiumIncomeTest {
  * Retirement healthcare for one year. Which premium applies is a step at
  * Medicare age; out-of-pocket cost is one figure on both sides of it.
  *
- * Real growth compounds from the as-of date, not from retirement, because the
- * entered figures are what the household would pay today. Medical costs rise
- * in real terms through the working years too, so a plan that is decades out
- * retires into a bill well above what it entered.
+ * Real growth compounds from the as-of date, not from retirement. The entered
+ * figures are what the household would pay today, and medical costs rise in
+ * real terms through the working years too.
  *
  * `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
- * not on that list — HSAs cover premiums only for COBRA, coverage during
- * unemployment, Medicare, and long-term care — so folding them in would hand an
- * early retiree a large tax break they do not have.
+ * not on that list. An HSA covers premiums only for COBRA, unemployment,
+ * Medicare, and long-term care, so folding them in would hand an early retiree
+ * a tax break they do not have.
  *
  * Shared with the profile page so the spending it previews is the spending the
  * engine funds. Mirrored by `healthcare_cost_for` in the Rust engine.
