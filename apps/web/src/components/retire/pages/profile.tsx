@@ -127,7 +127,7 @@ export function PageProfile() {
             onChange={(v) => updateProfile({ currentSalary: v })}
           />
           <NumberField
-            label="Growth above inflation (%)"
+            label="Salary growth above inflation (%)"
             value={Number((p.salaryGrowthRate * 100).toFixed(1))}
             step={0.1}
             min={-10}
@@ -139,10 +139,7 @@ export function PageProfile() {
 
       <DashboardCard title="Spending">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Spending growth while working</h3>
-            </div>
+          <SubCard title="Spending growth while working">
             <NumberField
               label="Growth above inflation (%)"
               value={Number((p.workingSpendingGrowthRate * 100).toFixed(1))}
@@ -152,12 +149,9 @@ export function PageProfile() {
               hint="The amount itself is on the Plan page."
               onChange={(v) => updateProfile({ workingSpendingGrowthRate: v / 100 })}
             />
-          </div>
+          </SubCard>
 
-          <div className="border-border rounded-lg border p-4">
-            <div className="mb-4">
-              <h3 className="font-medium">Retirement spending</h3>
-            </div>
+          <SubCard title="Retirement spending">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <NumberField
                 label="Share of final working spending (%)"
@@ -176,7 +170,7 @@ export function PageProfile() {
                 onChange={(v) => updateProfile({ retirementSpendingGrowthRate: v / 100 })}
               />
             </div>
-          </div>
+          </SubCard>
         </div>
 
         <div className="bg-muted/40 border-border mt-4 rounded-lg border p-4">
@@ -322,6 +316,21 @@ function Wrap({
       </Label>
       {children}
       {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * A titled block inside a card. Named as a group for the same reason the cards
+ * are: both growth fields here read "Growth above inflation" and only the
+ * heading says which is which.
+ */
+function SubCard({ title, children }: { title: string; children: React.ReactNode }) {
+  const titleId = useId();
+  return (
+    <div className="border-border rounded-lg border p-4" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="mb-4 font-medium">{title}</h3>
+      {children}
     </div>
   );
 }
