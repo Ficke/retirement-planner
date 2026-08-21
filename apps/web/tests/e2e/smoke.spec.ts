@@ -98,7 +98,7 @@ test('every sidebar page is reachable', async ({ page }) => {
 test('signed out, the app runs in local mode and offers sign-in', async ({ page }) => {
   await gotoApp(page);
 
-  await expect(page.getByText('Guest — data stays in this browser')).toBeVisible();
+  await expect(page.getByText('Guest. Data stays in this browser.')).toBeVisible();
   await expect(navItem(page, 'Sign in')).toBeVisible();
 
   await navItem(page, 'Settings').click();
