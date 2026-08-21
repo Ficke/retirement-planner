@@ -518,6 +518,7 @@ function projectScenarioInternal(
         depositTraditional: depositTraditionalYear,
         depositRoth: depositRothYear,
         depositHSA: depositHSAYear,
+        healthcareCost: healthcareCostYear,
         insufficientFunds: insufficientFundsYear,
       });
     }

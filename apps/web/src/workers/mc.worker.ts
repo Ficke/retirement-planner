@@ -36,6 +36,7 @@ const CASH_FLOW_KEYS = [
   'withdrawalTraditional',
   'withdrawalRoth',
   'withdrawalHSA',
+  'healthcareCost',
 ] as const;
 type CashFlowKey = typeof CASH_FLOW_KEYS[number];
 
@@ -155,6 +156,7 @@ async function runSimulation(
         withdrawalTraditional: sums.withdrawalTraditional / count,
         withdrawalRoth: sums.withdrawalRoth / count,
         withdrawalHSA: sums.withdrawalHSA / count,
+        healthcareCost: sums.healthcareCost / count,
       };
     });
     const bucketSuccesses = cohort.reduce(

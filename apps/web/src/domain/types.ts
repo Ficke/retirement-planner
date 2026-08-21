@@ -213,6 +213,11 @@ export interface PathProjection {
   depositRoth: number;
   depositHSA: number;
   withdrawalHSA: number;
+  /**
+   * Retirement healthcare for the year, already counted inside `spending`.
+   * Zero while working, where healthcare is part of `currentSpending`.
+   */
+  healthcareCost: number;
   insufficientFunds: boolean;
 }
 
@@ -236,6 +241,7 @@ export interface OutcomeCashFlowRow {
   withdrawalTraditional: number;
   withdrawalRoth: number;
   withdrawalHSA: number;
+  healthcareCost: number;
 }
 
 export interface OutcomeBucket {

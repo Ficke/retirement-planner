@@ -56,6 +56,7 @@ pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<Simulati
                     withdrawal_traditional: projection.withdrawal_traditional,
                     withdrawal_roth: projection.withdrawal_roth,
                     withdrawal_hsa: projection.withdrawal_hsa,
+                    healthcare_cost: projection.healthcare_cost,
                 });
             }
             Ok(PathSummary {
@@ -255,6 +256,7 @@ fn aggregate_results(
                         withdrawal_traditional: 0.0,
                         withdrawal_roth: 0.0,
                         withdrawal_hsa: 0.0,
+                        healthcare_cost: 0.0,
                     };
                     for (_, path_index) in cohort {
                         let row = &path_summaries[*path_index].cash_flows[year_index];
@@ -267,6 +269,7 @@ fn aggregate_results(
                         mean.withdrawal_traditional += row.withdrawal_traditional;
                         mean.withdrawal_roth += row.withdrawal_roth;
                         mean.withdrawal_hsa += row.withdrawal_hsa;
+                        mean.healthcare_cost += row.healthcare_cost;
                     }
                     mean.income /= count;
                     mean.spending /= count;
@@ -277,6 +280,7 @@ fn aggregate_results(
                     mean.withdrawal_traditional /= count;
                     mean.withdrawal_roth /= count;
                     mean.withdrawal_hsa /= count;
+                    mean.healthcare_cost /= count;
                     mean
                 })
                 .collect();
