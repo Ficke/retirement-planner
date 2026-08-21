@@ -38,6 +38,10 @@
   --color-account-hsa: var(--account-hsa);
   --color-account-ss: var(--account-ss);
   --color-account-salary: var(--account-salary);
+  --color-spend-living: var(--spend-living);
+  --color-spend-healthcare: var(--spend-healthcare);
+  --color-spend-tax: var(--spend-tax);
+  --color-spend-saved: var(--spend-saved);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -117,12 +121,23 @@ details[open] summary ~ * {
   --warn: oklch(70% 0.14 75);
   --danger: oklch(56% 0.14 25);
   --info: oklch(56% 0.10 240);
-  --account-taxable: oklch(56% 0.08 240);
-  --account-traditional: oklch(58% 0.09 280);
-  --account-roth: oklch(58% 0.10 320);
-  --account-hsa: oklch(58% 0.09 190);
-  --account-ss: oklch(58% 0.09 70);
-  --account-salary: oklch(58% 0.10 160);
+  /*
+   * Cash-flow series. Salary and Social Security carry identity; the four
+   * account types are one blue ramp stepped in the order the engine draws
+   * them down, so lighter reads as spent sooner. Six categorical hues in one
+   * stack put adjacent pairs below the colorblind-separation floor.
+   */
+  --account-taxable: oklch(72% 0.09 250);
+  --account-traditional: oklch(62% 0.12 250);
+  --account-roth: oklch(52% 0.15 255);
+  --account-hsa: oklch(42% 0.14 258);
+  --account-ss: oklch(68% 0.13 78);
+  --account-salary: oklch(56% 0.13 158);
+  --spend-living: oklch(72% 0.07 35);
+  --spend-healthcare: oklch(60% 0.11 30);
+  --spend-tax: oklch(46% 0.13 25);
+  /* Money saved is the same bucket it is later withdrawn from. */
+  --spend-saved: var(--account-traditional);
 }
 
 .dark {
@@ -168,12 +183,18 @@ details[open] summary ~ * {
   --warn: oklch(78% 0.16 75);
   --danger: oklch(68% 0.18 25);
   --info: oklch(70% 0.12 240);
-  --account-taxable: oklch(68% 0.10 240);
-  --account-traditional: oklch(70% 0.11 280);
-  --account-roth: oklch(70% 0.12 320);
-  --account-hsa: oklch(70% 0.11 190);
-  --account-ss: oklch(72% 0.12 70);
-  --account-salary: oklch(70% 0.12 160);
+  /* Both ramps sit higher and tighter than their light counterparts: the dark
+   * end of a ramp is the one that has to hold against a near-black card. */
+  --account-taxable: oklch(84% 0.07 250);
+  --account-traditional: oklch(75% 0.10 250);
+  --account-roth: oklch(66% 0.13 253);
+  --account-hsa: oklch(57% 0.15 256);
+  --account-ss: oklch(66% 0.14 78);
+  --account-salary: oklch(64% 0.15 158);
+  --spend-living: oklch(82% 0.08 35);
+  --spend-healthcare: oklch(70% 0.12 30);
+  --spend-tax: oklch(58% 0.15 25);
+  --spend-saved: var(--account-traditional);
 }
 
 @layer base {

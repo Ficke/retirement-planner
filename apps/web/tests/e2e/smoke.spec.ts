@@ -51,7 +51,7 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
   expect(yPositions).toEqual([...yPositions].sort((a, b) => a - b));
 });
 
-test('Plan includes income outcome cohorts', async ({ page }) => {
+test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
   // Exercises the worker response directly: a separately deployed cloud engine
@@ -64,9 +64,11 @@ test('Plan includes income outcome cohorts', async ({ page }) => {
     'Median · 45th–55th',
   );
 
-  await expect(page.getByRole('img', {
-    name: 'Average annual income by source for the selected outcome range',
-  })).toBeVisible();
+  for (const side of ['money in by source', 'money out by category']) {
+    await expect(page.getByRole('img', {
+      name: `Average annual ${side} for the selected outcome range`,
+    })).toBeVisible();
+  }
 });
 
 test('Plan labels sensitivity axes without repeating age in every tick', async ({ page }) => {

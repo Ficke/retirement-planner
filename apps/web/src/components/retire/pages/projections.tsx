@@ -37,7 +37,7 @@ import {
   Stat,
 } from "@/components/retire/ui";
 import {
-  IncomeSourcesChart,
+  CashFlowChart,
   WealthFanChart,
 } from "@/components/ui/charts";
 import { fmtCurrency, successTone } from "../format";
@@ -388,7 +388,7 @@ export function ProjectionDetails({
       <DashboardCard
         title="Cash flow"
         description={selectedBucket
-          ? `Average annual income sources for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
+          ? `Average annual money in and money out for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
           : undefined}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -400,13 +400,13 @@ export function ProjectionDetails({
         }
       >
         {!yearly.length ? (
-          <div className="text-muted-foreground flex h-[320px] items-center justify-center text-sm">
+          <div className="text-muted-foreground flex h-[400px] items-center justify-center text-sm">
             {isSimulating
               ? "Running simulation…"
               : "No projection data. Adjust your plan to run."}
           </div>
         ) : (
-          <IncomeSourcesChart projections={cashFlowRows} height={320} />
+          <CashFlowChart projections={cashFlowRows} height={400} />
         )}
       </DashboardCard>
 
