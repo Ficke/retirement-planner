@@ -159,6 +159,16 @@ describe('State Management - Simple Invalidation Logic', () => {
     );
     expect(migrated.assumptions.useBackdoorRoth).toBe(false);
   });
+
+  it('seeds a starter balance for a plan that was never stored, but not for a cleared one', () => {
+    const fresh = hydratePlan(null, null, null, null);
+    expect(fresh.accounts).toHaveLength(1);
+    expect(fresh.accounts[0].balance).toBe(100_000);
+    expect(fresh.accounts[0].assetWeights.stocks).toBe(1);
+
+    const cleared = hydratePlan(null, null, null, []);
+    expect(cleared.accounts).toEqual([]);
+  });
 });
 
 describe('cloud compute gating', () => {
