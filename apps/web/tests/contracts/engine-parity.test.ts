@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { projectScenario } from '@/engine/projection';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import type {
   PathProjection,
   SimulationPlan,
@@ -21,7 +22,7 @@ const assumptions = {
 };
 
 const socialSecuritySurplusPlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1959-01-01',
     state: 'TX',
@@ -48,7 +49,7 @@ const socialSecuritySurplusPlan: SimulationPlan = {
 };
 
 const withdrawalPlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1951-01-01',
     state: 'TX',
@@ -109,7 +110,7 @@ const workingRmdPlan: SimulationPlan = {
  * year came to accept a capital gain and tax it at nothing.
  */
 const workingShortfallPlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1985-01-01',
     state: 'CA',
@@ -144,7 +145,7 @@ type PenalizedBucket = 'Traditional' | 'HSA';
  * market draws.
  */
 const penaltyShortfallPlan = (bucket: PenalizedBucket): SimulationPlan => ({
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1986-01-01',
     state: 'TX',
@@ -172,7 +173,7 @@ const penaltyShortfallPlans: Array<{ bucket: PenalizedBucket; plan: SimulationPl
 
 /** Both spouses past 65, where the per-person senior deductions have to agree. */
 const seniorCouplePlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1958-01-01',
     state: 'CA',
@@ -211,7 +212,7 @@ const seniorCouplePlan: SimulationPlan = {
  * joins the HSA's qualified allowance, and the 20% non-qualified penalty stops.
  */
 const healthcarePlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1968-01-01',
     state: 'CA',

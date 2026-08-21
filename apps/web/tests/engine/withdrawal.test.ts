@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createTestAccount } from '../test-helpers';
 import type { Account, FilingStatus } from '@/domain/types';
 import { projectScenario, type ProjectionConfig } from '@/engine/projection';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import type { SimulationPlan } from '@/domain/types';
 
 // Import the function we want to test by temporarily exposing it
 // Since executeOrderedWithdrawals is private, test it through the public projection API.
@@ -169,8 +171,8 @@ describe('Withdrawal Logic', () => {
 
     // Use the imported projectScenario function
     
-    const plan = {
-      schemaVersion: 4 as const,
+    const plan: SimulationPlan = {
+      schemaVersion: PLAN_SCHEMA_VERSION,
       profile: {
         birthDate: '1958-01-01',
         retirementAge: 67,

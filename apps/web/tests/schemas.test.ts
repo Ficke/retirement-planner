@@ -7,6 +7,7 @@ import {
   UpdateAccountSchema,
 } from '@/lib/validation';
 import { loadLocalAccounts, saveLocalAccounts } from '@/lib/persistence';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 describe('Domain Schemas', () => {
   it('rejects impossible calendar dates and numerically unsafe balances', () => {
@@ -57,7 +58,7 @@ describe('Domain Schemas', () => {
     expect(migrated).toEqual([account]);
     saveLocalAccounts(migrated!, null);
     expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
-      schemaVersion: 4,
+      schemaVersion: PLAN_SCHEMA_VERSION,
       accounts: [account],
     });
   });

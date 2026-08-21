@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { countSweepSuccesses, projectScenario, projectScenarioSummary, createRNG, getBootstrapMarketReturns, BlockBootstrapGenerator, createMarketReturnsGenerator } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 const testPlan: SimulationPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1990-01-01',
     state: 'CA',

@@ -49,6 +49,7 @@ import { PUT as saveProfile } from '@/app/api/profile/route';
 import { POST as runBatch } from '@/app/api/simulation/batch/route';
 import { POST as runMonteCarlo } from '@/app/api/simulation/monte-carlo/route';
 import { POST as runProbe } from '@/app/api/internal/simulation-probe/route';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 const owner = { id: 'firebase-owner', email: 'owner@example.test', name: null };
 const accountId = '8dc6c282-ffae-4b80-874d-4ee26ecf6604';
@@ -230,7 +231,7 @@ describe('cloud API authorization boundaries', () => {
 
 describe('simulation proxy response streaming', () => {
   const simulationPlan = {
-    schemaVersion: 4,
+    schemaVersion: PLAN_SCHEMA_VERSION,
     profile: { ...profile, retirementSpending: 50_000 },
     accounts: [{
       type: 'Taxable',

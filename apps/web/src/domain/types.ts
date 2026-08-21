@@ -40,14 +40,15 @@ export type UpdateAccountData = Partial<Pick<
  * share of spending. Premiums and out-of-pocket costs are separate because
  * Medicare, and later any subsidy or surcharge, moves only the premium.
  *
- * All figures are household totals in real dollars.
+ * All figures are household totals in real dollars as of the plan's as-of
+ * date, which is what `realGrowthRate` compounds from.
  */
 export interface RetirementHealthcare {
   /** Marketplace premiums before 65. */
   preMedicarePremium: number;
   /** Part B, Part D, and supplemental premiums from 65. */
   medicarePremium: number;
-  /** Deductibles, coinsurance, and what no plan covers. Barely moves at 65. */
+  /** Deductibles, coinsurance, and what no plan covers, on both sides of 65. */
   outOfPocket: number;
   /** Medical inflation above CPI. */
   realGrowthRate: number;

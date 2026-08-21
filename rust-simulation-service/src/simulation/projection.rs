@@ -18,7 +18,8 @@ use super::tax::{
 
 use crate::types::{
     Account, AccountType, AssetWeights, PathProjection, PathResult, RetirementHealthcare,
-    RetirementPlan, State, MEDICARE_AGE, PHASE_SPENDING_SCHEMA_VERSION,
+    RetirementPlan, State, HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION, MEDICARE_AGE,
+    PHASE_SPENDING_SCHEMA_VERSION,
 };
 
 /// All-in annual portfolio cost, subtracted from the realized return before it
@@ -62,8 +63,8 @@ struct HealthcareCost {
     qualified: f64,
 }
 
-/// Retirement healthcare for one year: premiums step down at Medicare, while
-/// out-of-pocket cost barely moves across that line.
+/// Retirement healthcare for one year. Which premium applies is a step at
+/// Medicare age; out-of-pocket cost is one figure on both sides of it.
 ///
 /// `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
 /// not on that list — HSAs cover premiums only for COBRA, coverage during
@@ -72,9 +73,9 @@ struct HealthcareCost {
 fn healthcare_cost_for(
     healthcare: &RetirementHealthcare,
     age: u32,
-    years_retired: u32,
+    growth_years: u32,
 ) -> HealthcareCost {
-    let growth = (1.0 + healthcare.real_growth_rate).powi(years_retired as i32);
+    let growth = (1.0 + healthcare.real_growth_rate).powi(growth_years as i32);
     let on_medicare = age >= MEDICARE_AGE;
     let premium = if on_medicare {
         healthcare.medicare_premium
@@ -555,9 +556,20 @@ fn project_scenario_internal(
                 // as-of year, including working years.
                 year
             };
-            let years_retired = year.saturating_sub(profile.retirement_age.saturating_sub(age));
-            let healthcare =
-                healthcare_cost_for(&profile.retirement_healthcare, current_age, years_retired);
+            // Real medical growth runs from the as-of date, so a plan decades
+            // out retires into the cost its entered figures grow to. Older
+            // requests compounded from the first retirement year instead.
+            let healthcare_growth_years =
+                if plan.schema_version >= HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION {
+                    year
+                } else {
+                    year.saturating_sub(profile.retirement_age.saturating_sub(age))
+                };
+            let healthcare = healthcare_cost_for(
+                &profile.retirement_healthcare,
+                current_age,
+                healthcare_growth_years,
+            );
             // Medical spending is what an HSA can cover tax-free, and the
             // allowance carries forward: an HSA has no reimbursement deadline,
             // and this bucket is drained last, so by the time it is touched the
@@ -1015,7 +1027,8 @@ mod tests {
     use crate::types::FilingStatus;
     use crate::types::PLAN_SCHEMA_VERSION;
     use crate::types::{
-        AssetWeights, ProjectionSettings, SimulationModel, SocialSecuritySettings, UserProfile,
+        AssetWeights, ProjectionSettings, RetirementHealthcare, SimulationModel,
+        SocialSecuritySettings, UserProfile,
     };
 
     fn test_plan() -> RetirementPlan {
@@ -1094,6 +1107,56 @@ mod tests {
             is_surplus_cash: false,
         }];
         plan
+    }
+
+    /// A plan retiring twenty years out prices healthcare at what its entered
+    /// figures grow to, while a request from a bundle that predates the change
+    /// still gets the old first-retirement-year exponent.
+    #[test]
+    fn healthcare_growth_runs_from_the_as_of_date_unless_the_request_is_older() {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1991-01-01".to_string();
+        plan.profile.retirement_age = 55;
+        plan.profile.life_expectancy = 57;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.profile.retirement_healthcare = RetirementHealthcare {
+            pre_medicare_premium: 15_900.0,
+            medicare_premium: 4_650.0,
+            out_of_pocket: 3_000.0,
+            real_growth_rate: 0.02,
+        };
+        plan.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: 5_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.0,
+                bonds: 1.0,
+            },
+            is_surplus_cash: false,
+        }];
+
+        let healthcare_in_first_retired_year = |plan: &RetirementPlan| {
+            let config = ProjectionConfig {
+                seed: 7,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            };
+            let result = project_scenario(plan, config).expect("projection succeeds");
+            let first = result
+                .projections
+                .iter()
+                .find(|p| p.is_retired)
+                .expect("a retirement year");
+            first.spending - plan.profile.retirement_spending
+        };
+
+        let current = healthcare_in_first_retired_year(&plan);
+        assert!((current - 18_900.0 * 1.02_f64.powi(20)).abs() < 0.01);
+
+        let mut legacy = plan.clone();
+        legacy.schema_version = HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION - 1;
+        let old = healthcare_in_first_retired_year(&legacy);
+        assert!((old - 18_900.0).abs() < 0.01);
     }
 
     #[test]

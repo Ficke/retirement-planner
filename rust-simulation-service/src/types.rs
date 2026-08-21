@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 4;
+pub const PLAN_SCHEMA_VERSION: u32 = 5;
 
 /// Medicare eligibility, which is where retirement premiums step down.
 pub const MEDICARE_AGE: u32 = 65;
@@ -10,6 +10,11 @@ pub const MEDICARE_AGE: u32 = 65;
 /// on this rather than on the current version is what keeps the next schema
 /// bump from reverting the previous version to that older math.
 pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
+
+/// Version that moved healthcare's real growth onto the as-of date. Older
+/// requests compounded it from the first retirement year, which priced a plan
+/// decades out at today's cost with none of the intervening medical inflation.
+pub const HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]

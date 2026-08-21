@@ -65,7 +65,11 @@ export function PageProfile() {
   // An already-retired plan's first modeled year is the as-of year, so it is
   // priced at today's age rather than at the retirement age it passed already.
   const firstRetirementAge = Math.max(age, p.retirementAge);
-  const firstYearHealthcare = healthcareCostFor(p.retirementHealthcare, firstRetirementAge, 0).total;
+  const firstYearHealthcare = healthcareCostFor(
+    p.retirementHealthcare,
+    firstRetirementAge,
+    Math.max(0, p.retirementAge - age),
+  ).total;
   // The engine funds healthcare on top of the spending target, so a preview
   // that showed the target alone would understate what the plan has to cover.
   const retirementSpendingTotal = retirementSpending + firstYearHealthcare;
@@ -229,7 +233,7 @@ export function PageProfile() {
 
       <DashboardCard
         title="Retirement healthcare"
-        description="Household totals in today's dollars, funded on top of the spending target. Premiums fall at Medicare; out-of-pocket cost barely moves."
+        description="Household totals in today's dollars, funded on top of the spending target. Growth above inflation compounds from today, so the plan funds what these reach by retirement."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <CurrencyField
@@ -258,12 +262,12 @@ export function PageProfile() {
         </div>
         <div className="bg-muted/40 border-border mt-4 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
           <SpendingPreview
-            label="Annual cost before 65"
+            label="Before 65"
             value={h.preMedicarePremium + h.outOfPocket}
             detail="Marketplace or COBRA coverage"
           />
           <SpendingPreview
-            label="Annual cost from 65"
+            label="From 65"
             value={h.medicarePremium + h.outOfPocket}
             detail="Part B, Part D, and supplemental"
           />

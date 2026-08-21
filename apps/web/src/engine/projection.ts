@@ -389,7 +389,7 @@ function projectScenarioInternal(
       const healthcare = healthcareCostFor(
         profile.retirementHealthcare,
         currentAge,
-        yearsRetired,
+        year,
       );
       healthcareCostYear = healthcare.total * retirementPeriodFraction;
       // Medical spending is what an HSA can cover tax-free, and the allowance

@@ -9,7 +9,7 @@ import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { readLimitedJson } from '@/lib/validation';
 
 const validPlan = {
-  schemaVersion: 4,
+  schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1991-01-01',
     state: 'CA',

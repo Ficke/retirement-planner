@@ -2,8 +2,13 @@ import type { RetirementHealthcare } from '@/domain/types';
 import { MEDICARE_AGE } from '@/domain/constants';
 
 /**
- * Retirement healthcare for one year: premiums step down at Medicare, while
- * out-of-pocket cost barely moves across that line.
+ * Retirement healthcare for one year. Which premium applies is a step at
+ * Medicare age; out-of-pocket cost is one figure on both sides of it.
+ *
+ * Real growth compounds from the as-of date, not from retirement, because the
+ * entered figures are what the household would pay today. Medical costs rise
+ * in real terms through the working years too, so a plan that is decades out
+ * retires into a bill well above what it entered.
  *
  * `qualified` is the share an HSA can pay tax-free. Marketplace premiums are
  * not on that list — HSAs cover premiums only for COBRA, coverage during
@@ -16,9 +21,9 @@ import { MEDICARE_AGE } from '@/domain/constants';
 export function healthcareCostFor(
   healthcare: RetirementHealthcare,
   age: number,
-  yearsRetired: number,
+  yearsFromAsOf: number,
 ): { total: number; qualified: number } {
-  const growth = Math.pow(1 + healthcare.realGrowthRate, Math.max(0, yearsRetired));
+  const growth = Math.pow(1 + healthcare.realGrowthRate, Math.max(0, yearsFromAsOf));
   const onMedicare = age >= MEDICARE_AGE;
   const premium = onMedicare ? healthcare.medicarePremium : healthcare.preMedicarePremium;
   const outOfPocket = healthcare.outOfPocket;

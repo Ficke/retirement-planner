@@ -4,6 +4,7 @@ import { calculateRmd } from '@/engine/rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { projectScenario } from '@/engine/projection';
 import type { SimulationPlan } from '@/domain/types';
+import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 describe('RMD Calculation', () => {
   describe('calculateRmd', () => {
@@ -53,7 +54,7 @@ describe('RMD Calculation', () => {
 
   describe('RMD Integration Tests', () => {
     const createTestPlan = (age: number, traditionalBalance: number, retirementSpending: number): SimulationPlan => ({
-      schemaVersion: 4,
+      schemaVersion: PLAN_SCHEMA_VERSION,
       profile: {
         birthDate: `${2025 - age}-01-01`,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
