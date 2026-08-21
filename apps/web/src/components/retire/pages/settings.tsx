@@ -16,6 +16,9 @@ import {
   DATA_FIRST_YEAR,
   DATA_LAST_YEAR,
 } from "@/data/market-history";
+import { stateTaxProfileOf } from "@/data/state-tax";
+import { TAX_LAW_YEAR } from "@/data/tax-brackets-2025";
+import { MAIN_PATHS, SWEEP_PATHS } from "@/services/simulation";
 import {
   Table,
   TableBody,
@@ -67,6 +70,7 @@ export function PageSettings() {
   const signedIn = user != null && authUser != null;
   const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
   const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
+  const stateTax = stateTaxProfileOf(plan.profile.state);
 
   return (
     <PageShell>
@@ -203,7 +207,7 @@ export function PageSettings() {
 
         <DashboardCard
           title="What the model assumes"
-          description={`US market history, ${DATA_RANGE}. Returns are after inflation; 5,000 paths per run.`}
+          description={`A run counts as a success only if every year it models can be paid for, from today through the end of your life. A working year that runs short fails the same way a retirement year does. Every figure here is in today's dollars, and the market figures cover ${DATA_RANGE}. The headline number runs ${MAIN_PATHS.toLocaleString()} paths; each point on a sensitivity curve runs ${SWEEP_PATHS.toLocaleString()}.`}
           flush
         >
           <Table>
@@ -216,51 +220,55 @@ export function PageSettings() {
             </TableHeader>
             <TableBody>
               <ReferenceRow
-                label="Stocks — real return / volatility"
+                label="Stocks: real return / volatility"
                 value={`${(US_STOCK_REAL_RETURNS.mean * 100).toFixed(1)}% / ${(US_STOCK_REAL_RETURNS.volatility * 100).toFixed(1)}%`}
                 source="S&P 500 total return (Damodaran)"
               />
               <ReferenceRow
-                label="Bonds — real return / volatility"
+                label="Bonds: real return / volatility"
                 value={`${(US_BOND_REAL_RETURNS.mean * 100).toFixed(1)}% / ${(US_BOND_REAL_RETURNS.volatility * 100).toFixed(1)}%`}
                 source="10-year US Treasury (Damodaran)"
               />
               <ReferenceRow
                 label="Stock/bond correlation"
                 value={STOCK_BOND_CORRELATION.toFixed(2)}
-                source={`Real annual returns, ${DATA_RANGE}`}
+                source="S&P 500 and 10-year Treasury (Damodaran)"
               />
               <ReferenceRow
                 label="Long-run inflation (CPI)"
                 value={`${(US_INFLATION.mean * 100).toFixed(1)}%`}
-                source="CPI-U Dec/Dec (BLS) — engine works in real dollars"
+                source="CPI-U Dec/Dec (BLS)"
               />
               <ReferenceRow
                 label="Tax brackets"
                 value={
-                  plan.profile.state === "CA"
-                    ? "Federal + CA 2025 estimate"
-                    : plan.profile.state === "TX" || plan.profile.state === "FL"
-                      ? "Federal 2025; no state income tax"
-                      : "Federal 2025; state/local excluded"
+                  stateTax.status === "modeled"
+                    ? `${TAX_LAW_YEAR} federal and ${stateTax.name}`
+                    : stateTax.status === "no-income-tax"
+                      ? `${TAX_LAW_YEAR} federal; ${stateTax.name} has no income tax`
+                      : `${TAX_LAW_YEAR} federal; state tax not modeled`
                 }
-                source={`IRS${plan.profile.state === "CA" ? " / FTB" : ""}`}
+                source={stateTax.status === "modeled" ? `IRS and ${stateTax.name}` : "IRS"}
               />
               <ReferenceRow
                 label="RMD table"
                 value="SECURE 2.0 (2024+)"
                 source="IRS Pub. 590-B"
               />
-              <ReferenceRow label="Contribution limits" value="2025" source="IRS" />
+              <ReferenceRow
+                label="Contribution limits"
+                value={String(TAX_LAW_YEAR)}
+                source="IRS"
+              />
               <ReferenceRow
                 label="Taxable withdrawal gain share"
                 value={`${(a.taxableGainRatio * 100).toFixed(0)}%`}
-                source="Your modeling assumption"
+                source="Tax model, below"
               />
               <ReferenceRow
-                label="Retirement healthcare — before / from 65"
+                label="Retirement healthcare: before / from 65"
                 value={`${fmtCurrency(hc.preMedicarePremium + hc.outOfPocket)} / ${fmtCurrency(hc.medicarePremium + hc.outOfPocket)}`}
-                source="Yours to set, on the Profile page"
+                source="Profile page"
               />
             </TableBody>
           </Table>
@@ -271,9 +279,9 @@ export function PageSettings() {
         </h2>
         <DashboardCard>
           <p className="text-muted-foreground mb-5 text-sm leading-relaxed">
-            2025 law, held constant in real dollars. Standard deductions only — no itemizing,
-            credits, or AMT. Ages and limits apply to one earner; a spouse&apos;s details are not
-            inferred.
+            {TAX_LAW_YEAR} law, held constant in real dollars. Standard deductions only, with
+            no itemizing, credits, or AMT. Ages and limits apply to one earner; a
+            spouse&apos;s details are not inferred.
           </p>
           <Setting
             label="Taxable withdrawal gain share"
