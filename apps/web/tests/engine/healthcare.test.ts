@@ -86,3 +86,39 @@ describe('retirementSpendingOf', () => {
     expect(retirementSpendingOf({ ...base, workingSpendingGrowthRate: 0 })).toBe(40_000);
   });
 });
+
+describe('income-tested premiums', () => {
+  const test = { filingStatus: 'Single' as const, householdSize: 1 };
+
+  it('caps a marketplace premium at the share of income the credit leaves', () => {
+    // 300% of a $15,650 poverty level, where the applicable percentage is 9.96%.
+    const magi = 15_650 * 3;
+    const subsidized = healthcareCostFor(HEALTHCARE, 60, 0, { ...test, priorYearMagi: magi });
+    expect(subsidized.total).toBeCloseTo(magi * 0.0996 + 3_000, 2);
+    expect(subsidized.total).toBeLessThan(18_900);
+  });
+
+  it('charges the full premium one dollar over the cliff', () => {
+    const underCliff = 15_650 * 4;
+    expect(
+      healthcareCostFor(HEALTHCARE, 60, 0, { ...test, priorYearMagi: underCliff }).total,
+    ).toBeLessThan(18_900);
+    expect(
+      healthcareCostFor(HEALTHCARE, 60, 0, { ...test, priorYearMagi: underCliff + 1 }).total,
+    ).toBe(18_900);
+  });
+
+  it('adds the IRMAA surcharge from the MAGI of two years prior', () => {
+    const standard = healthcareCostFor(HEALTHCARE, 66, 0, { ...test, irmaaLookbackMagi: 109_000 });
+    const surcharged = healthcareCostFor(HEALTHCARE, 66, 0, { ...test, irmaaLookbackMagi: 109_001 });
+    expect(standard.total).toBe(7_650);
+    expect(surcharged.total).toBeCloseTo(7_650 + 95.7 * 12, 2);
+    // A surcharged Medicare premium is still an HSA-qualified expense.
+    expect(surcharged.qualified).toBeCloseTo(surcharged.total, 6);
+  });
+
+  it('leaves the premium alone when no income history exists yet', () => {
+    expect(healthcareCostFor(HEALTHCARE, 60, 0, test).total).toBe(18_900);
+    expect(healthcareCostFor(HEALTHCARE, 66, 0, test).total).toBe(7_650);
+  });
+});

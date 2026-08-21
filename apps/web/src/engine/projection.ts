@@ -201,6 +201,11 @@ function projectScenarioInternal(
   let previousYearTraditionalBalance = 0;
   /** Medical cost the HSA may still reimburse tax-free, carried year to year. */
   let hsaQualifiedAllowance = 0;
+  // MAGI for each modeled year, which the next years' premiums are tested
+  // against. Healthcare cost is priced before this year's withdrawals are
+  // known, so both tests look backward: IRMAA because that is the law, the
+  // marketplace credit because enrollment rests on an estimate made in advance.
+  const magiByYear: number[] = [];
   const rng = createRNG(config.seed);
   const returnsGenerator = createMarketReturnsGenerator(plan, rng);
   
@@ -390,6 +395,12 @@ function projectScenarioInternal(
         profile.retirementHealthcare,
         currentAge,
         year,
+        {
+          priorYearMagi: magiByYear[year - 1],
+          irmaaLookbackMagi: magiByYear[year - 2],
+          filingStatus: profile.filingStatus,
+          householdSize: householdOf(profile.filingStatus, currentAge).ages.length,
+        },
       );
       healthcareCostYear = healthcare.total * retirementPeriodFraction;
       // Medical spending is what an HSA can cover tax-free, and the allowance
@@ -477,6 +488,15 @@ function projectScenarioInternal(
       .filter(acc => acc.type === 'Traditional')
       .reduce((sum, acc) => sum + acc.balance, 0);
     
+    // `income` is wages while working and the whole benefit once retired.
+    // That is the ACA definition, which adds untaxed Social Security back;
+    // IRMAA counts only the taxable part, so this runs high by the untaxed
+    // remainder. At the income a surcharge starts from, 85% of the benefit is
+    // taxable anyway, and erring high charges the surcharge sooner.
+    magiByYear[year] = income
+      + withdrawalTraditionalYear
+      + withdrawalTaxableYear * (plan.assumptions.taxableGainRatio ?? 0.5);
+
     if (insufficientFundsYear) success = false;
     if (recordProjections) {
       yearlyProjections.push({

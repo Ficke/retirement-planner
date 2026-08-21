@@ -7,6 +7,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use super::age::{age_on, birth_year_of};
+use super::healthcare_premiums::{expected_premium_contribution, irmaa_annual_surcharge};
 use super::historical_data;
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
@@ -17,8 +18,8 @@ use super::tax::{
 };
 
 use crate::types::{
-    Account, AccountType, AssetWeights, PathProjection, PathResult, RetirementHealthcare,
-    RetirementPlan, State, HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION, MEDICARE_AGE,
+    Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult,
+    RetirementHealthcare, RetirementPlan, State, HEALTHCARE_MODEL_SCHEMA_VERSION, MEDICARE_AGE,
     PHASE_SPENDING_SCHEMA_VERSION,
 };
 
@@ -70,22 +71,61 @@ struct HealthcareCost {
 /// not on that list — HSAs cover premiums only for COBRA, coverage during
 /// unemployment, Medicare, and long-term care — so folding them in would hand an
 /// early retiree a large tax break they do not have.
+/// What the household's income makes of its premium. Both tests look backward:
+/// IRMAA because that is the law, the marketplace credit because healthcare is
+/// priced before the year's withdrawals are known and enrollment rests on an
+/// estimate made in advance.
+struct PremiumIncomeTest {
+    prior_year_magi: Option<f64>,
+    irmaa_lookback_magi: Option<f64>,
+    filing_status: FilingStatus,
+    household_size: u32,
+}
+
+/// Before Medicare the entered premium is treated as the benchmark plan, since
+/// that is what the credit is measured against. After Medicare it is what the
+/// household pays at the standard rate, and IRMAA is added to it.
+///
+/// The surcharge is per enrolled person, but the plan models one age, so it is
+/// charged for one until a spouse's age is modeled. Charging it per filer would
+/// double a couple's surcharge years before the second person is eligible.
+fn income_tested_premium(list_premium: f64, on_medicare: bool, test: &PremiumIncomeTest) -> f64 {
+    if on_medicare {
+        return match test.irmaa_lookback_magi {
+            Some(magi) => list_premium + irmaa_annual_surcharge(magi, test.filing_status, 1),
+            None => list_premium,
+        };
+    }
+    match test.prior_year_magi {
+        Some(magi) => match expected_premium_contribution(magi, test.household_size) {
+            Some(expected) => expected.min(list_premium).max(0.0),
+            None => list_premium,
+        },
+        None => list_premium,
+    }
+}
+
 fn healthcare_cost_for(
     healthcare: &RetirementHealthcare,
     age: u32,
     growth_years: u32,
+    income_test: Option<&PremiumIncomeTest>,
 ) -> HealthcareCost {
     let growth = (1.0 + healthcare.real_growth_rate).powi(growth_years as i32);
     let on_medicare = age >= MEDICARE_AGE;
-    let premium = if on_medicare {
+    let list_premium = if on_medicare {
         healthcare.medicare_premium
     } else {
         healthcare.pre_medicare_premium
+    } * growth;
+    let premium = match income_test {
+        Some(test) => income_tested_premium(list_premium, on_medicare, test),
+        None => list_premium,
     };
-    let out_of_pocket = healthcare.out_of_pocket;
+    let out_of_pocket = healthcare.out_of_pocket * growth;
     HealthcareCost {
-        total: (premium + out_of_pocket) * growth,
-        qualified: (out_of_pocket + if on_medicare { premium } else { 0.0 }) * growth,
+        total: premium + out_of_pocket,
+        qualified: out_of_pocket + if on_medicare { premium } else { 0.0 },
     }
 }
 
@@ -336,13 +376,16 @@ fn project_scenario_internal(
     let mut previous_year_traditional_balance = 0.0;
     // Medical cost the HSA may still reimburse tax-free, carried year to year.
     let mut hsa_qualified_allowance = 0.0;
+    // MAGI for each modeled year, which the next years' premiums are tested
+    // against.
+    let mut magi_by_year: Vec<f64> = Vec::with_capacity(total_years as usize);
 
     let mut returns_generator = create_market_returns_generator(plan, &config);
 
     for year in 0..total_years {
         let current_age = age + year;
         let tax_year = current_year + year as i32;
-        let household = Household::single(profile.filing_status.clone(), current_age);
+        let household = Household::single(profile.filing_status, current_age);
         let is_retired = current_age >= profile.retirement_age;
 
         let mut rmd_amount = 0.0;
@@ -559,16 +602,33 @@ fn project_scenario_internal(
             // Real medical growth runs from the as-of date, so a plan decades
             // out retires into the cost its entered figures grow to. Older
             // requests compounded from the first retirement year instead.
-            let healthcare_growth_years =
-                if plan.schema_version >= HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION {
-                    year
-                } else {
-                    year.saturating_sub(profile.retirement_age.saturating_sub(age))
-                };
+            let healthcare_growth_years = if plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION
+            {
+                year
+            } else {
+                year.saturating_sub(profile.retirement_age.saturating_sub(age))
+            };
+            let income_test = if plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION {
+                Some(PremiumIncomeTest {
+                    prior_year_magi: year
+                        .checked_sub(1)
+                        .and_then(|y| magi_by_year.get(y as usize))
+                        .copied(),
+                    irmaa_lookback_magi: year
+                        .checked_sub(2)
+                        .and_then(|y| magi_by_year.get(y as usize))
+                        .copied(),
+                    filing_status: profile.filing_status,
+                    household_size: 1,
+                })
+            } else {
+                None
+            };
             let healthcare = healthcare_cost_for(
                 &profile.retirement_healthcare,
                 current_age,
                 healthcare_growth_years,
+                income_test.as_ref(),
             );
             // Medical spending is what an HSA can cover tax-free, and the
             // allowance carries forward: an HSA has no reimbursement deadline,
@@ -679,6 +739,17 @@ fn project_scenario_internal(
             .filter(|acc| matches!(acc.account_type, AccountType::Traditional))
             .map(|acc| acc.balance)
             .sum();
+
+        // `income` is wages while working and the whole benefit once retired.
+        // That is the ACA definition, which adds untaxed Social Security back;
+        // IRMAA counts only the taxable part, so this runs high by the untaxed
+        // remainder. At the income a surcharge starts from, 85% of the benefit
+        // is taxable anyway, and erring high charges the surcharge sooner.
+        magi_by_year.push(
+            income
+                + withdrawal_traditional
+                + withdrawal_taxable * plan.assumptions.taxable_gain_ratio,
+        );
 
         if insufficient_funds {
             success = false;
@@ -1154,7 +1225,7 @@ mod tests {
         assert!((current - 18_900.0 * 1.02_f64.powi(20)).abs() < 0.01);
 
         let mut legacy = plan.clone();
-        legacy.schema_version = HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION - 1;
+        legacy.schema_version = HEALTHCARE_MODEL_SCHEMA_VERSION - 1;
         let old = healthcare_in_first_retired_year(&legacy);
         assert!((old - 18_900.0).abs() < 0.01);
     }

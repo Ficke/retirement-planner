@@ -266,6 +266,16 @@ export function PageSettings() {
                 source="Tax model, below"
               />
               <ReferenceRow
+                label="Marketplace premium credit"
+                value="2026 tables, 400% cliff"
+                source="IRC 36B, Rev. Proc. 2025-25"
+              />
+              <ReferenceRow
+                label="Medicare IRMAA"
+                value="2026 tiers, 2-year lookback"
+                source="CMS"
+              />
+              <ReferenceRow
                 label="Retirement healthcare: before / from 65"
                 value={`${fmtCurrency(hc.preMedicarePremium + hc.outOfPocket)} / ${fmtCurrency(hc.medicarePremium + hc.outOfPocket)}`}
                 source="Profile page"

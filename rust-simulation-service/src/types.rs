@@ -11,10 +11,11 @@ pub const MEDICARE_AGE: u32 = 65;
 /// bump from reverting the previous version to that older math.
 pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
 
-/// Version that moved healthcare's real growth onto the as-of date. Older
-/// requests compounded it from the first retirement year, which priced a plan
-/// decades out at today's cost with none of the intervening medical inflation.
-pub const HEALTHCARE_GROWTH_FROM_ASOF_SCHEMA_VERSION: u32 = 5;
+/// Version that reworked retirement healthcare. Older requests compounded real
+/// growth from the first retirement year rather than the as-of date, and paid
+/// the entered premium whatever the household's income, with no marketplace
+/// credit before Medicare and no IRMAA surcharge after it.
+pub const HEALTHCARE_MODEL_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -26,7 +27,7 @@ pub enum AccountType {
     Hsa,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FilingStatus {
     Single,
     MarriedFilingJointly,
