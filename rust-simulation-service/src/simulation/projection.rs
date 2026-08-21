@@ -91,6 +91,12 @@ struct PremiumIncomeTest {
 /// double a couple's surcharge years before the second person is eligible.
 fn income_tested_premium(list_premium: f64, on_medicare: bool, test: &PremiumIncomeTest) -> f64 {
     if on_medicare {
+        // A surcharge applies to a premium. A plan that prices no Medicare
+        // premium is not modeling Medicare at all, so there is nothing to
+        // surcharge.
+        if list_premium <= 0.0 {
+            return list_premium;
+        }
         return match test.irmaa_lookback_magi {
             Some(magi) => list_premium + irmaa_annual_surcharge(magi, test.filing_status, 1),
             None => list_premium,

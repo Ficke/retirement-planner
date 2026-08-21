@@ -71,11 +71,19 @@ const APPLICABLE_PERCENTAGE_BANDS: [ApplicablePercentageBand; 6] = [
 
 pub const SUBSIDY_CLIFF_FPL_RATIO: f64 = 4.0;
 
+/// A credit needs income to be measured against. Below the poverty level there
+/// is none, which is the Medicaid population: expansion states cover them and
+/// non-expansion states leave them in the coverage gap, and neither is a
+/// premium this model can price. They pay list here, which is the pessimistic
+/// reading and keeps a plan from being handed free coverage for holding MAGI
+/// near zero.
+pub const SUBSIDY_FLOOR_FPL_RATIO: f64 = 1.0;
+
 /// What the household is expected to pay toward the benchmark plan, or `None`
-/// when it is over the cliff and owed nothing.
+/// when no credit reaches it -- over the cliff, or under the floor.
 pub fn expected_premium_contribution(magi: f64, household_size: u32) -> Option<f64> {
     let fpl_ratio = magi / federal_poverty_level(household_size);
-    if fpl_ratio > SUBSIDY_CLIFF_FPL_RATIO {
+    if !(SUBSIDY_FLOOR_FPL_RATIO..=SUBSIDY_CLIFF_FPL_RATIO).contains(&fpl_ratio) {
         return None;
     }
 

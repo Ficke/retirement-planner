@@ -69,7 +69,9 @@ function incomeTestedPremium(
   test: PremiumIncomeTest,
 ): number {
   if (onMedicare) {
-    if (test.irmaaLookbackMagi == null) return listPremium;
+    // A surcharge applies to a premium. A plan that prices no Medicare premium
+    // is not modeling Medicare at all, so there is nothing to surcharge.
+    if (listPremium <= 0 || test.irmaaLookbackMagi == null) return listPremium;
     return listPremium + irmaaAnnualSurcharge(test.irmaaLookbackMagi, test.filingStatus, 1);
   }
   if (test.priorYearMagi == null) return listPremium;

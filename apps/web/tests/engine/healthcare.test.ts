@@ -98,6 +98,16 @@ describe('income-tested premiums', () => {
     expect(subsidized.total).toBeLessThan(18_900);
   });
 
+  it('charges the full premium below the poverty level, where no credit reaches', () => {
+    const floor = 15_650;
+    expect(
+      healthcareCostFor(HEALTHCARE, 60, 0, { ...test, priorYearMagi: floor - 1 }).total,
+    ).toBe(18_900);
+    expect(
+      healthcareCostFor(HEALTHCARE, 60, 0, { ...test, priorYearMagi: floor }).total,
+    ).toBeLessThan(18_900);
+  });
+
   it('charges the full premium one dollar over the cliff', () => {
     const underCliff = 15_650 * 4;
     expect(
@@ -120,5 +130,15 @@ describe('income-tested premiums', () => {
   it('leaves the premium alone when no income history exists yet', () => {
     expect(healthcareCostFor(HEALTHCARE, 60, 0, test).total).toBe(18_900);
     expect(healthcareCostFor(HEALTHCARE, 66, 0, test).total).toBe(7_650);
+  });
+});
+
+describe('a plan that prices no healthcare', () => {
+  const NONE = { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0.02 };
+  const test = { filingStatus: 'Single' as const, householdSize: 1 };
+
+  it('is charged nothing, whatever its income', () => {
+    expect(healthcareCostFor(NONE, 66, 10, { ...test, irmaaLookbackMagi: 400_000 }).total).toBe(0);
+    expect(healthcareCostFor(NONE, 60, 10, { ...test, priorYearMagi: 30_000 }).total).toBe(0);
   });
 });
