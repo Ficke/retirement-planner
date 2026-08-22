@@ -136,7 +136,9 @@ details[open] summary ~ * {
   --spend-living: oklch(72% 0.07 35);
   --spend-healthcare: oklch(60% 0.11 30);
   --spend-tax: oklch(46% 0.13 25);
-  /* Money saved is the same bucket it is later withdrawn from. */
+  /* The one outflow that is not spent, so it takes the portfolio ramp rather
+   * than the clay one. Contributions span all four buckets, so it is the ramp
+   * being referenced here, not Traditional in particular. */
   --spend-saved: var(--account-traditional);
 }
 
