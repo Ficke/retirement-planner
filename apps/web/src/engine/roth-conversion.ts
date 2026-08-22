@@ -80,15 +80,17 @@ export function rothConversionFor(input: RothConversionInput): RothConversionRes
     return settle(traditionalBalance, input);
   }
 
-  // Twenty halvings resolve any balance this model can hold to under a dollar.
   let low = 0;
   let high = traditionalBalance;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 32; i++) {
     const mid = (low + high) / 2;
     if (measure(mid) <= limit) low = mid;
     else high = mid;
   }
-  return settle(low, input);
+  // Whole dollars, rounded down. Nobody converts a fraction of a cent, and
+  // pinning the result to an integer is what lets the two engines agree
+  // exactly: bisection alone lands them a hair apart on the same root.
+  return settle(Math.floor(low), input);
 }
 
 function ceilingOf(input: RothConversionInput): {

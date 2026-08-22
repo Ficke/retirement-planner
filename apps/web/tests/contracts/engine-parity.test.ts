@@ -323,6 +323,37 @@ function expectCashFlowParity(
   }
 }
 
+/**
+ * Already retired and still short of RMD age, so the first modeled year is a
+ * conversion year in both engines. Later years are no use for parity: the
+ * engines draw different market returns by design, and a conversion is sized
+ * off the balances those returns produce.
+ */
+const conversionPlan: SimulationPlan = {
+  schemaVersion: PLAN_SCHEMA_VERSION,
+  profile: {
+    birthDate: '1955-01-01',
+    state: 'CA',
+    filingStatus: 'Single',
+    retirementAge: 65,
+    currentSalary: 0,
+    salaryGrowthRate: 0,
+    currentSpending: 90_000,
+    workingSpendingGrowthRate: 0,
+    retirementSpending: 90_000,
+    retirementSpendingGrowthRate: 0,
+    lifeExpectancy: 90,
+    retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    asOfDate: '2025-01-01',
+  },
+  accounts: [
+    { type: 'Traditional', balance: 2_500_000, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+    { type: 'Taxable', balance: 600_000, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+  ],
+  socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+  assumptions: { ...assumptions, rothConversion: { enabled: true, ceiling: 'bracket24' as const } },
+};
+
 describe('TypeScript/Rust engine contract', () => {
   it('keeps summary batches exact and defaults old clients to the full response', async () => {
     const fullSimulation = await runRust(withdrawalPlan, 20);
@@ -428,6 +459,23 @@ describe('TypeScript/Rust engine contract', () => {
       'socialSecurityBenefit',
       'depositTaxable',
       'portfolioValue',
+      'insufficientFunds',
+    ]);
+  });
+
+  it('sizes and taxes a gap-year Roth conversion identically in both engines', async () => {
+    const typescript = projectScenario(conversionPlan, { paths: 1, seed: 42 });
+    const rust = await runRust(conversionPlan);
+
+    // The fixture only means anything if the year really did convert.
+    expect(typescript.projections[0].rothConversion).toBeGreaterThan(0);
+
+    expectCashFlowParity(typescript.projections[0], rust.yearlyProjections[0], [
+      'rothConversion',
+      'taxes',
+      'withdrawalTaxable',
+      'withdrawalTraditional',
+      'spending',
       'insufficientFunds',
     ]);
   });

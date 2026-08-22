@@ -62,10 +62,9 @@ pub fn roth_conversion_for(input: &RothConversionInput) -> RothConversion {
         return settle(input.traditional_balance, input);
     }
 
-    // Twenty halvings resolve any balance this model can hold to under a dollar.
     let mut low = 0.0;
     let mut high = input.traditional_balance;
-    for _ in 0..20 {
+    for _ in 0..32 {
         let mid = (low + high) / 2.0;
         if measure(mid, input) <= limit {
             low = mid;
@@ -73,7 +72,10 @@ pub fn roth_conversion_for(input: &RothConversionInput) -> RothConversion {
             high = mid;
         }
     }
-    settle(low, input)
+    // Whole dollars, rounded down. Nobody converts a fraction of a cent, and
+    // pinning the result to an integer is what lets the two engines agree
+    // exactly: bisection alone lands them a hair apart on the same root.
+    settle(low.floor(), input)
 }
 
 fn ceiling_limit(input: &RothConversionInput) -> Option<f64> {
