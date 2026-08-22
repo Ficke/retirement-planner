@@ -16,7 +16,7 @@ import {
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
 import { getRmdStartAge } from '@/data/rmd-tables';
-import { ageOn, birthYearOf } from '@/domain/age';
+import { ageOn, birthYearOf, remainingYearFractionOf } from '@/domain/age';
 import { MEDICARE_AGE } from '@/domain/constants';
 import { healthcareCostFor } from '@/domain/healthcare';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
@@ -175,18 +175,11 @@ function projectScenarioInternal(
 ): PathResult {
   const { profile, accounts, socialSecurity } = plan;
 
-  // UTC calendar arithmetic, so a daylight-saving transition cannot add or
-  // remove a day from the first simulation period.
-  const [currentYear, asOfMonth, asOfDay] = profile.asOfDate.split('-').map(Number);
+  const currentYear = Number(profile.asOfDate.slice(0, 4));
   const birthYear = birthYearOf(profile.birthDate);
   const age = ageOn(profile.birthDate, profile.asOfDate);
   const rmdStartAge = getRmdStartAge(birthYear);
-  const daysInYear = (currentYear % 4 === 0 && currentYear % 100 !== 0) || (currentYear % 400 === 0) ? 366 : 365;
-  const dayOfYear = Math.floor(
-    (Date.UTC(currentYear, asOfMonth - 1, asOfDay) - Date.UTC(currentYear, 0, 1))
-      / (1000 * 60 * 60 * 24),
-  ) + 1;
-  const remainingYearFraction = Math.max(0, Math.min(1, (daysInYear - dayOfYear + 1) / daysInYear));
+  const remainingYearFraction = remainingYearFractionOf(profile.asOfDate);
   
   // Life expectancy is inclusive: simulate from current age through that age.
   // Deriving this directly also supports people who are already retired.

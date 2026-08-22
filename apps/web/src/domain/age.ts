@@ -18,6 +18,16 @@ export function birthYearOf(birthDate: string): number {
   return Number(birthDate.slice(0, 4));
 }
 
+/** Fraction of the as-of calendar year modeled, including the as-of date. */
+export function remainingYearFractionOf(asOfDate: string): number {
+  const [year, month, day] = asOfDate.split('-').map(Number);
+  const daysInYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 366 : 365;
+  const dayOfYear = Math.floor(
+    (Date.UTC(year, month - 1, day) - Date.UTC(year, 0, 1)) / (1000 * 60 * 60 * 24),
+  ) + 1;
+  return Math.max(0, Math.min(1, (daysInYear - dayOfYear + 1) / daysInYear));
+}
+
 /** The birth date reproducing a legacy plan's stored age, so results don't shift. */
 export function birthDateFromLegacyAge(
   age: number,

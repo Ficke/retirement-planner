@@ -6,7 +6,6 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
-  Line,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -28,16 +27,18 @@ import { toCashFlowRows, type CashFlowRow } from "./cash-flow-data";
 
 type Series = { key: string; label: string; color: string };
 
+const TRANSITION_EPSILON_YEARS = 0.01;
+
 const inflow: Series[] = [
-  { key: "salary", label: "Salary", color: "var(--color-flow-salary)" },
-  { key: "socialSecurity", label: "Social Security", color: "var(--color-flow-social)" },
-  { key: "portfolio", label: "Portfolio", color: "var(--color-flow-portfolio)" },
+  { key: "salary", label: "Salary", color: "var(--color-money-in-1)" },
+  { key: "socialSecurity", label: "Social Security", color: "var(--color-money-in-2)" },
+  { key: "portfolio", label: "Portfolio", color: "var(--color-money-in-3)" },
 ];
 
 const outflow: Series[] = [
-  { key: "living", label: "Living", color: "var(--color-flow-living)" },
-  { key: "healthcare", label: "Healthcare", color: "var(--color-flow-healthcare)" },
-  { key: "tax", label: "Tax", color: "var(--color-flow-tax)" },
+  { key: "living", label: "Living", color: "var(--color-money-out-1)" },
+  { key: "healthcare", label: "Healthcare", color: "var(--color-money-out-2)" },
+  { key: "tax", label: "Tax", color: "var(--color-money-out-3)" },
 ];
 
 /**
@@ -56,11 +57,35 @@ const buckets: { key: string; label: string }[] = [
 const config = Object.fromEntries([
   ...[...inflow, ...outflow].map((s) => [s.key, { label: s.label, color: s.color }]),
   ...buckets.map((b) => [b.key, { label: b.label }]),
-  ["moneyIn", { label: "Money in" }],
 ]);
 
 function total(row: CashFlowRow, series: Series[]) {
   return series.reduce((sum, s) => sum + row[s.key], 0);
+}
+
+function toDivergingRows(data: CashFlowRow[], transitionAges: number[]) {
+  const transitions = new Set(transitionAges);
+  return data.flatMap((row, index) => {
+    const signedRow = {
+      ...row,
+      living: -row.living,
+      healthcare: -row.healthcare,
+      tax: -row.tax,
+    };
+    const previous = data[index - 1];
+    if (!previous || !transitions.has(row.age)) return [signedRow];
+
+    // Keep the smooth interpolation inside each phase, but confine a milestone
+    // discontinuity to a fraction of a pixel immediately before its age.
+    return [{
+      ...previous,
+      age: row.age - TRANSITION_EPSILON_YEARS,
+      displayAge: previous.age,
+      living: -previous.living,
+      healthcare: -previous.healthcare,
+      tax: -previous.tax,
+    }, signedRow];
+  });
 }
 
 function Swatch({ color }: { color: string }) {
@@ -69,13 +94,26 @@ function Swatch({ color }: { color: string }) {
   );
 }
 
-function Legend({ groups }: { groups: { name: string; series: Series[] }[] }) {
+function TooltipDot({ color }: { color: string }) {
+  return <span className="size-2 flex-none rounded-full" style={{ background: color }} />;
+}
+
+function Legend({
+  groups,
+}: {
+  groups: { name: string; color: string; series: Series[] }[];
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 pb-3 text-xs">
+    <div className="flex flex-col gap-2 px-1 pb-3 text-xs">
       {groups.map((group) => (
         <div key={group.name} className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-          <span className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase">
-            {group.name}
+          <span className="text-muted-foreground flex w-20 flex-none items-center gap-2 font-medium">
+            <span
+              className="h-4 w-0.5 rounded-full"
+              style={{ background: group.color }}
+              aria-hidden
+            />
+            <span>{group.name}</span>
           </span>
           {group.series.map((s) => (
             <span key={s.key} className="flex items-center gap-1.5">
@@ -85,67 +123,60 @@ function Legend({ groups }: { groups: { name: string; series: Series[] }[] }) {
           ))}
         </div>
       ))}
-      <span className="text-muted-foreground flex items-center gap-1.5">
-        <svg width="14" height="10" aria-hidden className="flex-none">
-          <line x1="0" y1="5" x2="14" y2="5" stroke="currentColor" strokeWidth="1.5" />
-        </svg>
-        Money in — what it clears is saved
-      </span>
     </div>
   );
 }
 
-function Panel({
-  caption,
+function CashFlowPlot({
   data,
-  series,
   height,
   yScale,
   xTicks,
   retirementAge,
-  markRetirement,
-  reversed,
-  showAxis,
-  showIncomeLine,
-  label,
+  rmdStartAge,
 }: {
-  caption: string;
   data: CashFlowRow[];
-  series: Series[];
   height: number;
   yScale: { domain: [number, number]; ticks: number[] };
   xTicks: number[];
   retirementAge?: number;
-  markRetirement?: boolean;
-  reversed?: boolean;
-  showAxis?: boolean;
-  showIncomeLine?: boolean;
-  label: string;
+  rmdStartAge?: number;
 }) {
   const singleYear = data.length === 1;
   const xDomain: [number, number] | ["dataMin", "dataMax"] = singleYear
     ? [data[0].age - 0.5, data[0].age + 0.5]
     : ["dataMin", "dataMax"];
+  const maximum = yScale.domain[1];
+  const yTicks = [
+    ...yScale.ticks.slice(1).reverse().map((tick) => -tick),
+    ...yScale.ticks,
+  ];
 
   return (
     <div className="flex">
-      <span className="text-muted-foreground flex w-4 flex-none items-center justify-center font-mono text-[10px] tracking-widest uppercase [writing-mode:vertical-rl] rotate-180">
-        {caption}
-      </span>
+      <div
+        className="text-muted-foreground flex w-4 flex-none flex-col font-mono text-[10px] tracking-widest uppercase"
+        aria-hidden
+      >
+        <span className="flex flex-1 items-center justify-center [writing-mode:vertical-rl] rotate-180">
+          Money in
+        </span>
+        <span className="flex flex-1 items-center justify-center [writing-mode:vertical-rl] rotate-180">
+          Money out
+        </span>
+      </div>
       <ChartContainer
         config={config}
         className="aspect-auto min-w-0 flex-1"
         style={{ height }}
         role="img"
-        aria-label={label}
+        aria-label="Average annual money in by source and money out by category for the selected outcome range"
       >
         <ComposedChart
           accessibilityLayer
           data={data}
-          syncId="cash-flow"
-          // The ticks at both ends of the domain sit on the plot edge, so each
-          // panel needs room or they clip away.
-          margin={{ top: 10, right: 12, left: 0, bottom: showAxis ? 0 : 10 }}
+          stackOffset="sign"
+          margin={{ top: 10, right: 12, left: 0, bottom: 0 }}
         >
           <CartesianGrid {...chartGridProps} />
           <XAxis
@@ -154,20 +185,18 @@ function Panel({
             type="number"
             domain={xDomain}
             ticks={xTicks}
-            hide={!showAxis}
           />
           <YAxis
             {...chartYAxisProps}
-            domain={yScale.domain}
-            ticks={yScale.ticks}
-            reversed={reversed}
-            tickFormatter={fmtAxisCurrency}
+            domain={[-maximum, maximum]}
+            ticks={yTicks}
+            tickFormatter={(value) => fmtAxisCurrency(Math.abs(Number(value)))}
           />
-          {series.map((s) => singleYear ? (
+          {[...inflow, ...outflow].map((s) => singleYear ? (
             <Bar
               key={s.key}
               dataKey={s.key}
-              stackId="1"
+              stackId="cash-flow"
               barSize={48}
               fill={s.color}
               isAnimationActive={false}
@@ -177,37 +206,24 @@ function Panel({
               key={s.key}
               type="monotone"
               dataKey={s.key}
-              stackId="1"
+              stackId="cash-flow"
               stroke="none"
               fill={s.color}
               fillOpacity={1}
               isAnimationActive={false}
             />
           ))}
-          {showIncomeLine && (
-            <Line
-              type="monotone"
-              dataKey="moneyIn"
-              // Solid, because the gridlines are already dashed and two dashed
-              // rules meaning different things read as one.
-              stroke="var(--color-foreground)"
-              strokeOpacity={0.55}
-              strokeWidth={1.5}
-              dot={singleYear ? {
-                r: 3,
-                fill: "var(--color-card)",
-                stroke: "var(--color-foreground)",
-                strokeWidth: 1.5,
-              } : false}
-              isAnimationActive={false}
-            />
-          )}
+          <ReferenceLine
+            y={0}
+            stroke="var(--color-foreground)"
+            strokeOpacity={0.35}
+          />
           {retirementAge != null && (
             <ReferenceLine
               x={retirementAge}
               stroke="var(--color-foreground)"
               strokeOpacity={0.35}
-              label={markRetirement ? {
+              label={{
                 value: "RETIRE",
                 position: "insideTopLeft",
                 offset: 6,
@@ -215,7 +231,24 @@ function Panel({
                 fontSize: 10,
                 fontWeight: 600,
                 letterSpacing: "0.04em",
-              } : undefined}
+              }}
+            />
+          )}
+          {rmdStartAge != null && (
+            <ReferenceLine
+              x={rmdStartAge}
+              stroke="var(--color-foreground)"
+              strokeDasharray="3 3"
+              strokeOpacity={0.35}
+              label={{
+                value: "RMD",
+                position: "insideTopLeft",
+                offset: 6,
+                fill: "var(--color-muted-foreground)",
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+              }}
             />
           )}
           <ChartTooltip
@@ -224,7 +257,8 @@ function Panel({
               <ChartTooltipContent
                 hideZeroValues
                 labelFormatter={(_label, payload) => {
-                  const age = payload?.[0]?.payload?.age;
+                  const age = payload?.[0]?.payload?.displayAge
+                    ?? payload?.[0]?.payload?.age;
                   return age != null ? `Age ${age}` : "";
                 }}
                 formatter={(value, name, item) => {
@@ -232,14 +266,26 @@ function Panel({
                   const split = name === "portfolio" && row
                     ? buckets.filter((b) => row[b.key] > 0)
                     : [];
+                  const startsOutflowSection = name === outflow[0].key;
                   return (
-                    <span className="flex w-full flex-col gap-0.5">
+                    <span
+                      className={`flex w-full flex-col gap-0.5 ${
+                        startsOutflowSection
+                          ? "border-border/60 mt-1 border-t pt-2"
+                          : ""
+                      }`}
+                    >
                       <span className="flex w-full justify-between gap-4">
-                        <span className="text-muted-foreground">
+                        <span className="text-muted-foreground flex items-center gap-1.5">
+                          <TooltipDot
+                            color={String(
+                              item.color ?? "var(--color-muted-foreground)",
+                            )}
+                          />
                           {config[name as string]?.label ?? String(name)}
                         </span>
                         <span className="font-mono tabular-nums">
-                          {fmtCurrency(Number(value), true)}
+                          {fmtCurrency(Math.abs(Number(value)), true)}
                         </span>
                       </span>
                       {split.map((b) => (
@@ -257,27 +303,24 @@ function Panel({
                   );
                 }}
                 footer={(payload) => {
-                  const row = payload[0]?.payload;
-                  const sum = payload
-                    .filter((item) => item.dataKey !== "moneyIn")
-                    .reduce((acc, item) => acc + Number(item.value ?? 0), 0);
-                  const saved = row?.saved ?? 0;
+                  const row = payload[0]?.payload as CashFlowRow | undefined;
+                  if (!row) return null;
+                  const moneyIn = total(row, inflow);
+                  const moneyOut = Math.abs(total(row, outflow));
                   return (
                     <span className="flex w-full flex-col gap-0.5">
                       <span className="flex w-full justify-between gap-4 font-medium">
-                        <span>{caption}</span>
+                        <span>Money in</span>
                         <span className="font-mono tabular-nums">
-                          {fmtCurrency(sum, true)}
+                          {fmtCurrency(moneyIn, true)}
                         </span>
                       </span>
-                      {showIncomeLine && saved > 0 && (
-                        <span className="text-muted-foreground flex w-full justify-between gap-4">
-                          <span>Saved</span>
-                          <span className="font-mono tabular-nums">
-                            {fmtCurrency(saved, true)}
-                          </span>
+                      <span className="flex w-full justify-between gap-4 font-medium">
+                        <span>Money out</span>
+                        <span className="font-mono tabular-nums">
+                          {fmtCurrency(moneyOut, true)}
                         </span>
-                      )}
+                      </span>
                     </span>
                   );
                 }}
@@ -293,14 +336,19 @@ function Panel({
 export function CashFlowChart({
   projections,
   height = 380,
+  rmdStartAge,
+  partialYear,
 }: {
   projections: OutcomeCashFlowRow[];
   height?: number;
+  rmdStartAge?: number;
+  partialYear?: { age: number; fraction: number };
 }) {
-  const data = useMemo(() => toCashFlowRows(projections), [projections]);
+  const data = useMemo(
+    () => toCashFlowRows(projections, partialYear),
+    [partialYear, projections],
+  );
 
-  // One scale for both panels. Separate scales would make the gap between them
-  // — the part that carries the saving — unreadable.
   const yScale = useMemo(
     () => niceLinearScale(Math.max(
       0,
@@ -326,6 +374,18 @@ export function CashFlowChart({
     const index = projections.findIndex((row) => row.isRetired);
     return index > 0 ? projections[index].age : undefined;
   }, [projections]);
+  const visibleRmdStartAge = rmdStartAge != null
+    && rmdStartAge >= data[0]?.age
+    && rmdStartAge <= data[data.length - 1]?.age
+    ? rmdStartAge
+    : undefined;
+  const chartData = useMemo(
+    () => toDivergingRows(
+      data,
+      [retirementAge, visibleRmdStartAge].filter((age): age is number => age != null),
+    ),
+    [data, retirementAge, visibleRmdStartAge],
+  );
 
   if (data.length === 0) {
     return (
@@ -338,43 +398,21 @@ export function CashFlowChart({
     );
   }
 
-  // Both plots must span the same pixels or the shared scale lies. Recharts
-  // drops a hidden axis from the offset, so only the lower panel pays for the
-  // 30px axis band, and its extra allowance is that band less its zero bottom
-  // margin.
-  const panelHeight = (height - 20) / 2;
-
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col">
       <Legend
         groups={[
-          { name: "In", series: inSeries },
-          { name: "Out", series: outSeries },
+          { name: "Money in", color: "var(--color-money-in)", series: inSeries },
+          { name: "Money out", color: "var(--color-money-out)", series: outSeries },
         ]}
       />
-      <Panel
-        caption="Money in"
-        data={data}
-        series={inSeries}
-        height={panelHeight}
+      <CashFlowPlot
+        data={chartData}
+        height={height}
         yScale={yScale}
         xTicks={xTicks}
         retirementAge={retirementAge}
-        markRetirement
-        label="Average annual money in by source for the selected outcome range"
-      />
-      <Panel
-        caption="Money out"
-        data={data}
-        series={outSeries}
-        height={panelHeight + 20}
-        yScale={yScale}
-        xTicks={xTicks}
-        retirementAge={retirementAge}
-        reversed
-        showAxis
-        showIncomeLine
-        label="Average annual money out by category for the selected outcome range, against the money that came in"
+        rmdStartAge={visibleRmdStartAge}
       />
     </div>
   );

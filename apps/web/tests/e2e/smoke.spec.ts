@@ -63,11 +63,13 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
     'Median · 45th–55th',
   );
 
-  for (const side of ['money in by source', 'money out by category']) {
-    await expect(page.getByRole('img', {
-      name: new RegExp(`Average annual ${side} for the selected outcome range`),
-    })).toBeVisible();
-  }
+  const cashFlowChart = page.getByRole('img', {
+    name: 'Average annual money in by source and money out by category for the selected outcome range',
+  });
+  await expect(cashFlowChart).toBeVisible();
+  await expect(cashFlowChart.locator('.recharts-wrapper')).toHaveCount(1);
+  await expect(cashFlowChart.getByText('RMD', { exact: true })).toBeVisible();
+  await expect(page.getByText('Money in — what it clears is saved')).toHaveCount(0);
 });
 
 test('Plan labels sensitivity axes without repeating age in every tick', async ({ page }) => {
