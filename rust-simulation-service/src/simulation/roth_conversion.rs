@@ -42,8 +42,13 @@ pub struct RothConversion {
 /// inside the resolution of the ceilings being aimed at.
 const SETTLING_PASSES: usize = 4;
 
-/// Halvings, over a bracket tightened below, to resolve well under a dollar.
-const SOLVE_STEPS: usize = 20;
+/// Cap on root-finding steps. False position resolves a piecewise-linear
+/// measure in a handful; the cap only matters if a kink lands badly, and the
+/// bisection safeguard below keeps even that case converging.
+const SOLVE_STEPS: usize = 24;
+
+/// Whole dollars is the answer's resolution, so a narrower bracket is waste.
+const SOLVE_TOLERANCE: f64 = 1.0;
 
 struct Outcome {
     tax: f64,
@@ -94,8 +99,8 @@ fn outcome_of(conversion: f64, input: &RothConversionInput, base_tax: f64) -> Ou
 /// against -- which matters most for the IRMAA ceiling, where a dollar over buys
 /// a whole tier and there is no partial credit for being close.
 ///
-/// Bisection suits both ceilings: each measure rises monotonically with the
-/// amount converted.
+/// Both measures rise monotonically with the amount converted, so the root is
+/// bracketed from the start and the search only has to narrow it.
 pub fn roth_conversion_for(input: &RothConversionInput) -> RothConversion {
     if !input.policy.enabled || input.traditional_balance <= 0.0 {
         return RothConversion::default();
@@ -105,35 +110,62 @@ pub fn roth_conversion_for(input: &RothConversionInput) -> RothConversion {
         return RothConversion::default();
     };
     let base_tax = tax_of(0.0, input.qualified_income, input);
-    let fits = |conversion: f64| {
+    // How far a candidate sits over its ceiling, negative while it still fits.
+    let gap_at = |conversion: f64| {
         measure(
             conversion,
             outcome_of(conversion, input, base_tax).funding_gain,
             input,
-        ) <= limit
+        ) - limit
     };
 
-    if !fits(0.0) {
+    if gap_at(0.0) >= 0.0 {
         return RothConversion::default();
     }
-    if fits(input.traditional_balance) {
+    if gap_at(input.traditional_balance) <= 0.0 {
         return settle(input.traditional_balance, input, base_tax);
     }
 
     // Ordinary income cannot outrun the ceiling by more than the untaxed benefit
     // and the deductions sitting under it, so the search never needs a wider
-    // bracket -- and a tighter bracket is fewer halvings to the same resolution.
+    // bracket to start from.
+    //
+    // Both measures are piecewise linear in the amount converted -- progressive
+    // brackets and the Social Security phase-in are each a run of straight
+    // segments -- so interpolating between the bracket's ends lands on or very
+    // near the root instead of merely halving the interval. Every other step
+    // bisects regardless, which bounds the worst case when a kink falls between
+    // the two ends and interpolation would otherwise crawl.
     let mut low = 0.0;
+    let mut low_gap = gap_at(low);
     let mut high = input
         .traditional_balance
         .min(2.0 * limit + input.social_security_benefit);
-    for _ in 0..SOLVE_STEPS {
-        let mid = (low + high) / 2.0;
-        if fits(mid) {
+    let mut high_gap = gap_at(high);
+
+    let mut step = 0;
+    while step < SOLVE_STEPS && high - low > SOLVE_TOLERANCE {
+        let interpolate = step % 2 == 0 && high_gap > low_gap;
+        let guess = if interpolate {
+            low + (high - low) * -low_gap / (high_gap - low_gap)
+        } else {
+            (low + high) / 2.0
+        };
+        // Interpolation can land on an endpoint; nudge inside so the bracket
+        // shrinks.
+        let mid = guess
+            .max(low + (high - low) / 64.0)
+            .min(high - (high - low) / 64.0);
+
+        let gap = gap_at(mid);
+        if gap <= 0.0 {
             low = mid;
+            low_gap = gap;
         } else {
             high = mid;
+            high_gap = gap;
         }
+        step += 1;
     }
 
     // Whole dollars, rounded down. Nobody converts a fraction of a cent, and

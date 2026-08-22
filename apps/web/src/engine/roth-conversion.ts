@@ -66,8 +66,15 @@ const NONE: RothConversionResult = { converted: 0, tax: 0, fromTaxable: 0, withh
  */
 const SETTLING_PASSES = 4;
 
-/** Halvings, over a bracket tightened below, to resolve well under a dollar. */
-const SOLVE_STEPS = 20;
+/**
+ * Cap on root-finding steps. False position resolves a piecewise-linear measure
+ * in a handful; the cap only matters if a kink lands badly, and the bisection
+ * safeguard below keeps even that case converging.
+ */
+const SOLVE_STEPS = 24;
+
+/** Whole dollars is the answer's resolution, so a narrower bracket is waste. */
+const SOLVE_TOLERANCE = 1;
 
 /**
  * A conversion and everything that follows from its size: what it costs, which
@@ -114,8 +121,8 @@ function outcomeOf(conversion: number, input: RothConversionInput, baseTax: numb
  * against — which matters most for the IRMAA ceiling, where a dollar over buys
  * a whole tier and there is no partial credit for being close.
  *
- * Bisection suits both ceilings: each measure rises monotonically with the
- * amount converted.
+ * Both measures rise monotonically with the amount converted, so the root is
+ * bracketed from the start and the search only has to narrow it.
  */
 export function rothConversionFor(input: RothConversionInput): RothConversionResult {
   const { policy, traditionalBalance } = input;
@@ -123,24 +130,47 @@ export function rothConversionFor(input: RothConversionInput): RothConversionRes
 
   const baseTax = taxOf(0, input.qualifiedIncome, input);
   const limit = ceilingOf(input);
-  const fits = (conversion: number) => measureOf(
+  // How far a candidate sits over its ceiling, negative while it still fits.
+  const gapAt = (conversion: number) => measureOf(
     conversion,
     outcomeOf(conversion, input, baseTax).fundingGain,
     input,
-  ) <= limit;
+  ) - limit;
 
-  if (!fits(0)) return NONE;
-  if (fits(traditionalBalance)) return settle(traditionalBalance, input, baseTax);
+  if (gapAt(0) >= 0) return NONE;
+  if (gapAt(traditionalBalance) <= 0) return settle(traditionalBalance, input, baseTax);
 
   // Ordinary income cannot outrun the ceiling by more than the untaxed benefit
   // and the deductions sitting under it, so the search never needs a wider
-  // bracket — and a tighter bracket is fewer halvings to the same resolution.
+  // bracket to start from.
+  //
+  // Both measures are piecewise linear in the amount converted — progressive
+  // brackets and the Social Security phase-in are each a run of straight
+  // segments — so interpolating between the bracket's ends lands on or very
+  // near the root instead of merely halving the interval. Every other step
+  // bisects regardless, which bounds the worst case when a kink falls between
+  // the two ends and interpolation would otherwise crawl.
   let low = 0;
+  let lowGap = gapAt(low);
   let high = Math.min(traditionalBalance, 2 * limit + input.socialSecurityBenefit);
-  for (let step = 0; step < SOLVE_STEPS; step++) {
-    const mid = (low + high) / 2;
-    if (fits(mid)) low = mid;
-    else high = mid;
+  let highGap = gapAt(high);
+
+  for (let step = 0; step < SOLVE_STEPS && high - low > SOLVE_TOLERANCE; step++) {
+    const interpolate = step % 2 === 0 && highGap > lowGap;
+    const guess = interpolate
+      ? low + ((high - low) * -lowGap) / (highGap - lowGap)
+      : (low + high) / 2;
+    // Interpolation can land on an endpoint; nudge inside so the bracket shrinks.
+    const mid = Math.min(Math.max(guess, low + (high - low) / 64), high - (high - low) / 64);
+
+    const gap = gapAt(mid);
+    if (gap <= 0) {
+      low = mid;
+      lowGap = gap;
+    } else {
+      high = mid;
+      highGap = gap;
+    }
   }
 
   // Whole dollars, rounded down. Nobody converts a fraction of a cent, and
