@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "retire-plan-edge",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-16",
+  "compatibility_date": "2026-08-18",
   "workers_dev": false,
   "preview_urls": false,
   "vars": {

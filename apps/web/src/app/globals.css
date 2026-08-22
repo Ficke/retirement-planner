@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+:root {
+  --font-geist-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -204,4 +209,3 @@ details[open] summary ~ * {
     @apply bg-background text-foreground;
   }
 }
-

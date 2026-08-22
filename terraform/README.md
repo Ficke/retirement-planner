@@ -25,7 +25,7 @@ The module manages two Cloud Run services:
 
 | Service | Role | Access |
 |---|---|---|
-| `retire-plan` | Next.js application and API routes | Public |
+| `retire-plan` | Vite SPA and Hono API | Public through the authenticated edge proxy |
 | `rust-simulation-service` | Rust Monte Carlo engine | Web service account |
 
 The Rust service runs with 8 vCPU, 4 GiB of memory, concurrency 1, and
@@ -92,12 +92,13 @@ Manager.
 
 ## Secrets and rotation
 
-The web service mounts two secrets as environment variables:
+The web service mounts three secrets as environment variables:
 
 | Secret | Production version | Consumer |
 |---|---:|---|
 | `DATABASE_URL` | 1 | PostgreSQL client |
-| `FIREBASE_PRIVATE_KEY` | 2 | Firebase Admin SDK |
+| `ORIGIN_SECRET` | 1 | Cloudflare/pipeline origin authentication |
+| `SIGNUP_INVITE_CODES` | 1 | Signup gate |
 
 Immutable version references give every instance in a Cloud Run revision the
 same configuration. Rotate a secret by adding a version, updating
@@ -108,7 +109,8 @@ Terraform creates secret containers. Add values with the Google Cloud CLI:
 
 ```bash
 gcloud secrets versions add DATABASE_URL --data-file=database-url.txt
-gcloud secrets versions add FIREBASE_PRIVATE_KEY --data-file=firebase-key.txt
+gcloud secrets versions add ORIGIN_SECRET --data-file=origin-secret.txt
+gcloud secrets versions add SIGNUP_INVITE_CODES --data-file=invite-codes.txt
 ```
 
 The Cloud Run module grants each service account access to the secrets mounted

@@ -172,11 +172,8 @@ describe('State Management - Simple Invalidation Logic', () => {
 });
 
 describe('cloud compute gating', () => {
-  it('requires both the preference and a signed-in user', () => {
-    const signedIn = { id: 'firebase-uid' };
-    expect(cloudComputeEnabled({ authUser: signedIn, useServerSideCalculations: true })).toBe(true);
-    expect(cloudComputeEnabled({ authUser: signedIn, useServerSideCalculations: false })).toBe(false);
-    expect(cloudComputeEnabled({ authUser: null, useServerSideCalculations: true })).toBe(false);
-    expect(cloudComputeEnabled({ authUser: null, useServerSideCalculations: false })).toBe(false);
+  it('uses the compute preference independently of the persistence mode', () => {
+    expect(cloudComputeEnabled({ useServerSideCalculations: true })).toBe(true);
+    expect(cloudComputeEnabled({ useServerSideCalculations: false })).toBe(false);
   });
 });

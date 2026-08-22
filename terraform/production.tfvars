@@ -15,14 +15,7 @@ rust_service_image = "us-central1-docker.pkg.dev/gen-lang-client-0372385774/reti
 artifact_registry_repository_id = "retire-plan"
 
 public_env_vars = {
-  NEXT_PUBLIC_FIREBASE_API_KEY             = "AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ"
-  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN         = "gen-lang-client-0372385774.firebaseapp.com"
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID          = "gen-lang-client-0372385774"
-  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
-  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "789638662967"
-  NEXT_PUBLIC_FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
-  FIREBASE_PROJECT_ID                      = "gen-lang-client-0372385774"
-  FIREBASE_CLIENT_EMAIL                    = "firebase-adminsdk-fbsvc@gen-lang-client-0372385774.iam.gserviceaccount.com"
+  FIREBASE_PROJECT_ID = "gen-lang-client-0372385774"
 }
 
 # Environment-variable secrets use immutable versions so every instance in a
@@ -31,10 +24,6 @@ secret_env_vars = {
   DATABASE_URL = {
     secret_name = "DATABASE_URL"
     version     = "1"
-  }
-  FIREBASE_PRIVATE_KEY = {
-    secret_name = "FIREBASE_PRIVATE_KEY"
-    version     = "2"
   }
   ORIGIN_SECRET = {
     secret_name = "ORIGIN_SECRET"
@@ -60,13 +49,13 @@ cloud_build_service_account = "projects/gen-lang-client-0372385774/serviceAccoun
 github_owner                = "Ficke"
 github_repo                 = "retirement-planner"
 
-# Next.js embeds Firebase client configuration during the production build.
+# Vite embeds Firebase client configuration during the production build.
 build_substitutions = {
-  _FIREBASE_API_KEY             = "AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ"
-  _FIREBASE_AUTH_DOMAIN         = "gen-lang-client-0372385774.firebaseapp.com"
-  _FIREBASE_PROJECT_ID          = "gen-lang-client-0372385774"
-  _FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
-  _FIREBASE_MESSAGING_SENDER_ID = "789638662967"
-  _FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
-  _ORIGIN_SECRET_VERSION        = "1"
+  _VITE_FIREBASE_API_KEY             = "AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ"
+  _VITE_FIREBASE_AUTH_DOMAIN         = "gen-lang-client-0372385774.firebaseapp.com"
+  _VITE_FIREBASE_PROJECT_ID          = "gen-lang-client-0372385774"
+  _VITE_FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
+  _VITE_FIREBASE_MESSAGING_SENDER_ID = "789638662967"
+  _VITE_FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
+  _ORIGIN_SECRET_VERSION             = "1"
 }

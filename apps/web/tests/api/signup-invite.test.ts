@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => {
   const db = {
@@ -7,35 +6,44 @@ const mocks = vi.hoisted(() => {
     query: vi.fn(),
   };
   return {
+    AccountLimitError: class AccountLimitError extends Error {},
+    ProfileRevisionConflictError: class ProfileRevisionConflictError extends Error {},
     db,
     getUnifiedDatabaseService: vi.fn(() => db),
+    getAuthUser: vi.fn(),
     verifyAuthToken: vi.fn(),
     getClientIp: vi.fn(() => '127.0.0.1'),
     rateLimit: vi.fn(),
   };
 });
 
-vi.mock('@/lib/firebase/server', () => ({ verifyAuthToken: mocks.verifyAuthToken }));
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthUser: mocks.getAuthUser,
+  verifyAuthToken: mocks.verifyAuthToken,
+}));
 vi.mock('@/services/server/database', () => ({
+  AccountLimitError: mocks.AccountLimitError,
+  ProfileRevisionConflictError: mocks.ProfileRevisionConflictError,
   getUnifiedDatabaseService: mocks.getUnifiedDatabaseService,
 }));
 vi.mock('@/lib/rate-limit', () => ({
-  getClientIp: mocks.getClientIp,
   rateLimit: mocks.rateLimit,
 }));
 
-import { POST as syncUser } from '@/app/api/auth/sync-user/route';
+import { app } from '@/server/app';
 import { verifyInviteCode } from '@/lib/invite-code';
 
 const token = { uid: 'firebase-uid', email: 'new@example.test', name: 'New User' };
 
-function request(body?: unknown): NextRequest {
-  return new NextRequest('https://retire.test/api/auth/sync-user', {
+function request(body?: unknown): Request {
+  return new Request('https://retire.test/api/auth/sync-user', {
     method: 'POST',
     headers: { authorization: 'Bearer token', 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
+
+const syncUser = (input: Request) => app.request(input);
 
 const NO_ROWS = { rows: [] };
 const ONE_ROW = { rows: [{ id: token.uid }] };

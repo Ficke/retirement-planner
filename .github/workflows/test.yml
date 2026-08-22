@@ -118,13 +118,12 @@ jobs:
         run: pnpm build
         env:
           NODE_ENV: production
-          NEXT_TELEMETRY_DISABLED: 1
-          NEXT_PUBLIC_FIREBASE_API_KEY: placeholder-for-build
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID: placeholder-project
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
-          NEXT_PUBLIC_FIREBASE_APP_ID: 1:000000000000:web:placeholder
+          VITE_FIREBASE_API_KEY: placeholder-for-build
+          VITE_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: placeholder-project
+          VITE_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
+          VITE_FIREBASE_APP_ID: 1:000000000000:web:placeholder
 
       - name: Test summary
         if: always()
@@ -138,8 +137,8 @@ jobs:
           fi
 
   # End-to-end smoke tests. These run signed out (LOCAL data mode), so they
-  # need no database, no Firebase project, and no secrets — the placeholder
-  # Firebase config below only has to satisfy the client SDK's initializer.
+  # need no database, no Firebase project, and no secrets. The placeholder
+  # config also verifies that a bad auth configuration still leaves local mode usable.
   e2e:
     name: E2E Smoke Tests
     runs-on: ubuntu-latest
@@ -166,12 +165,12 @@ jobs:
       - name: Run e2e tests
         run: pnpm -C apps/web exec playwright test --project=chromium
         env:
-          NEXT_PUBLIC_FIREBASE_API_KEY: placeholder-for-build
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID: placeholder-project
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
-          NEXT_PUBLIC_FIREBASE_APP_ID: 1:000000000000:web:placeholder
+          VITE_FIREBASE_API_KEY: placeholder-for-build
+          VITE_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: placeholder-project
+          VITE_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
+          VITE_FIREBASE_APP_ID: 1:000000000000:web:placeholder
 
       - name: Upload Playwright report
         if: failure()
@@ -373,12 +372,12 @@ jobs:
     timeout-minutes: 30
 
     env:
-      NEXT_PUBLIC_FIREBASE_API_KEY: placeholder-for-build
-      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
-      NEXT_PUBLIC_FIREBASE_PROJECT_ID: placeholder-project
-      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
-      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
-      NEXT_PUBLIC_FIREBASE_APP_ID: 1:000000000000:web:placeholder
+      VITE_FIREBASE_API_KEY: placeholder-for-build
+      VITE_FIREBASE_AUTH_DOMAIN: placeholder.firebaseapp.com
+      VITE_FIREBASE_PROJECT_ID: placeholder-project
+      VITE_FIREBASE_STORAGE_BUCKET: placeholder.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: "000000000000"
+      VITE_FIREBASE_APP_ID: 1:000000000000:web:placeholder
 
     steps:
       - name: Checkout code

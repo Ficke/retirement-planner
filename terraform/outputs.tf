@@ -46,7 +46,8 @@ output "set_secrets_commands" {
     # Set DATABASE_URL
     echo -n "your-neon-connection-string" | gcloud secrets versions add DATABASE_URL --data-file=-
 
-    # Set FIREBASE_PRIVATE_KEY
-    cat firebase-private-key.txt | gcloud secrets versions add FIREBASE_PRIVATE_KEY --data-file=-
+    # Set ORIGIN_SECRET and SIGNUP_INVITE_CODES
+    openssl rand -base64 48 | tr -d '\n' | gcloud secrets versions add ORIGIN_SECRET --data-file=-
+    echo -n "comma-separated-invite-codes" | gcloud secrets versions add SIGNUP_INVITE_CODES --data-file=-
   EOT
 }

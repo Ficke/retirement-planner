@@ -18,7 +18,7 @@ coverage
 playwright-report
 test-results
 
-# Next.js
+# Framework build output
 .next
 out
 .vercel
@@ -27,6 +27,7 @@ out
 # Production
 build
 dist
+dist-server
 
 # Environment variables
 .env

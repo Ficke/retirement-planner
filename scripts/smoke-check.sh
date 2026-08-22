@@ -11,7 +11,7 @@
 # simulation, end to end. Cloud Run's liveness probe only proves the container
 # is up, which says nothing about whether the app can compute.
 #
-# A 200 always means the Next.js server, the API route, the network hop to the
+# A 200 always means the Hono server, the API route, the network hop to the
 # Rust service, and the wire contract between the two engines all work. Against
 # a deployed revision it additionally covers ingress and the web service's Cloud
 # Run IAM token; against compose it cannot, because that token is minted only

@@ -8,16 +8,17 @@ Current security posture, plus the audit history that produced it.
 
 ### Authentication and authorization
 
-Firebase Auth, verified server-side via the Admin SDK (`lib/firebase/server-auth.ts`).
+Firebase Auth, verified server-side against Google's public JWKS
+(`lib/firebase/admin.ts`). No Firebase service-account private key is mounted.
 
 | Endpoint | Auth | Notes |
 |---|---|---|
 | `/api/accounts`, `/api/accounts/[id]` | Required | Every handler re-checks `account.user_id === user.id` before reading or writing — a valid token for user A cannot touch user B's account by ID |
 | `/api/profile` | Required | Scoped to `user.id` |
 | `/api/auth/sync-user` | Token required | Verifies the bearer token, and requires a valid invite code before creating a user row. See below |
-| `/api/simulation/monte-carlo`, `/api/simulation/batch` | Firebase ID token | See below |
+| `/api/simulation/monte-carlo`, `/api/simulation/batch` | None | Public by design; rate-limited by trusted client IP and strictly clamped. See below |
 | `/api/internal/simulation-probe` | Origin secret only | Deploy-time proof the revision can compute. Unreachable publicly: the edge proxy refuses to forward `/api/internal/`, and the origin demands `ORIGIN_SECRET`. See below |
-| `/healthz` | None | Returns the string `ok`, no I/O. Reachable from inside Cloud Run only — GFE intercepts the path externally |
+| `/healthz` | None | Returns a small JSON liveness response with no I/O |
 
 The app is fully usable signed out. In LOCAL data mode nothing is written
 server-side at all, so there is no data to protect for anonymous users.
@@ -40,12 +41,12 @@ no credential that can sign in to nothing.
 ### The simulation endpoints
 
 `/api/simulation/*` fans every request out to CPU-bound work on the Rust
-service, which makes it the main abuse surface. Signing in is the first gate:
-anonymous sessions run the Web Worker engine instead, and the client decides
-that up front rather than eating a 401. Mitigations in
+service, which makes it the main abuse surface. Anonymous sessions may choose
+cloud compute independently of cloud data sync. Mitigations in
 `lib/simulation-request.ts`:
 
-- Per-account rate limit: 60 requests / 60s
+- Per-IP rate limit: 300 requests / 60s
+- Per-IP compute budget: 2,000,000 paths / 60s
 - `paths` ≤ 5,000 per simulation
 - ≤ 40 scenarios per batch, ≤ 40,000 total paths per batch
 - ≤ 20 accounts per plan
@@ -53,9 +54,6 @@ that up front rather than eating a 401. Mitigations in
 
 Nothing from these request bodies is persisted. Plans sent for cloud compute are
 processed in memory and discarded.
-
-Since accounts are invite-only (`lib/invite-code.ts`), the caller set is bounded
-by codes you hand out rather than by who finds the URL.
 
 ### The deploy probe
 
@@ -70,7 +68,7 @@ while **both** hold:
 1. The edge proxy answers `/api/internal/` with 404 and never forwards it, so
    nothing reaching the Worker can touch it.
 2. Going straight at the Cloud Run URL requires `ORIGIN_SECRET`, which the
-   middleware demands and only the Worker and the pipeline hold.
+   Hono origin middleware demands and only the Worker and the pipeline hold.
 
 Removing either one exposes an unauthenticated path to the Rust service.
 
@@ -92,18 +90,19 @@ upgrade if abuse ever materializes.
 Managed in GCP Secret Manager, never in git and never in Terraform state
 (Terraform creates the secret containers; values are added out of band).
 
-Only two are mounted into Cloud Run: `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`.
-The `GEMINI_API_KEY` / `POLYGON_API_KEY` / `LANGFUSE_*` mounts were removed
-along with the features that used them.
+Three are mounted into Cloud Run: `DATABASE_URL`, `ORIGIN_SECRET`, and
+`SIGNUP_INVITE_CODES`. The application verifies Firebase ID tokens with public
+keys and does not need Admin SDK credentials.
 
-Firebase *client* config (`NEXT_PUBLIC_FIREBASE_*`) is intentionally public and
+Firebase *client* config (`VITE_FIREBASE_*`) is intentionally public and
 baked into the JS bundle. It is not a secret; security comes from Firebase Auth
 rules and the authorized-domains list.
 
 ### Transport and headers
 
-Cloud Run terminates TLS and never serves plain HTTP. Response headers are set
-in `apps/web/next.config.ts`:
+Cloud Run terminates TLS and never serves plain HTTP. Hono applies response
+security headers, including a restrictive Content Security Policy, in
+`apps/web/src/server/app.ts`:
 
 ```
 Strict-Transport-Security: max-age=31536000; includeSubDomains
@@ -117,8 +116,6 @@ Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
 
 ## Open items
 
-- **No Content-Security-Policy.** Next.js injects inline bootstrap scripts, so a
-  useful policy needs nonce plumbing rather than a static header. Not started.
 - **Rate limiting is per-instance** (see above).
 - **No Firebase App Check**, no enforced email verification, no MFA.
 - **No audit logging** of account create/delete or auth events.
@@ -159,7 +156,7 @@ verification, `.env.local` correctly gitignored, Zod input validation.
 - The OCR feature was removed entirely, taking `/api/ocr`, the Gemini
   dependency, and the `ocr_feedback` table with it. The audit findings about
   that endpoint are historical only.
-- Public simulation endpoints were added, with the gating described above.
+- Public simulation endpoints were added, with the clamping and quotas described above.
 - Security headers — an open item in the original audit — are now implemented.
 - Legacy tables from retired architectures (holdings, transactions, sessions,
   verification tokens) are dropped by migration 11.

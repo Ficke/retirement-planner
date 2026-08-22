@@ -1,95 +1,65 @@
-/**
- * Firebase Admin SDK Configuration
- * Server-side Firebase for verifying auth tokens and managing users
- */
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
-import { applicationDefault, initializeApp, getApps, cert, type App } from 'firebase-admin/app';
-import { getAuth, type Auth } from 'firebase-admin/auth';
+const FIREBASE_JWKS = createRemoteJWKSet(
+  new URL(
+    'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com',
+  ),
+);
 
-let adminApp: App | undefined;
-let adminAuth: Auth | undefined;
-
-/**
- * Initialize Firebase Admin SDK (singleton pattern)
- */
-function initializeAdminApp(): App {
-  if (adminApp) {
-    return adminApp;
-  }
-
-  // Check if already initialized
-  const apps = getApps();
-  if (apps.length > 0) {
-    adminApp = apps[0];
-    return adminApp;
-  }
-
-  // Get credentials from environment variables
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-
-  const hasAnyExplicitCredential = Boolean(projectId || clientEmail || privateKey);
-  const hasCompleteExplicitCredential = Boolean(projectId && clientEmail && privateKey);
-  if (hasAnyExplicitCredential && !hasCompleteExplicitCredential) {
-    throw new Error(
-      'Firebase Admin SDK credentials are incomplete. Set all explicit credential fields or use Application Default Credentials.'
-    );
-  }
-
-  adminApp = initializeApp({
-    credential: hasCompleteExplicitCredential
-      ? cert({
-          projectId: projectId!,
-          clientEmail: clientEmail!,
-          privateKey: privateKey!.replace(/\\n/g, '\n'),
-        })
-      : applicationDefault(),
-  });
-
-  return adminApp;
+export interface VerifiedFirebaseToken {
+  uid: string;
+  email?: string;
+  name?: string;
+  emailVerified: boolean;
 }
 
 /**
- * Get Firebase Admin Auth instance
- */
-export function getAdminAuth(): Auth {
-  if (adminAuth) {
-    return adminAuth;
-  }
-
-  const app = initializeAdminApp();
-  adminAuth = getAuth(app);
-  return adminAuth;
-}
-
-/**
- * Verify Firebase ID token from Authorization header
- * Returns the decoded token with user information
+ * Verify a Firebase ID token against Google's public signing keys.
+ *
+ * Firebase ID tokens remain valid until their normal expiry. This verifier
+ * deliberately does not perform the Admin SDK's optional revocation lookup,
+ * which keeps runtime authentication keyless and stateless.
  */
 export async function verifyAuthToken(
-  authHeader: string | null
-): Promise<{ uid: string; email?: string; name?: string; emailVerified: boolean } | null> {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
+  authHeader: string | null,
+): Promise<VerifiedFirebaseToken | null> {
+  const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return null;
 
-  const token = authHeader.split('Bearer ')[1];
-  if (!token) {
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!projectId) {
+    console.error('FIREBASE_PROJECT_ID is required to verify Firebase ID tokens');
     return null;
   }
 
   try {
-    const auth = getAdminAuth();
-    const decodedToken = await auth.verifyIdToken(token, true);
+    const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
+      algorithms: ['RS256'],
+      audience: projectId,
+      issuer: `https://securetoken.google.com/${projectId}`,
+    });
+
+    const uid = payload.sub;
+    if (!uid || uid.length > 128) return null;
+
+    const now = Math.floor(Date.now() / 1000);
+    if (
+      typeof payload.iat !== 'number' ||
+      payload.iat > now ||
+      typeof payload.auth_time !== 'number' ||
+      payload.auth_time > now
+    ) {
+      return null;
+    }
+
     return {
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      name: decodedToken.name,
-      emailVerified: decodedToken.email_verified ?? false,
+      uid,
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+      name: typeof payload.name === 'string' ? payload.name : undefined,
+      emailVerified: payload.email_verified === true,
     };
   } catch (error) {
-    console.error('Error verifying auth token:', error);
+    console.error('Error verifying Firebase auth token:', error);
     return null;
   }
 }

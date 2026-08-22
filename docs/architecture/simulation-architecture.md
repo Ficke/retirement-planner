@@ -4,7 +4,7 @@
 
 The app has two first-class compute modes:
 
-- Cloud mode sends a transient, stripped simulation plan through the Next.js
+- Cloud mode sends a transient, stripped simulation plan through the Hono
   proxy to the Rust Cloud Run service.
 - Local mode calculates the same scenario grids in browser Web Workers without
   sending plan data off-device.
@@ -107,7 +107,7 @@ The new web client also accepts the legacy full response after requesting
 summary mode. This covers the opposite rolling-deployment order, where a new web
 revision reaches an older Rust revision that ignores `responseMode`.
 
-Successful proxy responses stream through Next.js without parsing and
+Successful proxy responses stream through Hono without parsing and
 reserializing. Validation, rate limiting, and normalized error responses remain
 at the public proxy boundary.
 

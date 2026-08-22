@@ -111,7 +111,7 @@ test('growth fields sharing a label are told apart by their group', async ({ pag
   await expect(page.getByLabel('Salary growth above inflation (%)')).toBeVisible();
 });
 
-test('signed out, the app runs in local mode and offers sign-in', async ({ page }) => {
+test('signed out, data stays local while compute remains selectable', async ({ page }) => {
   await gotoApp(page);
 
   await expect(page.getByText('Guest. Data stays in this browser.')).toBeVisible();
@@ -121,11 +121,13 @@ test('signed out, the app runs in local mode and offers sign-in', async ({ page 
   // The storage badge reflects LOCAL mode when there is no auth user.
   await expect(page.getByText('This browser', { exact: true })).toBeVisible();
 
-  // Cloud compute needs an account, so signed out there is no engine to pick
-  // between — offering the choice would advertise a mode that cannot run.
-  await expect(page.getByText('Local', { exact: true })).toBeVisible();
-  await expect(page.getByRole('combobox')).toHaveCount(0);
-  await expect(page.getByText('Cloud (fast, nothing stored)')).toHaveCount(0);
+  // Compute mode is independent from persistence mode. Anonymous plans may use
+  // the transient Rust service without enabling cloud data storage.
+  const computeEngine = page.getByRole('combobox').first();
+  await expect(computeEngine).toBeVisible();
+  await computeEngine.click();
+  await expect(page.getByRole('option', { name: 'Cloud (fast, nothing stored)' })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Local (never leaves device)' })).toBeVisible();
 });
 
 test('an account can be added locally and Plan remains reachable', async ({ page }) => {

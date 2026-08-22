@@ -105,7 +105,7 @@ module "rust_simulation" {
   ]
 }
 
-# Cloud Run service for the Next.js application
+# Cloud Run service for the Vite/Hono application
 module "cloud_run" {
   source = "./modules/cloud-run"
 
@@ -201,7 +201,7 @@ resource "google_cloudbuild_trigger" "main_branch" {
   filename = "cloudbuild.yaml"
 
   # Build-time substitutions passed as Kaniko --build-arg.
-  # Use for NEXT_PUBLIC_* vars that must be baked into the client JS bundle.
+  # Use for VITE_* vars that must be baked into the client JS bundle.
   substitutions = var.build_substitutions
 
   depends_on = [google_project_service.required_apis]

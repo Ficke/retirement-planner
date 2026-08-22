@@ -358,15 +358,10 @@ function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
   return state.authUser?.id ?? null;
 }
 
-/**
- * The cloud engine is for signed-in users, so a signed-out session runs the
- * Web Worker regardless of the stored preference. Checking here keeps anonymous
- * sessions from spending a round trip on a 401 before falling back.
- */
 export function cloudComputeEnabled(
-  state: Pick<PlanState, 'authUser' | 'useServerSideCalculations'>,
+  state: Pick<PlanState, 'useServerSideCalculations'>,
 ): boolean {
-  return state.useServerSideCalculations && state.authUser !== null;
+  return state.useServerSideCalculations;
 }
 
 /**

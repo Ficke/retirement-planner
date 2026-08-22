@@ -20,7 +20,7 @@ For `/api/batch`, use `responseMode: "summary"` to return compact success
 probabilities. Omitting the field preserves the legacy full response for browser
 bundles that were open during deployment.
 
-The Rust service is private in production. Public Next.js routes authenticate
+The Rust service is private in production. Public Hono routes authenticate
 to Cloud Run, validate and clamp inputs, rate-limit by the trusted client
 address, and normalize upstream errors.
 

@@ -29,12 +29,12 @@ Comprehensive analysis of the Monte Carlo simulation architecture, including:
 - Complete projection engine with tax-efficient withdrawals
 - Results verified identical to TypeScript implementation
 
-⏭️ **Phase 2: Next.js Integration** - READY
+✅ **Phase 2: Vite/Hono Integration** - COMPLETED
 - User preference for server-side vs client-side
-- Next.js proxy endpoint
+- Public, rate-limited Hono proxy endpoints
 - Graceful fallback mechanisms
 
-🔮 **Phase 3: Production Deployment** - FUTURE
+✅ **Phase 3: Production Deployment** - COMPLETED
 - Docker containerization
-- Cloud Run deployment
-- Auto-scaling and monitoring
+- Cloud Run deployment behind the Cloudflare edge proxy
+- Terraform-managed scaling and monitoring

@@ -53,24 +53,17 @@ secret or a client certificate is what distinguishes this zone from any other.
 
 ## Frontend
 
-The web app is a client-rendered SPA with a thin backend-for-frontend: 14 files
-under `app/`, six API routes, and a `'use client'` root page. Server rendering
-is not meaningfully used.
+The web app is a Vite-built, client-rendered React SPA with a Hono
+backend-for-frontend. The previous Next.js runtime supplied no meaningful
+server rendering, so the migration removed framework server components while
+preserving React, Radix, Recharts, TanStack Table, Zustand, and the Web Worker
+engine. Hono serves the production SPA and owns API routing, origin
+authentication, security headers, and the private Rust proxy.
 
-Next.js is oversized for that shape and is still the right choice, because
-"reliable" means predictable and well-supported rather than minimal. React is
-load-bearing for a different reason: 30 components, shadcn/ui, six Radix
-primitives, Recharts, TanStack Table, and Zustand are all React-bound. Radix in
-particular supplies keyboard navigation, focus management, and ARIA semantics
-that younger ecosystems have not matched.
-
-Vite plus a static SPA is the architecturally cleaner fit, and would delete the
-Host-header problem, the Worker proxy, and the origin secret for everything but
-API calls. The engine and Monte Carlo worker carry no React or Next.js imports,
-so they port unchanged, and Vite's Web Worker support is better than Next.js's.
-The costs are rehoming the six API routes, losing server rendering, and the
-ordinary risk of rewriting working software. Worth revisiting only alongside a
-significant UI overhaul.
+The Worker proxy remains necessary for API calls and for keeping the Cloud Run
+origin behind the shared-secret control. It also serves the SPA so browser
+history routes and API requests stay on one origin. Hashed Vite assets under
+`/assets/` receive immutable edge caching.
 
 Compiling the Rust engine to WebAssembly would collapse the two-engine
 maintenance burden into one and make the server optional rather than merely
@@ -79,12 +72,11 @@ break Firebase Auth popup flows, so it would force redirect-based sign-in.
 
 ## Open follow-ups
 
-- `min_instances = 0` means most visits pay a full Node and Next.js boot. This
+- `min_instances = 0` means most visits pay a Node/Hono cold start. This
   costs more perceived performance than any framework choice.
-- The Worker strips `cf-*`, `x-forwarded-*`, and `host`, but not
-  `x-middleware-*`. Origin authentication runs in Next.js middleware, and
-  CVE-2025-29927 was a middleware bypass through exactly such a header. Next.js
-  15.5.21 is patched, so this is defense in depth against a regression.
+- The Worker strips `cf-*`, `x-forwarded-*`, `host`, `x-retire-plan-*`, and
+  framework-internal `x-middleware-*` headers before adding its trusted origin
+  and client-address headers.
 - Recharts renders SVG. A simulation view plotting many paths or percentile
   bands can produce thousands of DOM nodes, which is the likeliest cause if any
   chart feels slow while scrubbing or resizing.

@@ -4,7 +4,7 @@ const ORIGINAL_HOST_HEADER = 'x-retire-plan-original-host';
 const ORIGINAL_PROTO_HEADER = 'x-retire-plan-original-proto';
 const REQUEST_ID_HEADER = 'x-retire-plan-request-id';
 
-const STATIC_PATH_PREFIX = '/_next/static/';
+const STATIC_PATH_PREFIX = '/assets/';
 const INTERNAL_PATH_PREFIX = '/api/internal/';
 const NO_STORE = 'no-store';
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
@@ -26,10 +26,7 @@ function protectedRequestHeader(name: string): boolean {
     lower.startsWith('forwarded') ||
     lower.startsWith('x-forwarded-') ||
     lower.startsWith('x-retire-plan-') ||
-    // Next.js has treated x-middleware-* as internal routing state, and a
-    // forged x-middleware-subrequest once skipped middleware entirely
-    // (CVE-2025-29927). Origin authentication runs there, so a bypass is a
-    // full bypass.
+    // Never forward framework-internal routing state from a browser.
     lower.startsWith('x-middleware-') ||
     lower === 'host' ||
     lower === 'true-client-ip' ||

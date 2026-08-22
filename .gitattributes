@@ -1,5 +1,5 @@
 # Wrangler regenerates this from wrangler.jsonc. It is committed so a fresh
 # clone typechecks and `wrangler types --check` can detect staleness, but it
 # should not be reviewed by hand or counted in language statistics.
-apps/edge-proxy/worker-configuration.d.ts linguist-generated=true
+apps/edge-proxy/worker-configuration.d.ts linguist-generated=true whitespace=-trailing-space
 pnpm-lock.yaml linguist-generated=true

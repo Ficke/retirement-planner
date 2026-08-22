@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
 
 /**
@@ -10,7 +9,7 @@ export async function proxyToRustService(
   payload: unknown,
   timeoutMs: number,
   unavailableLabel: string,
-): Promise<NextResponse> {
+): Promise<Response> {
   const rustResponse = await fetchRustService(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -21,13 +20,13 @@ export async function proxyToRustService(
   if (!rustResponse.ok) {
     const errorText = await rustResponse.text();
     console.error(`Rust service error: ${rustResponse.status} ${errorText}`);
-    return NextResponse.json(
+    return Response.json(
       { error: unavailableLabel, details: `Rust service returned ${rustResponse.status}` },
       { status: 502 }
     );
   }
 
-  return new NextResponse(rustResponse.body, {
+  return new Response(rustResponse.body, {
     status: rustResponse.status,
     headers: { 'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json' },
   });
@@ -38,23 +37,23 @@ export async function proxyToRustService(
  * apart: 413 oversized, 400 malformed, 504 timeout, 503 Rust unreachable.
  * Null means the cause is unrecognized and belongs in a 500.
  */
-export function simulationProxyError(error: unknown, timeoutLabel: string): NextResponse | null {
+export function simulationProxyError(error: unknown, timeoutLabel: string): Response | null {
   if (!(error instanceof Error)) return null;
 
   if (error instanceof RangeError) {
-    return NextResponse.json({ error: error.message }, { status: 413 });
+    return Response.json({ error: error.message }, { status: 413 });
   }
   if (error instanceof SyntaxError) {
-    return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+    return Response.json({ error: 'Request body must be valid JSON' }, { status: 400 });
   }
   if (error.name === 'AbortError' || error.message.includes('timeout')) {
-    return NextResponse.json(
+    return Response.json(
       { error: timeoutLabel, details: 'Request took too long' },
       { status: 504 }
     );
   }
   if (error instanceof RustServiceUnavailableError) {
-    return NextResponse.json(
+    return Response.json(
       { error: 'Service unavailable', details: 'Cannot connect to simulation service' },
       { status: 503 }
     );

@@ -1,14 +1,16 @@
 # =========================
-# Monorepo .gitignore (Node/Next + Rust + Terraform)
+# Monorepo .gitignore (Node/Vite + Rust + Terraform)
 # =========================
 
-# Node / Next.js (recursive for packages/apps)
+# Node / web build output (recursive for packages/apps)
 node_modules/
 **/node_modules/
 .next/
 **/.next/
 dist/
 **/dist/
+dist-server/
+**/dist-server/
 build/
 **/build/
 out/

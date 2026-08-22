@@ -13,24 +13,22 @@ if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q
     exit 1
 fi
 
-# Create .env.local with public config + secrets
+# Create .env.local with public config + the server secrets used locally.
 cat > apps/web/.env.local << EOF
 # Firebase Configuration (public)
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyBkCJjpT2Kt3DlPlPQa745iwx1RCzAAHjU
-NEXT_PUBLIC_FIREBASE_APP_ID=1:106859282187:web:9bd82c3f08f77725cfc376
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=retire-5250e.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-QRVN9XBC4Z
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=106859282187
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=retire-5250e
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=retire-5250e.firebasestorage.app
+VITE_FIREBASE_API_KEY=AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ
+VITE_FIREBASE_APP_ID=1:789638662967:web:07de8d66e7d782c488a8b2
+VITE_FIREBASE_AUTH_DOMAIN=gen-lang-client-0372385774.firebaseapp.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=789638662967
+VITE_FIREBASE_PROJECT_ID=gen-lang-client-0372385774
+VITE_FIREBASE_STORAGE_BUCKET=gen-lang-client-0372385774.firebasestorage.app
 
-# Server-side Firebase
-FIREBASE_PROJECT_ID=retire-5250e
-FIREBASE_CLIENT_EMAIL=firebase-adminsdk-fbsvc@retire-5250e.iam.gserviceaccount.com
+# Server-side Firebase token verification
+FIREBASE_PROJECT_ID=gen-lang-client-0372385774
 
 # Secrets (auto-generated from GCP)
 DATABASE_URL=$(gcloud secrets versions access latest --secret="DATABASE_URL")
-FIREBASE_PRIVATE_KEY="$(gcloud secrets versions access latest --secret="FIREBASE_PRIVATE_KEY" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')"
+SIGNUP_INVITE_CODES=$(gcloud secrets versions access latest --secret="SIGNUP_INVITE_CODES")
 EOF
 
 echo "✅ Secrets pulled to apps/web/.env.local"

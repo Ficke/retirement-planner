@@ -4,7 +4,7 @@ RetirePlan runs on Google Cloud Run as **two services**:
 
 | Service | What it is | Reachability |
 |---|---|---|
-| `retire-plan` | Next.js app + API routes | Public (`allUsers` invoker) |
+| `retire-plan` | Vite SPA + Hono API | Public (`allUsers` invoker), protected by the edge origin secret |
 | `rust-simulation-service` | Monte Carlo engine (Warp + Rayon) | Private — invokable only by the web service account |
 
 The web service proxies `/api/simulation/*` to the Rust service using a Cloud
@@ -37,18 +37,18 @@ Production uses the following runtime and build-time configuration.
 | Variable | Purpose | Source |
 |---|---|---|
 | `DATABASE_URL` | Neon connection string | Secret Manager |
-| `FIREBASE_PRIVATE_KEY` | Firebase Admin SDK key | Secret Manager |
-| `FIREBASE_PROJECT_ID` | Firebase Admin SDK | `public_env_vars` |
-| `FIREBASE_CLIENT_EMAIL` | Firebase Admin SDK | `public_env_vars` |
+| `FIREBASE_PROJECT_ID` | Firebase token issuer/audience | `public_env_vars` |
+| `ORIGIN_SECRET` | Authenticates requests from Cloudflare | Secret Manager |
+| `SIGNUP_INVITE_CODES` | Comma-separated signup gate | Secret Manager |
 | `RUST_SERVICE_URL` | Rust service base URL | Set by Terraform from the module output |
 | `NODE_ENV` | `production` | Set by Terraform |
 
-The two Secret Manager entries are fetched at container start. Keeping the
+The three Secret Manager entries are fetched at container start. Keeping the
 mounted set focused limits cold-start work and access permissions.
 
 ### Build-time — baked into the client bundle
 
-`NEXT_PUBLIC_FIREBASE_*` must exist when `next build` runs, not just at
+`VITE_FIREBASE_*` must exist when `vite build` runs, not just at
 container start. They travel as Kaniko `--build-arg` values from Cloud Build
 substitutions (`build_substitutions` in tfvars → `cloudbuild.yaml` → `Dockerfile`).
 
@@ -77,8 +77,11 @@ through an out-of-band operator workflow:
 echo -n "postgresql://…@…neon.tech/…?sslmode=require" | \
   gcloud secrets versions add DATABASE_URL --data-file=-
 
-cat firebase-private-key.txt | \
-  gcloud secrets versions add FIREBASE_PRIVATE_KEY --data-file=-
+openssl rand -base64 48 | tr -d '\n' | \
+  gcloud secrets versions add ORIGIN_SECRET --data-file=-
+
+echo -n "comma-separated-invite-codes" | \
+  gcloud secrets versions add SIGNUP_INVITE_CODES --data-file=-
 ```
 
 Create the containers with Terraform before adding their first versions.
@@ -110,7 +113,7 @@ scripts/smoke-check.sh "$(gcloud run services describe retire-plan \
 ```
 
 This is the same check Cloud Build runs. It posts a real simulation, so a pass
-means ingress, the Next.js server, the API route, the web service's IAM token,
+means ingress, the Hono server, the API route, the web service's IAM token,
 the hop to the Rust service, and the wire contract between the two engines all
 work. Failures are distinguishable: `400` wire-contract mismatch, `502` Rust
 error, `503` cannot reach Rust, `504` timeout.

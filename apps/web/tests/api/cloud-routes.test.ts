@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest } from 'next/server';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   class AccountLimitError extends Error {}
@@ -14,28 +13,31 @@ const mocks = vi.hoisted(() => {
     deleteAccount: vi.fn(),
     getUserProfile: vi.fn(),
     saveUserProfile: vi.fn(),
+    query: vi.fn(),
   };
   return {
     AccountLimitError,
     ProfileRevisionConflictError,
     db,
     getAuthUser: vi.fn(),
+    verifyAuthToken: vi.fn(),
     getUnifiedDatabaseService: vi.fn(() => db),
-    getClientIp: vi.fn(() => '127.0.0.1'),
     rateLimit: vi.fn(),
     fetchRustService: vi.fn(),
     RustServiceUnavailableError,
   };
 });
 
-vi.mock('@/lib/firebase/server', () => ({ getAuthUser: mocks.getAuthUser }));
+vi.mock('@/lib/firebase/server', () => ({
+  getAuthUser: mocks.getAuthUser,
+  verifyAuthToken: mocks.verifyAuthToken,
+}));
 vi.mock('@/services/server/database', () => ({
   AccountLimitError: mocks.AccountLimitError,
   ProfileRevisionConflictError: mocks.ProfileRevisionConflictError,
   getUnifiedDatabaseService: mocks.getUnifiedDatabaseService,
 }));
 vi.mock('@/lib/rate-limit', () => ({
-  getClientIp: mocks.getClientIp,
   rateLimit: mocks.rateLimit,
 }));
 vi.mock('@/lib/rust-service-client', () => ({
@@ -43,13 +45,17 @@ vi.mock('@/lib/rust-service-client', () => ({
   RustServiceUnavailableError: mocks.RustServiceUnavailableError,
 }));
 
-import { GET as getAccounts, POST as createAccount } from '@/app/api/accounts/route';
-import { GET as getAccount } from '@/app/api/accounts/[id]/route';
-import { PUT as saveProfile } from '@/app/api/profile/route';
-import { POST as runBatch } from '@/app/api/simulation/batch/route';
-import { POST as runMonteCarlo } from '@/app/api/simulation/monte-carlo/route';
-import { POST as runProbe } from '@/app/api/internal/simulation-probe/route';
+import { app } from '@/server/app';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { ORIGIN_SECRET_HEADER, TRUSTED_CLIENT_IP_HEADER } from '@/lib/origin-auth';
+
+const getAccounts = () => app.request('/api/accounts');
+const createAccount = (request: Request) => app.request(request);
+const getAccount = (request: Request) => app.request(request);
+const saveProfile = (request: Request) => app.request(request);
+const runBatch = (request: Request) => app.request(request);
+const runMonteCarlo = (request: Request) => app.request(request);
+const runProbe = (request: Request) => app.request(request);
 
 const owner = { id: 'firebase-owner', email: 'owner@example.test', name: null };
 const accountId = '8dc6c282-ffae-4b80-874d-4ee26ecf6604';
@@ -104,6 +110,10 @@ beforeEach(() => {
   mocks.rateLimit.mockResolvedValue({ success: true, remaining: 99, reset: Date.now() + 60_000 });
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('cloud API authorization boundaries', () => {
   it('rejects unauthenticated account reads before touching persistence', async () => {
     mocks.getAuthUser.mockResolvedValue(null);
@@ -122,10 +132,7 @@ describe('cloud API authorization boundaries', () => {
     expect((await getAccounts()).status).toBe(200);
     expect(mocks.db.getAccountsForUser).toHaveBeenCalledWith(owner.id);
 
-    const response = await getAccount(
-      new NextRequest(`http://localhost/api/accounts/${accountId}`),
-      { params: Promise.resolve({ id: accountId }) },
-    );
+    const response = await getAccount(new Request(`http://localhost/api/accounts/${accountId}`));
     expect(response.status).toBe(200);
     expect(mocks.db.getAccount).toHaveBeenCalledWith(accountId, owner.id);
   });
@@ -133,7 +140,7 @@ describe('cloud API authorization boundaries', () => {
   it('injects the authenticated owner when creating an account', async () => {
     mocks.getAuthUser.mockResolvedValue(owner);
     mocks.db.createAccount.mockResolvedValue(account);
-    const request = new NextRequest('http://localhost/api/accounts', {
+    const request = new Request('http://localhost/api/accounts', {
       method: 'POST',
       body: JSON.stringify({
         name: 'Brokerage',
@@ -158,7 +165,7 @@ describe('cloud API authorization boundaries', () => {
   it('maps the transactional account cap to a conflict response', async () => {
     mocks.getAuthUser.mockResolvedValue(owner);
     mocks.db.createAccount.mockRejectedValue(new mocks.AccountLimitError('limit'));
-    const request = new NextRequest('http://localhost/api/accounts', {
+    const request = new Request('http://localhost/api/accounts', {
       method: 'POST',
       body: JSON.stringify({
         name: 'Brokerage',
@@ -177,7 +184,7 @@ describe('cloud API authorization boundaries', () => {
   it('passes the owner and optimistic revision through profile writes', async () => {
     mocks.getAuthUser.mockResolvedValue(owner);
     mocks.db.saveUserProfile.mockResolvedValue(4);
-    const request = new NextRequest('http://localhost/api/profile', {
+    const request = new Request('http://localhost/api/profile', {
       method: 'PUT',
       body: JSON.stringify({
         profile,
@@ -210,7 +217,7 @@ describe('cloud API authorization boundaries', () => {
   it('returns conflict for stale profile revisions', async () => {
     mocks.getAuthUser.mockResolvedValue(owner);
     mocks.db.saveUserProfile.mockRejectedValue(new mocks.ProfileRevisionConflictError('stale'));
-    const request = new NextRequest('http://localhost/api/profile', {
+    const request = new Request('http://localhost/api/profile', {
       method: 'PUT',
       body: JSON.stringify({
         profile,
@@ -249,7 +256,7 @@ describe('simulation proxy response streaming', () => {
   };
 
   function simulationRequest(path: 'monte-carlo' | 'batch', body: unknown) {
-    return new NextRequest(`http://localhost/api/simulation/${path}`, {
+    return new Request(`http://localhost/api/simulation/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -263,31 +270,28 @@ describe('simulation proxy response streaming', () => {
     simulations: [{ id: 'base', plan: simulationPlan, config: { paths: 20, seed: 42 } }],
   };
 
-  beforeEach(() => {
-    mocks.getAuthUser.mockResolvedValue(owner);
-  });
-
-  it('rejects an anonymous Monte Carlo request before spending Rust compute', async () => {
-    mocks.getAuthUser.mockResolvedValue(null);
-
+  it('allows anonymous Monte Carlo requests without touching persistence auth', async () => {
+    mocks.fetchRustService.mockResolvedValue(
+      Response.json({ successProbability: 0.9 }),
+    );
     const response = await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
 
-    expect(response.status).toBe(401);
-    expect(mocks.fetchRustService).not.toHaveBeenCalled();
-    expect(mocks.rateLimit).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.getAuthUser).not.toHaveBeenCalled();
+    expect(mocks.fetchRustService).toHaveBeenCalled();
   });
 
-  it('rejects an anonymous batch request before spending Rust compute', async () => {
-    mocks.getAuthUser.mockResolvedValue(null);
-
+  it('allows anonymous batch requests without touching persistence auth', async () => {
+    mocks.fetchRustService.mockResolvedValue(Response.json({ results: [] }));
     const response = await runBatch(simulationRequest('batch', batchBody));
 
-    expect(response.status).toBe(401);
-    expect(mocks.fetchRustService).not.toHaveBeenCalled();
-    expect(mocks.rateLimit).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.getAuthUser).not.toHaveBeenCalled();
+    expect(mocks.fetchRustService).toHaveBeenCalled();
   });
 
-  it('meters simulation quota per account rather than per IP', async () => {
+  it('meters public simulation quota by the trusted edge client IP', async () => {
+    vi.stubEnv('ORIGIN_SECRET', 'edge-secret');
     mocks.fetchRustService.mockResolvedValue(
       new Response(JSON.stringify({ successProbability: 0.9 }), {
         status: 200,
@@ -295,16 +299,18 @@ describe('simulation proxy response streaming', () => {
       }),
     );
 
-    await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
+    const request = simulationRequest('monte-carlo', monteCarloBody);
+    request.headers.set(ORIGIN_SECRET_HEADER, 'edge-secret');
+    request.headers.set(TRUSTED_CLIENT_IP_HEADER, '203.0.113.9');
+    await runMonteCarlo(request);
 
     expect(mocks.rateLimit.mock.calls.map((call) => call[0])).toEqual([
-      `simulate:${owner.id}`,
-      `simulate-paths:${owner.id}`,
+      'simulate:203.0.113.9',
+      'simulate-paths:203.0.113.9',
     ]);
   });
 
   it('serves the deploy probe without a user, since the pipeline has no credentials', async () => {
-    mocks.getAuthUser.mockResolvedValue(null);
     mocks.fetchRustService.mockResolvedValue(
       new Response(JSON.stringify({ successProbability: 0.9, yearlyProjections: [] }), {
         status: 200,
@@ -313,7 +319,7 @@ describe('simulation proxy response streaming', () => {
     );
 
     const response = await runProbe(
-      new NextRequest('http://localhost/api/internal/simulation-probe', {
+      new Request('http://localhost/api/internal/simulation-probe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(monteCarloBody),
@@ -326,10 +332,8 @@ describe('simulation proxy response streaming', () => {
   });
 
   it('still clamps the probe payload, so it cannot be used as an unmetered engine', async () => {
-    mocks.getAuthUser.mockResolvedValue(null);
-
     const response = await runProbe(
-      new NextRequest('http://localhost/api/internal/simulation-probe', {
+      new Request('http://localhost/api/internal/simulation-probe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: simulationPlan, config: { paths: 10_000_000, seed: 42 } }),
@@ -374,14 +378,14 @@ describe('simulation proxy response streaming', () => {
     });
     const jsonSpy = vi.spyOn(upstream, 'json');
     mocks.fetchRustService.mockResolvedValue(upstream);
-    const request = new NextRequest('http://localhost/api/simulation/monte-carlo', {
+    const request = new Request('http://localhost/api/simulation/monte-carlo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plan: simulationPlan, config: { paths: 20, seed: 42 } }),
     });
 
     try {
-      const response = await beforeStreamClose(runMonteCarlo(request));
+      const response = await beforeStreamClose(Promise.resolve(runMonteCarlo(request)));
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
       expect(jsonSpy).not.toHaveBeenCalled();
@@ -410,7 +414,7 @@ describe('simulation proxy response streaming', () => {
       headers: { 'Content-Type': 'application/json' },
     });
     mocks.fetchRustService.mockResolvedValue(upstream);
-    const request = new NextRequest('http://localhost/api/simulation/batch', {
+    const request = new Request('http://localhost/api/simulation/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -424,7 +428,7 @@ describe('simulation proxy response streaming', () => {
     });
 
     try {
-      const response = await beforeStreamClose(runBatch(request));
+      const response = await beforeStreamClose(Promise.resolve(runBatch(request)));
       expect(response.status).toBe(200);
       const reader = response.body!.getReader();
       const firstRead = await beforeStreamClose(reader.read());
@@ -451,7 +455,7 @@ describe('simulation proxy response streaming', () => {
     });
     const jsonSpy = vi.spyOn(upstream, 'json');
     mocks.fetchRustService.mockResolvedValue(upstream);
-    const request = new NextRequest('http://localhost/api/simulation/batch', {
+    const request = new Request('http://localhost/api/simulation/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

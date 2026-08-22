@@ -9,7 +9,6 @@
  */
 
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
-import { authenticatedFetch } from '@/lib/firebase/api-client';
 import { retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
@@ -154,7 +153,7 @@ async function runOnServer(
     })),
   };
 
-  const response = await authenticatedFetch('/api/simulation/batch', {
+  const response = await fetch('/api/simulation/batch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -230,7 +229,7 @@ class SimulationServiceImpl implements SimulationService {
 
     if (useServerSide) {
       try {
-        const response = await authenticatedFetch('/api/simulation/monte-carlo', {
+        const response = await fetch('/api/simulation/monte-carlo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal,

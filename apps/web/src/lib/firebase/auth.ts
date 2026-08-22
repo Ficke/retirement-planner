@@ -22,6 +22,11 @@ export interface AuthError {
   message: string;
 }
 
+const authUnavailable: AuthError = {
+  code: 'auth/not-configured',
+  message: 'Sign-in is not configured for this environment',
+};
+
 /**
  * Create a new user with email and password
  */
@@ -30,6 +35,7 @@ export async function signUp(
   password: string,
   name?: string
 ): Promise<{ user: User | null; error: AuthError | null }> {
+  if (!auth) return { user: null, error: authUnavailable };
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
@@ -52,6 +58,7 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<{ user: User | null; error: AuthError | null }> {
+  if (!auth) return { user: null, error: authUnavailable };
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     return { user: userCredential.user, error: null };
@@ -65,6 +72,7 @@ export async function signIn(
  * Sign out the current user
  */
 export async function signOut(): Promise<{ error: AuthError | null }> {
+  if (!auth) return { error: authUnavailable };
   try {
     await firebaseSignOut(auth);
     return { error: null };
@@ -78,6 +86,7 @@ export async function signOut(): Promise<{ error: AuthError | null }> {
  * Send password reset email
  */
 export async function resetPassword(email: string): Promise<{ error: AuthError | null }> {
+  if (!auth) return { error: authUnavailable };
   try {
     await sendPasswordResetEmail(auth, email);
     return { error: null };
@@ -120,6 +129,7 @@ function getErrorMessage(errorCode: string): string {
  * Used for authenticating API requests
  */
 export async function getIdToken(): Promise<string | null> {
+  if (!auth) return null;
   const user = auth.currentUser;
   if (!user) return null;
 

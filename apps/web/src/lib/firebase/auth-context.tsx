@@ -91,6 +91,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (!auth) {
+      setUser(null);
+      setCloudReady(false);
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     let authGeneration = 0;
     // Subscribe to auth state changes

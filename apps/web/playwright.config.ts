@@ -25,7 +25,7 @@ export default defineConfig({
     command: 'pnpm dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
-    // Cold Turbopack compile on a CI runner takes well over the 60s default.
+    // Dependency optimization and the first Vite transform can exceed the default on CI.
     timeout: 180_000,
   },
 });

@@ -57,6 +57,7 @@ behavior across the live service boundary.
 
 ```text
 apps/web/
+  src/server/app.ts                    Hono API, origin auth, and SPA serving
   src/state/usePlan.ts                 Plan state and simulation orchestration
   src/engine/projection.ts             TypeScript single-path projection
   src/workers/mc.worker.ts             Browser Monte Carlo engine
@@ -83,7 +84,7 @@ and full-result contracts.
 
 | Layer | Technology |
 |---|---|
-| Web | Next.js 15, React 19, TypeScript, Tailwind CSS, Zustand, Recharts |
+| Web | Vite, Hono, React 19, TypeScript, Tailwind CSS, Zustand, Recharts |
 | Simulation | Rust, Warp, Rayon, Web Workers, Comlink |
 | Data and identity | PostgreSQL on Neon, Firebase Authentication |
 | Infrastructure | Google Cloud Run, Cloud Build, Terraform |
