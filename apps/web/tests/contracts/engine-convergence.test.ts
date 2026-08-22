@@ -39,7 +39,8 @@ async function runClientSideSimulation(
 
   return {
     successProbability: successCount / config.paths,
-    medianTerminalWealth: terminalWealths[p50Index],
+    medianAfterTaxTerminalWealth: 0,
+  medianTerminalWealth: terminalWealths[p50Index],
     percentile10TerminalWealth: terminalWealths[p10Index],
     percentile90TerminalWealth: terminalWealths[p90Index],
     percentile5TerminalWealth: terminalWealths[Math.floor(config.paths * 0.05)],

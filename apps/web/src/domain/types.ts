@@ -192,6 +192,13 @@ export interface SimulationResult {
   /** Fraction of paths that fully fund every modeled working and retirement year. */
   successProbability: number;
   medianTerminalWealth: number;
+  /**
+   * The median path's terminal wealth net of the tax owed on its Traditional
+   * and HSA balances, at the plan's `terminalTaxRate`. Reported beside the
+   * gross figure rather than in place of it: the gross number is what every
+   * other chart plots, and this one is what those balances would settle for.
+   */
+  medianAfterTaxTerminalWealth: number;
   percentile5TerminalWealth: number;
   percentile10TerminalWealth: number;
   percentile90TerminalWealth: number;
@@ -240,6 +247,12 @@ export interface PathProjection {
   withdrawalTraditional: number;
   withdrawalRoth: number;
   rmdAmount: number;
+  /**
+   * Pre-tax dollars moved Traditional → Roth this year. An internal transfer,
+   * so it is no part of `spending` or the withdrawal totals; only the tax it
+   * adds reaches `taxes`.
+   */
+  rothConversion: number;
   depositTaxable: number;
   depositTraditional: number;
   depositRoth: number;
@@ -256,6 +269,8 @@ export interface PathProjection {
 /** One complete path. Monte Carlo aggregates many of these into percentiles. */
 export interface PathResult {
   terminalWealth: number;
+  /** Terminal wealth net of the tax still owed on Traditional and HSA. */
+  afterTaxTerminalWealth: number;
   projections: PathProjection[];
   success: boolean; // Whether every modeled year was fully funded
 }

@@ -55,7 +55,7 @@ async function runSimulation(
 ): Promise<SimulationResult> {
   const { paths, seed } = config;
 
-  const terminalOutcomes: Array<{ wealth: number; pathIndex: number }> = [];
+  const terminalOutcomes: Array<{ wealth: number; afterTaxWealth: number; pathIndex: number }> = [];
   let portfolioByPathAndYear: Float64Array | null = null;
   let cashFlowByPathAndYear: Record<CashFlowKey, Float64Array> | null = null;
   let timeline: Array<Pick<PathProjection, 'age' | 'isRetired'>> = [];
@@ -84,7 +84,11 @@ async function runSimulation(
         cashFlowByPathAndYear![key][offset] = projection[key];
       }
     }
-    terminalOutcomes.push({ wealth: result.terminalWealth, pathIndex });
+    terminalOutcomes.push({
+      wealth: result.terminalWealth,
+      afterTaxWealth: result.afterTaxTerminalWealth,
+      pathIndex,
+    });
     if (result.success) {
       successByPath[pathIndex] = 1;
       successCount++;
@@ -177,6 +181,9 @@ async function runSimulation(
   return {
     successProbability,
     medianTerminalWealth: terminalOutcomes[p50Index].wealth,
+    // Read off the same path as the median, not a separately ordered
+    // distribution, so the pair describes one outcome rather than two.
+    medianAfterTaxTerminalWealth: terminalOutcomes[p50Index].afterTaxWealth,
     percentile5TerminalWealth: terminalOutcomes[p5Index].wealth,
     percentile10TerminalWealth: terminalOutcomes[p10Index].wealth,
     percentile90TerminalWealth: terminalOutcomes[p90Index].wealth,

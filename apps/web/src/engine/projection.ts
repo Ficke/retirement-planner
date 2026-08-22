@@ -15,6 +15,7 @@ import {
 } from './tax';
 import { calculateSSABenefit } from './ssa';
 import { calculateRmd } from './rmd';
+import { rothConversionFor } from './roth-conversion';
 import { getRmdStartAge } from '@/data/rmd-tables';
 import { ageOn, birthYearOf, remainingYearFractionOf } from '@/domain/age';
 import { MEDICARE_AGE } from '@/domain/constants';
@@ -49,6 +50,8 @@ const SHORTFALL_PASSES = 50;
  * through 59 and dropped at 60 — the side that overstates the cost rather than
  * the one that hands a household a year of free withdrawals.
  */
+const DEFAULT_TERMINAL_TAX_RATE = 0.30;
+
 const EARLY_TRADITIONAL_PENALTY_RATE = 0.10;
 const TRADITIONAL_PENALTY_AGE = 60;
 
@@ -237,6 +240,7 @@ function projectScenarioInternal(
     let depositHSAYear = 0;
     let insufficientFundsYear = false;
     let healthcareCostYear = 0;
+    let rothConversionYear = 0;
     
     if (!isRetired) {
       // Working phase saves the residual: gross income less taxes and spending.
@@ -459,13 +463,42 @@ function projectScenarioInternal(
         depositTaxableYear = depositTaxable;
       }
 
+      taxes = totalTaxes;
+
+      // Converting after the year's spending is funded is both the realistic
+      // order — the amount is chosen in December, once income is known — and
+      // the only one that cannot overfill the ceiling, since every dollar of
+      // ordinary income the year will report has already been realized.
+      // A year that could not fund itself has nothing spare to convert with.
+      if (currentAge < rmdStartAge && !insufficientFunds) {
+        const conversion = rothConversionFor({
+          policy: plan.assumptions.rothConversion,
+          traditionalWithdrawals: withdrawalTraditional,
+          socialSecurityBenefit,
+          qualifiedIncome: withdrawalTaxable * (plan.assumptions.taxableGainRatio ?? 0.5),
+          taxableWithdrawals: withdrawalTaxable,
+          taxableGainRatio: plan.assumptions.taxableGainRatio ?? 0.5,
+          household: householdOf(profile.filingStatus, currentAge),
+          state: profile.state,
+          taxYear,
+          traditionalBalance: balanceOfBucket(accountBalances, 'Traditional'),
+          taxableBalance: balanceOfBucket(accountBalances, 'Taxable'),
+        });
+        if (conversion.converted > 0) {
+          drawFromBucket(accountBalances, 'Traditional', conversion.converted);
+          drawFromBucket(accountBalances, 'Taxable', conversion.fromTaxable);
+          depositToBucket(accountBalances, 'Roth', conversion.converted - conversion.withheld);
+          rothConversionYear = conversion.converted;
+          taxes += conversion.tax;
+        }
+      }
+
       hsaQualifiedAllowance -= hsaQualifiedUsed;
       withdrawalTaxableYear = withdrawalTaxable;
       withdrawalTraditionalYear = withdrawalTraditional;
       withdrawalRothYear = withdrawalRoth;
       withdrawalHSAYear = withdrawalHSA;
       insufficientFundsYear = insufficientFunds;
-      taxes = totalTaxes;
 
       spending = insufficientFunds
         ? Math.max(0, totalWithdrawn - totalTaxes - depositTaxable + socialSecurityBenefit)
@@ -488,6 +521,7 @@ function projectScenarioInternal(
     // taxable anyway, and erring high charges the surcharge sooner.
     magiByYear[year] = income
       + withdrawalTraditionalYear
+      + rothConversionYear
       + withdrawalTaxableYear * (plan.assumptions.taxableGainRatio ?? 0.5);
 
     if (insufficientFundsYear) success = false;
@@ -507,6 +541,7 @@ function projectScenarioInternal(
         withdrawalRoth: withdrawalRothYear,
         withdrawalHSA: withdrawalHSAYear,
         rmdAmount,
+        rothConversion: rothConversionYear,
         depositTaxable: depositTaxableYear,
         depositTraditional: depositTraditionalYear,
         depositRoth: depositRothYear,
@@ -523,6 +558,10 @@ function projectScenarioInternal(
   const finalWealth = currentPortfolioValue;
   return {
     terminalWealth: finalWealth,
+    afterTaxTerminalWealth: afterTaxWealthOf(
+      accountBalances,
+      plan.assumptions.terminalTaxRate ?? DEFAULT_TERMINAL_TAX_RATE,
+    ),
     projections: yearlyProjections,
     success,
   };
@@ -798,6 +837,43 @@ export function estimateSalaryHistory(
  *
  * @returns the amount deposited, for the caller's cash-flow row
  */
+/**
+ * What the portfolio is worth once the tax nobody has paid yet is settled.
+ *
+ * Traditional and HSA balances are income in respect of a decedent: no step-up
+ * in basis, and ordinary rates on every dollar. Taxable and Roth pass through
+ * whole — an inherited taxable account steps its basis up to date-of-death
+ * value, and a Roth owes nothing either way. Counting all four at face value
+ * would credit a pre-tax-heavy plan for money it does not own, which is
+ * exactly the comparison a conversion setting exists to make.
+ */
+function afterTaxWealthOf(accounts: ProjectionAccount[], terminalTaxRate: number): number {
+  return accounts.reduce((sum, account) => {
+    const taxed = account.type === 'Traditional' || account.type === 'HSA';
+    return sum + account.balance * (taxed ? 1 - terminalTaxRate : 1);
+  }, 0);
+}
+
+function balanceOfBucket(accounts: ProjectionAccount[], type: AccountType): number {
+  return accounts
+    .filter((account) => account.type === type)
+    .reduce((sum, account) => sum + account.balance, 0);
+}
+
+/** Take `amount` from one bucket, or whatever of it that bucket holds. */
+function drawFromBucket(
+  accounts: ProjectionAccount[],
+  type: AccountType,
+  amount: number,
+): number {
+  if (amount <= 0) return 0;
+  const bucket = accounts.find((account) => account.type === type);
+  if (!bucket) return 0;
+  const drawn = Math.min(amount, bucket.balance);
+  bucket.balance -= drawn;
+  return drawn;
+}
+
 function depositToBucket(
   accounts: ProjectionAccount[],
   type: AccountType,
