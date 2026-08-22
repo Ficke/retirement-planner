@@ -6,6 +6,7 @@ import { Hono, type Context } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 
 import type { CreateAccountData, UpdateAccountData } from '@/domain/types';
+import { CLIENT_ROUTES } from '@/lib/client-routes';
 import { getAuthUser, verifyAuthToken } from '@/lib/firebase/server';
 import { INVITE_RATE_LIMIT, verifyInviteCode } from '@/lib/invite-code';
 import {
@@ -457,7 +458,13 @@ if (process.env.NODE_ENV === 'production') {
     if (c.res.ok) c.header('Cache-Control', 'public, max-age=31536000, immutable');
   });
   app.use('*', serveStatic({ root: staticRoot }));
-  app.get('*', serveStatic({ root: staticRoot, rewriteRequestPath: () => '/index.html' }));
+  const serveClientShell = serveStatic({
+    root: staticRoot,
+    rewriteRequestPath: () => '/index.html',
+  });
+  for (const clientRoute of Object.values(CLIENT_ROUTES)) {
+    app.get(clientRoute, serveClientShell);
+  }
 }
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

@@ -398,6 +398,26 @@ jobs:
           ORIGIN_SECRET: local-compose-origin-secret
         run: ./scripts/smoke-check.sh http://localhost:3000
 
+      - name: Verify production HTTP routing
+        shell: bash
+        run: |
+          origin_header='x-retire-plan-origin-secret: local-compose-origin-secret'
+
+          known_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "$origin_header" http://localhost:3000/auth/signin)
+          test "$known_status" = 200
+
+          unknown_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "$origin_header" http://localhost:3000/does-not-exist)
+          test "$unknown_status" = 404
+
+          missing_asset_status=$(curl --silent --output /dev/null \
+            --dump-header "$RUNNER_TEMP/missing-asset-headers" --write-out '%{http_code}' \
+            --header "$origin_header" http://localhost:3000/assets/missing.abc123.js)
+          test "$missing_asset_status" = 404
+          ! grep --ignore-case --quiet '^cache-control:.*immutable' \
+            "$RUNNER_TEMP/missing-asset-headers"
+
       - name: Dump container logs
         if: failure()
         run: docker compose logs --no-color
