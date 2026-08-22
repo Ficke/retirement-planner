@@ -184,8 +184,7 @@ resource "google_cloudbuild_trigger" "main_branch" {
   }
 
   # Only rebuild/redeploy when a change could affect one of the built images.
-  # Terraform is excluded deliberately: infrastructure is applied separately,
-  # and nothing under terraform/ reaches either image.
+  # Every application deployment runs a concurrent Terraform drift check.
   included_files = [
     "apps/web/**",
     "rust-simulation-service/**",
