@@ -58,18 +58,18 @@ github_owner                    = "your-github-username"
 github_repo                     = "retirement-planner"
 
 # Build-time substitutions — baked into the client JS bundle by vite build.
-# Distinct from public_env_vars (Cloud Run runtime): VITE_* values must
-# exist when `docker build` runs, not just when the container starts.
+# Distinct from public_env_vars (Cloud Run runtime): these values are mapped to
+# VITE_* Docker build arguments and must exist when `docker build` runs.
 # Keys must start with _ per Cloud Build convention.
 build_substitutions = {
-  _VITE_FIREBASE_API_KEY             = "AIza..."
-  _VITE_FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
-  _VITE_FIREBASE_PROJECT_ID          = "your-project-id"
-  _VITE_FIREBASE_STORAGE_BUCKET      = "your-project.firebasestorage.app"
-  _VITE_FIREBASE_MESSAGING_SENDER_ID = "123456789"
-  _VITE_FIREBASE_APP_ID              = "1:123456789:web:abc123"
-  _VITE_FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
-  _ORIGIN_SECRET_VERSION             = "1"
+  _FIREBASE_API_KEY             = "AIza..."
+  _FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
+  _FIREBASE_PROJECT_ID          = "your-project-id"
+  _FIREBASE_STORAGE_BUCKET      = "your-project.firebasestorage.app"
+  _FIREBASE_MESSAGING_SENDER_ID = "123456789"
+  _FIREBASE_APP_ID              = "1:123456789:web:abc123"
+  _FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
+  _ORIGIN_SECRET_VERSION        = "1"
 }
 
 # Rust Simulation Service Configuration

@@ -51,11 +51,11 @@ github_repo                 = "retirement-planner"
 
 # Vite embeds Firebase client configuration during the production build.
 build_substitutions = {
-  _VITE_FIREBASE_API_KEY             = "AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ"
-  _VITE_FIREBASE_AUTH_DOMAIN         = "gen-lang-client-0372385774.firebaseapp.com"
-  _VITE_FIREBASE_PROJECT_ID          = "gen-lang-client-0372385774"
-  _VITE_FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
-  _VITE_FIREBASE_MESSAGING_SENDER_ID = "789638662967"
-  _VITE_FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
-  _ORIGIN_SECRET_VERSION             = "1"
+  _FIREBASE_API_KEY             = "AIzaSyDhz2HOuS6HN_QE3SD0L9w7hGDDHMMyDrQ"
+  _FIREBASE_AUTH_DOMAIN         = "gen-lang-client-0372385774.firebaseapp.com"
+  _FIREBASE_PROJECT_ID          = "gen-lang-client-0372385774"
+  _FIREBASE_STORAGE_BUCKET      = "gen-lang-client-0372385774.firebasestorage.app"
+  _FIREBASE_MESSAGING_SENDER_ID = "789638662967"
+  _FIREBASE_APP_ID              = "1:789638662967:web:07de8d66e7d782c488a8b2"
+  _ORIGIN_SECRET_VERSION        = "1"
 }
