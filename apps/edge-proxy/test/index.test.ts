@@ -95,7 +95,7 @@ describe('edge proxy', () => {
       async () =>
         new Response('ok', {
           headers: {
-            'x-powered-by': 'Next.js',
+            'x-powered-by': 'origin-runtime',
             server: 'Google Frontend',
             'x-cloud-trace-context': 'abc/123',
           },
@@ -224,7 +224,7 @@ describe('edge proxy', () => {
     expect(response.status).toBe(401);
   });
 
-  it('caches only successful immutable Next static GET responses', async () => {
+  it('caches only successful immutable Vite asset GET responses', async () => {
     let originCalls = 0;
     const deps = dependencies(async () => {
       originCalls += 1;
@@ -232,7 +232,7 @@ describe('edge proxy', () => {
         headers: { 'cache-control': 'public, max-age=31536000, immutable' },
       });
     });
-    const request = new Request('https://staging.adamficke.dev/_next/static/chunks/app.abc.js');
+    const request = new Request('https://staging.adamficke.dev/assets/app.abc.js');
     const firstCtx = createExecutionContext();
     const first = await handleRequest(request, testEnv, firstCtx, deps);
     await waitOnExecutionContext(firstCtx);
@@ -244,7 +244,7 @@ describe('edge proxy', () => {
     expect(originCalls).toBe(1);
     expect(deps.cache.matchCalls).toBe(2);
     expect(
-      deps.cache.entries.has(`${testEnv.CANONICAL_ORIGIN}/_next/static/chunks/app.abc.js`),
+      deps.cache.entries.has(`${testEnv.CANONICAL_ORIGIN}/assets/app.abc.js`),
     ).toBe(
       true,
     );
@@ -256,8 +256,8 @@ describe('edge proxy', () => {
       ['https://adamficke.dev/api/profile', undefined, 200, undefined],
       ['https://adamficke.dev/redirect', undefined, 302, { location: '/target' }],
       ['https://adamficke.dev/error', undefined, 500, undefined],
-      ['https://adamficke.dev/_next/static/chunks/app.js', { method: 'HEAD' }, 200, undefined],
-      ['https://adamficke.dev/_next/static/chunks/app.js', undefined, 200, { 'cache-control': 'max-age=60' }],
+      ['https://adamficke.dev/assets/app.js', { method: 'HEAD' }, 200, undefined],
+      ['https://adamficke.dev/assets/app.js', undefined, 200, { 'cache-control': 'max-age=60' }],
     ];
 
     for (const [url, init, status, headers] of cases) {

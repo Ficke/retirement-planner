@@ -1,20 +1,18 @@
-version: '3.8'
-
 services:
   web:
     build:
       context: .
       dockerfile: Dockerfile
-      # NEXT_PUBLIC_* are baked into the client bundle by `next build`, so they
+      # VITE_* values are baked into the client bundle by `vite build`, so they
       # have to be build args. Passing them only as `environment` below leaves
       # the bundle's Firebase config undefined.
       args:
-        - NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY}
-        - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
-        - NEXT_PUBLIC_FIREBASE_PROJECT_ID=${NEXT_PUBLIC_FIREBASE_PROJECT_ID}
-        - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}
-        - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}
-        - NEXT_PUBLIC_FIREBASE_APP_ID=${NEXT_PUBLIC_FIREBASE_APP_ID}
+        - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
+        - VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN}
+        - VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID}
+        - VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET}
+        - VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        - VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
     ports:
       - "3000:3000"
     environment:
@@ -25,12 +23,8 @@ services:
       # Database - use your Neon connection string from .env.local
       - DATABASE_URL=${DATABASE_URL}
       # Firebase Auth
-      - NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY}
-      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
-      - NEXT_PUBLIC_FIREBASE_PROJECT_ID=${NEXT_PUBLIC_FIREBASE_PROJECT_ID}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
-      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
-      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
+      - SIGNUP_INVITE_CODES=${SIGNUP_INVITE_CODES:-dev-invite}
       # Simulation engine. Without this the app still works — it falls back to
       # the client-side Web Worker — but the server-first path goes untested.
       - RUST_SERVICE_URL=http://rust-simulation:8081
@@ -52,6 +46,7 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
+      - MAX_CONCURRENT_SIMULATIONS=1
     restart: unless-stopped
     # No healthcheck: the runtime image (debian-slim) ships neither wget nor
     # curl. Probe it from the host instead: curl localhost:8081/healthz

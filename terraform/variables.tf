@@ -45,9 +45,6 @@ variable "secrets" {
     DATABASE_URL = {
       description = "Neon PostgreSQL connection string"
     }
-    FIREBASE_PRIVATE_KEY = {
-      description = "Firebase Admin SDK private key"
-    }
     ORIGIN_SECRET = {
       description = "Shared secret required on requests from the Cloudflare Worker"
     }
@@ -63,19 +60,14 @@ variable "public_env_vars" {
   type        = map(string)
   default     = {}
   # Configure these values in the environment's variable file:
-  # NEXT_PUBLIC_FIREBASE_API_KEY
-  # NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-  # NEXT_PUBLIC_FIREBASE_PROJECT_ID
   # FIREBASE_PROJECT_ID
-  # FIREBASE_CLIENT_EMAIL
 }
 
 # Secret environment variables (references to Secret Manager)
 #
 # Every entry here is fetched by Cloud Run at container start, so it sits on the
 # cold-start path. Keep this list to secrets the app actually reads:
-# DATABASE_URL (services/server/database.ts), FIREBASE_PRIVATE_KEY
-# (lib/firebase/admin.ts), ORIGIN_SECRET (middleware.ts) and
+# DATABASE_URL (services/server/database.ts), ORIGIN_SECRET (server/app.ts) and
 # SIGNUP_INVITE_CODES (lib/invite-code.ts). The OCR-era GEMINI/POLYGON/LANGFUSE_*
 # mounts were removed with the feature — nothing in the app reads them.
 variable "secret_env_vars" {
@@ -87,10 +79,6 @@ variable "secret_env_vars" {
   default = {
     DATABASE_URL = {
       secret_name = "DATABASE_URL"
-      version     = "1"
-    }
-    FIREBASE_PRIVATE_KEY = {
-      secret_name = "FIREBASE_PRIVATE_KEY"
       version     = "1"
     }
     ORIGIN_SECRET = {
@@ -174,7 +162,7 @@ variable "cloud_build_service_account" {
 
 # Build-time substitution variables passed as --build-arg to Kaniko.
 # These are distinct from public_env_vars (Cloud Run runtime env vars):
-# NEXT_PUBLIC_* values must be baked into the client JS bundle during `next build`,
+# VITE_* values must be baked into the client JS bundle during `vite build`,
 # so they must be present at Docker build time — Cloud Run env vars alone are not enough.
 # Keys must start with _ per Cloud Build convention.
 variable "build_substitutions" {
@@ -183,13 +171,13 @@ variable "build_substitutions" {
   default     = {}
   # Configure build substitutions in the environment's variable file:
   # build_substitutions = {
-  #   _FIREBASE_API_KEY            = "AIza..."
-  #   _FIREBASE_AUTH_DOMAIN        = "your-project.firebaseapp.com"
-  #   _FIREBASE_PROJECT_ID         = "your-project-id"
-  #   _FIREBASE_STORAGE_BUCKET     = "your-project.appspot.com"
-  #   _FIREBASE_MESSAGING_SENDER_ID = "123456789"
-  #   _FIREBASE_APP_ID             = "1:123456789:web:abc123"
-  #   _FIREBASE_MEASUREMENT_ID     = "G-XXXXXXXXXX"
+  #   _VITE_FIREBASE_API_KEY             = "AIza..."
+  #   _VITE_FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
+  #   _VITE_FIREBASE_PROJECT_ID          = "your-project-id"
+  #   _VITE_FIREBASE_STORAGE_BUCKET      = "your-project.appspot.com"
+  #   _VITE_FIREBASE_MESSAGING_SENDER_ID = "123456789"
+  #   _VITE_FIREBASE_APP_ID              = "1:123456789:web:abc123"
+  #   _VITE_FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
   # }
 }
 

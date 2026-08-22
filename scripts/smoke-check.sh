@@ -11,7 +11,7 @@
 # simulation, end to end. Cloud Run's liveness probe only proves the container
 # is up, which says nothing about whether the app can compute.
 #
-# A 200 always means the Next.js server, the API route, the network hop to the
+# A 200 always means the Hono server, the API route, the network hop to the
 # Rust service, and the wire contract between the two engines all work. Against
 # a deployed revision it additionally covers ingress and the web service's Cloud
 # Run IAM token; against compose it cannot, because that token is minted only
@@ -19,10 +19,10 @@
 # itself. Each failure mode reports distinctly: 400 wire-contract mismatch,
 # 502 Rust error, 503 unreachable, 504 timeout.
 #
-# It targets /api/internal/, not the public simulation routes, because those
-# require a signed-in user and the pipeline holds no user credentials. That
-# path is reachable here only by going straight at the origin with
-# ORIGIN_SECRET; the edge proxy refuses to forward it.
+# It targets the deploy-only /api/internal/ path so this origin check remains
+# separate from the public simulation API. The path is reachable only by going
+# straight to the origin with ORIGIN_SECRET; the edge proxy refuses to forward
+# it.
 #
 # Do not check '/'. It is a client-rendered shell that returns 200 whether or
 # not the app can compute anything. Do not check '/healthz' through the public

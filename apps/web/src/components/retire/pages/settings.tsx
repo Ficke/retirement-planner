@@ -1,9 +1,7 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { LogIn, RefreshCw } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 
 import { cloudComputeEnabled, usePlan } from "@/state/usePlan";
 import { useAuth } from "@/lib/firebase";
@@ -60,7 +58,7 @@ export function PageSettings() {
   } = usePlan();
   const cloudCompute = usePlan(cloudComputeEnabled);
   const { user, cloudReady } = useAuth();
-  const router = useRouter();
+  const navigate = useNavigate();
   const updateAssumptions = (
     assumptions: Parameters<typeof updatePlan>[0]["assumptions"],
   ) => updatePlan({ assumptions });
@@ -114,7 +112,7 @@ export function PageSettings() {
                 <ToggleGroupItem value="local">This browser only</ToggleGroupItem>
               </ToggleGroup>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => router.push("/auth/signin")}>
+              <Button variant="outline" size="sm" onClick={() => navigate("/auth/signin")}>
                 <LogIn className="size-4" />
                 Sign in
               </Button>
@@ -144,11 +142,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Where simulations run"
-            helper={
-              signedIn
-                ? "Cloud sends balances and allocations, never account names, and stores nothing. Local never leaves this device."
-                : "Simulations run on this device. The cloud engine needs an account."
-            }
+            helper="Cloud sends balances and allocations, never account names, and stores nothing. Local never leaves this device. This setting is independent from cloud data sync."
             badge={
               <Badge
                 variant="secondary"
@@ -159,25 +153,18 @@ export function PageSettings() {
               </Badge>
             }
           >
-            {signedIn ? (
-              <Select
-                value={useServerSideCalculations ? "server" : "local"}
-                onValueChange={(v) => setUseServerSideCalculations(v === "server")}
-              >
-                <SelectTrigger className="max-w-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="server">Cloud (fast, nothing stored)</SelectItem>
-                  <SelectItem value="local">Local (never leaves device)</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => router.push("/auth/signin")}>
-                <LogIn className="size-4" />
-                Sign in
-              </Button>
-            )}
+            <Select
+              value={useServerSideCalculations ? "server" : "local"}
+              onValueChange={(v) => setUseServerSideCalculations(v === "server")}
+            >
+              <SelectTrigger className="max-w-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="server">Cloud (fast, nothing stored)</SelectItem>
+                <SelectItem value="local">Local (never leaves device)</SelectItem>
+              </SelectContent>
+            </Select>
           </Setting>
         </DashboardCard>
 

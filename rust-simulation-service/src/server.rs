@@ -1,3 +1,5 @@
+use std::{convert::Infallible, sync::Arc, time::Instant};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info};
 use warp::{Filter, Reply};
 
@@ -12,21 +14,78 @@ const MAX_PATHS: u32 = 5_000;
 const MAX_BATCH_SIMULATIONS: usize = 40;
 const MAX_BATCH_PATHS: u32 = 40_000;
 
-pub fn routes() -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
-    simulate_route().or(batch_route())
+struct CancelOnDrop {
+    cancellation: monte_carlo::CancellationToken,
+    completed: bool,
 }
 
-fn simulate_route() -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
+impl CancelOnDrop {
+    fn new(cancellation: monte_carlo::CancellationToken) -> Self {
+        Self {
+            cancellation,
+            completed: false,
+        }
+    }
+
+    fn complete(mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.cancellation.cancel();
+        }
+    }
+}
+
+async fn acquire_simulation_slot(
+    simulation_slots: Arc<Semaphore>,
+    request_kind: &str,
+) -> Result<OwnedSemaphorePermit, String> {
+    let queued_at = Instant::now();
+    let permit = simulation_slots
+        .acquire_owned()
+        .await
+        .map_err(|_| "simulation concurrency limiter closed".to_string())?;
+    info!(
+        request_kind,
+        queue_ms = queued_at.elapsed().as_secs_f64() * 1000.0,
+        "Simulation request acquired compute slot"
+    );
+    Ok(permit)
+}
+
+pub fn routes(
+    simulation_slots: Arc<Semaphore>,
+) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
+    simulate_route(simulation_slots.clone()).or(batch_route(simulation_slots))
+}
+
+fn with_simulation_slots(
+    simulation_slots: Arc<Semaphore>,
+) -> impl Filter<Extract = (Arc<Semaphore>,), Error = Infallible> + Clone {
+    warp::any().map(move || simulation_slots.clone())
+}
+
+fn simulate_route(
+    simulation_slots: Arc<Semaphore>,
+) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
     warp::path("api")
         .and(warp::path("simulate"))
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::content_length_limit(256 * 1024))
         .and(warp::body::json())
+        .and(with_simulation_slots(simulation_slots))
         .and_then(handle_simulate)
 }
 
-async fn handle_simulate(request: SimulationRequest) -> Result<Box<dyn Reply>, warp::Rejection> {
+async fn handle_simulate(
+    request: SimulationRequest,
+    simulation_slots: Arc<Semaphore>,
+) -> Result<Box<dyn Reply>, warp::Rejection> {
     if let Err(message) = validate_simulation_request(&request) {
         return Ok(bad_request(message));
     }
@@ -35,7 +94,16 @@ async fn handle_simulate(request: SimulationRequest) -> Result<Box<dyn Reply>, w
         request.config.paths
     );
 
-    match run_simulation_blocking(request.plan, request.config).await {
+    let permit = match acquire_simulation_slot(simulation_slots, "headline").await {
+        Ok(permit) => permit,
+        Err(error) => return Ok(internal_error("Simulation unavailable", error)),
+    };
+    let cancellation = monte_carlo::CancellationToken::default();
+    let cancel_on_drop = CancelOnDrop::new(cancellation.clone());
+    let result = run_simulation_blocking(request.plan, request.config, cancellation, permit).await;
+    cancel_on_drop.complete();
+
+    match result {
         Ok(result) => {
             info!("Simulation completed successfully");
             Ok(Box::new(warp::reply::json(&result)))
@@ -54,17 +122,23 @@ async fn handle_simulate(request: SimulationRequest) -> Result<Box<dyn Reply>, w
     }
 }
 
-fn batch_route() -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
+fn batch_route(
+    simulation_slots: Arc<Semaphore>,
+) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
     warp::path("api")
         .and(warp::path("batch"))
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::content_length_limit(256 * 1024))
         .and(warp::body::json())
+        .and(with_simulation_slots(simulation_slots))
         .and_then(handle_batch)
 }
 
-async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rejection> {
+async fn handle_batch(
+    request: BatchRequest,
+    simulation_slots: Arc<Semaphore>,
+) -> Result<Box<dyn Reply>, warp::Rejection> {
     if request.simulations.is_empty() || request.simulations.len() > MAX_BATCH_SIMULATIONS {
         return Ok(bad_request(format!(
             "Batch must contain 1 to {MAX_BATCH_SIMULATIONS} simulations"
@@ -94,9 +168,33 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
         num_sims, total_paths
     );
 
+    let permit = match acquire_simulation_slot(simulation_slots, "batch").await {
+        Ok(permit) => permit,
+        Err(error) => return Ok(internal_error("Batch simulation unavailable", error)),
+    };
+    let cancellation = monte_carlo::CancellationToken::default();
+    let cancel_on_drop = CancelOnDrop::new(cancellation.clone());
+
     if request.response_mode == BatchResponseMode::Summary {
         let simulations = request.simulations;
-        let result = tokio::task::spawn_blocking(move || monte_carlo::run_sweep(simulations)).await;
+        let job_cancellation = cancellation.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let started_at = Instant::now();
+            let result = monte_carlo::run_sweep_cancellable(simulations, job_cancellation.clone());
+            info!(
+                request_kind = "batch-summary",
+                compute_ms = started_at.elapsed().as_secs_f64() * 1000.0,
+                canceled = job_cancellation.is_cancelled(),
+                "Simulation compute finished"
+            );
+            if job_cancellation.is_cancelled() {
+                info!("Canceled summary batch stopped");
+            }
+            result
+        })
+        .await;
+        cancel_on_drop.complete();
         return match result {
             Ok(Ok(results)) => {
                 info!(
@@ -122,22 +220,58 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
     }
 
     // Preserve the full response shape for browser bundles deployed before summary mode.
-    let mut results: Vec<Result<BatchSimulationResponse, String>> = Vec::with_capacity(num_sims);
-    for sim_req in request.simulations {
-        let id = sim_req.id;
-        info!(
-            "Running simulation '{}' with {} paths",
-            id, sim_req.config.paths
-        );
-        let result = match run_simulation_blocking(sim_req.plan, sim_req.config).await {
-            Ok(result) => Ok(BatchSimulationResponse { id, result }),
-            Err(error) => {
-                error!("Simulation '{}' failed: {}", id, error);
-                Err(format!("Simulation '{}' failed: {}", id, error))
+    let simulations = request.simulations;
+    let job_cancellation = cancellation.clone();
+    let results = match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let started_at = Instant::now();
+        let mut results: Vec<Result<BatchSimulationResponse, String>> =
+            Vec::with_capacity(num_sims);
+        for sim_req in simulations {
+            if job_cancellation.is_cancelled() {
+                break;
             }
-        };
-        results.push(result);
-    }
+            let id = sim_req.id;
+            info!(
+                "Running simulation '{}' with {} paths",
+                id, sim_req.config.paths
+            );
+            let result = match monte_carlo::run_simulation_cancellable(
+                sim_req.plan,
+                sim_req.config,
+                job_cancellation.clone(),
+            ) {
+                Ok(result) => Ok(BatchSimulationResponse { id, result }),
+                Err(error) => {
+                    error!("Simulation '{}' failed: {}", id, error);
+                    Err(format!("Simulation '{}' failed: {}", id, error))
+                }
+            };
+            results.push(result);
+        }
+        info!(
+            request_kind = "batch-full",
+            compute_ms = started_at.elapsed().as_secs_f64() * 1000.0,
+            canceled = job_cancellation.is_cancelled(),
+            "Simulation compute finished"
+        );
+        if job_cancellation.is_cancelled() {
+            info!("Canceled full batch stopped");
+        }
+        results
+    })
+    .await
+    {
+        Ok(results) => results,
+        Err(error) => {
+            cancel_on_drop.complete();
+            return Ok(internal_error(
+                "Batch simulation task failed",
+                error.to_string(),
+            ));
+        }
+    };
+    cancel_on_drop.complete();
 
     let mut successful_results = Vec::new();
     let mut errors = Vec::new();
@@ -175,11 +309,27 @@ async fn handle_batch(request: BatchRequest) -> Result<Box<dyn Reply>, warp::Rej
 async fn run_simulation_blocking(
     plan: RetirementPlan,
     config: MCConfig,
+    cancellation: monte_carlo::CancellationToken,
+    permit: OwnedSemaphorePermit,
 ) -> Result<SimulationResult, String> {
-    tokio::task::spawn_blocking(move || monte_carlo::run_simulation(plan, config))
-        .await
-        .map_err(|error| format!("simulation task failed: {error}"))?
-        .map_err(|error| error.to_string())
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let started_at = Instant::now();
+        let result = monte_carlo::run_simulation_cancellable(plan, config, cancellation.clone());
+        info!(
+            request_kind = "headline",
+            compute_ms = started_at.elapsed().as_secs_f64() * 1000.0,
+            canceled = cancellation.is_cancelled(),
+            "Simulation compute finished"
+        );
+        if cancellation.is_cancelled() {
+            info!("Canceled headline simulation stopped");
+        }
+        result
+    })
+    .await
+    .map_err(|error| format!("simulation task failed: {error}"))?
+    .map_err(|error| error.to_string())
 }
 
 fn internal_error(message: &str, details: String) -> Box<dyn Reply> {
@@ -380,5 +530,21 @@ mod tests {
             validate_simulation_request(&request),
             Err("seed must be a 32-bit unsigned integer".into())
         );
+    }
+
+    #[test]
+    fn dropping_an_incomplete_request_cancels_its_compute() {
+        let cancellation = monte_carlo::CancellationToken::default();
+        {
+            let _cancel_on_drop = CancelOnDrop::new(cancellation.clone());
+        }
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn completing_a_request_does_not_cancel_its_compute() {
+        let cancellation = monte_carlo::CancellationToken::default();
+        CancelOnDrop::new(cancellation.clone()).complete();
+        assert!(!cancellation.is_cancelled());
     }
 }

@@ -3,8 +3,6 @@
  * Provides authentication state and user information throughout the app
  */
 
-'use client';
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from './config';
@@ -91,6 +89,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (!auth) {
+      setUser(null);
+      setCloudReady(false);
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     let authGeneration = 0;
     // Subscribe to auth state changes

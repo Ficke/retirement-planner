@@ -11,7 +11,7 @@
 node_modules
 .pnpm-store
 
-# Next.js
+# Framework build output
 .next/
 out/
 .vercel
@@ -19,6 +19,7 @@ out/
 # Build output
 build/
 dist/
+dist-server/
 **/target/
 **/.terraform/
 

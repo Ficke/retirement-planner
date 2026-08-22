@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { cloudComputeEnabled, usePlan } from "@/state/usePlan";
+import {
+  cloudComputeEnabled,
+  sensitivityAnalysisReady,
+  usePlan,
+} from "@/state/usePlan";
 import { leverRange, type LeverKey } from "@/domain/levers";
 import type { SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
@@ -124,27 +128,19 @@ export function PagePlan() {
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
   const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
-  const isSimulatingSensitivities = usePlan((s) => s.isSimulatingSensitivities);
   const sensitivityPending = usePlan((s) => s.sensitivityPending);
+  const sensitivityReady = usePlan(sensitivityAnalysisReady);
   const runSensitivityAnalyses = usePlan((s) => s.runSensitivityAnalyses);
 
-  // Sensitivity sweeps are expensive and only this page displays them. Load
-  // the three curves together so cloud mode uses one bounded batch request.
+  // Sensitivity sweeps are expensive and only this page displays them. The
+  // headline request is dispatched first; then this starts one bounded batch.
+  // Cloud Run may scale it out, while the local Rust semaphore may queue it.
   useEffect(() => {
-    const missingCurves = ssAnalysisResult === null
-      && spendingAnalysisResult === null
-      && retirementAgeAnalysisResult === null;
-    if (!isSimulatingSensitivities && (sensitivityPending || missingCurves)) {
-      const timeout = window.setTimeout(() => void runSensitivityAnalyses(), 500);
-      return () => window.clearTimeout(timeout);
+    if (sensitivityReady) {
+      void runSensitivityAnalyses();
     }
   }, [
-    plan,
-    isSimulatingSensitivities,
-    sensitivityPending,
-    ssAnalysisResult,
-    spendingAnalysisResult,
-    retirementAgeAnalysisResult,
+    sensitivityReady,
     runSensitivityAnalyses,
   ]);
 
@@ -193,7 +189,7 @@ export function PagePlan() {
           display={`Age ${plan.profile.retirementAge}`}
           onChange={(v) => updatePlan({ profile: { retirementAge: v } })}
           points={agePts}
-          isCalculating={isSimulatingSensitivities}
+          isCalculating={sensitivityPending}
           xFormat={String}
           xTooltipFormat={(v) => `Retirement age: ${v}`}
         />
@@ -204,7 +200,7 @@ export function PagePlan() {
           display={fmtCurrency(plan.profile.currentSpending)}
           onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
           points={spendPts}
-          isCalculating={isSimulatingSensitivities}
+          isCalculating={sensitivityPending}
           xFormat={(v) => fmtCurrency(v, true)}
           xTooltipFormat={(v) => `Annual spending: ${fmtCurrency(v)}`}
         />
@@ -215,7 +211,7 @@ export function PagePlan() {
           display={`Age ${plan.socialSecurity.claimAge}`}
           onChange={(v) => updatePlan({ socialSecurity: { claimAge: v } })}
           points={ssPts}
-          isCalculating={isSimulatingSensitivities}
+          isCalculating={sensitivityPending}
           xFormat={String}
           xTooltipFormat={(v) => `Social Security claim age: ${v}`}
           note={plan.socialSecurity.manualOverride

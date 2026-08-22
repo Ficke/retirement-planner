@@ -1,4 +1,5 @@
-use std::env;
+use std::{env, sync::Arc};
+use tokio::sync::Semaphore;
 use tracing::info;
 use warp::Filter;
 
@@ -31,18 +32,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .num_threads(simulation_threads)
         .build_global()?;
 
+    let max_concurrent_simulations = env::var("MAX_CONCURRENT_SIMULATIONS")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .expect("MAX_CONCURRENT_SIMULATIONS must be a positive integer")
+        })
+        .unwrap_or(1);
+    if max_concurrent_simulations == 0 {
+        return Err("MAX_CONCURRENT_SIMULATIONS must be greater than zero".into());
+    }
+
     let port = env::var("PORT")
         .unwrap_or_else(|_| "8081".to_string())
         .parse::<u16>()
         .expect("PORT must be a valid port number");
 
     info!(
-        "Starting retirement simulation service on port {} with {} simulation threads",
-        port, simulation_threads
+        "Starting retirement simulation service on port {} with {} simulation threads and {} concurrent simulation request(s)",
+        port, simulation_threads, max_concurrent_simulations
     );
 
     // Build routes
-    let routes = routes();
+    let routes = routes(Arc::new(Semaphore::new(max_concurrent_simulations)));
 
     // Detailed health endpoint (kept for backward compat / human use)
     let health = warp::path("health").and(warp::get()).map(|| {

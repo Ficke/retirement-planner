@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm -C apps/web dev",
+    "dev:rust": "cargo run --release --manifest-path rust-simulation-service/Cargo.toml",
     "build": "pnpm -C apps/web build",
     "start": "pnpm -C apps/web start",
     "lint": "pnpm -C apps/web lint",
@@ -13,7 +14,7 @@
     "test:ui": "pnpm -C apps/web test:ui",
     "e2e": "pnpm -C apps/web e2e",
     "e2e:ui": "pnpm -C apps/web e2e:ui",
-    "clean": "rm -rf apps/*/node_modules apps/*/.next apps/*/dist",
+    "clean": "rm -rf apps/*/node_modules apps/*/.next apps/*/dist apps/*/dist-server",
     "install:all": "pnpm install",
     "bootstrap": "node scripts/bootstrap"
   },

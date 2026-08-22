@@ -19,12 +19,7 @@ artifact_registry_repository_id = "retire-plan"
 
 # Public Environment Variables (non-sensitive)
 public_env_vars = {
-  # Firebase configuration (public)
-  NEXT_PUBLIC_FIREBASE_API_KEY       = "AIza..."
-  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN   = "your-project.firebaseapp.com"
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID    = "your-project-id"
-  FIREBASE_PROJECT_ID                = "your-project-id"
-  FIREBASE_CLIENT_EMAIL              = "firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com"
+  FIREBASE_PROJECT_ID = "your-project-id"
 }
 
 # Secret Environment Variables (references to Secret Manager)
@@ -35,12 +30,12 @@ secret_env_vars = {
     secret_name = "DATABASE_URL"
     version     = "1"
   }
-  FIREBASE_PRIVATE_KEY = {
-    secret_name = "FIREBASE_PRIVATE_KEY"
-    version     = "1"
-  }
   ORIGIN_SECRET = {
     secret_name = "ORIGIN_SECRET"
+    version     = "1"
+  }
+  SIGNUP_INVITE_CODES = {
+    secret_name = "SIGNUP_INVITE_CODES"
     version     = "1"
   }
 }
@@ -62,19 +57,19 @@ cloud_build_service_account     = "projects/YOUR_PROJECT_ID/serviceAccounts/YOUR
 github_owner                    = "your-github-username"
 github_repo                     = "retirement-planner"
 
-# Build-time substitutions — baked into the client JS bundle by next build.
-# Distinct from public_env_vars (Cloud Run runtime): NEXT_PUBLIC_* values must
+# Build-time substitutions — baked into the client JS bundle by vite build.
+# Distinct from public_env_vars (Cloud Run runtime): VITE_* values must
 # exist when `docker build` runs, not just when the container starts.
 # Keys must start with _ per Cloud Build convention.
 build_substitutions = {
-  _FIREBASE_API_KEY             = "AIza..."
-  _FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
-  _FIREBASE_PROJECT_ID          = "your-project-id"
-  _FIREBASE_STORAGE_BUCKET      = "your-project.firebasestorage.app"
-  _FIREBASE_MESSAGING_SENDER_ID = "123456789"
-  _FIREBASE_APP_ID              = "1:123456789:web:abc123"
-  _FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
-  _ORIGIN_SECRET_VERSION        = "1"
+  _VITE_FIREBASE_API_KEY             = "AIza..."
+  _VITE_FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
+  _VITE_FIREBASE_PROJECT_ID          = "your-project-id"
+  _VITE_FIREBASE_STORAGE_BUCKET      = "your-project.firebasestorage.app"
+  _VITE_FIREBASE_MESSAGING_SENDER_ID = "123456789"
+  _VITE_FIREBASE_APP_ID              = "1:123456789:web:abc123"
+  _VITE_FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
+  _ORIGIN_SECRET_VERSION             = "1"
 }
 
 # Rust Simulation Service Configuration

@@ -54,9 +54,8 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
-  // Exercises the worker response directly: a separately deployed cloud engine
-  // may still be on the previous additive response shape during rollout. Signed
-  // out there is nothing to switch — cloud compute needs an account.
+  // The E2E server runs only the Vite client, so the default cloud request falls
+  // back to the Worker. This directly verifies the current local response shape.
 
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });
@@ -64,11 +63,13 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
     'Median · 45th–55th',
   );
 
-  for (const side of ['money in by source', 'money out by category']) {
-    await expect(page.getByRole('img', {
-      name: new RegExp(`Average annual ${side} for the selected outcome range`),
-    })).toBeVisible();
-  }
+  const cashFlowChart = page.getByRole('img', {
+    name: 'Average annual money in by source and money out by category for the selected outcome range',
+  });
+  await expect(cashFlowChart).toBeVisible();
+  await expect(cashFlowChart.locator('.recharts-wrapper')).toHaveCount(1);
+  await expect(cashFlowChart.getByText('RMD', { exact: true })).toBeVisible();
+  await expect(page.getByText('Money in — what it clears is saved')).toHaveCount(0);
 });
 
 test('Plan labels sensitivity axes without repeating age in every tick', async ({ page }) => {
@@ -111,7 +112,7 @@ test('growth fields sharing a label are told apart by their group', async ({ pag
   await expect(page.getByLabel('Salary growth above inflation (%)')).toBeVisible();
 });
 
-test('signed out, the app runs in local mode and offers sign-in', async ({ page }) => {
+test('signed out, data stays local while compute remains selectable', async ({ page }) => {
   await gotoApp(page);
 
   await expect(page.getByText('Guest. Data stays in this browser.')).toBeVisible();
@@ -121,11 +122,13 @@ test('signed out, the app runs in local mode and offers sign-in', async ({ page 
   // The storage badge reflects LOCAL mode when there is no auth user.
   await expect(page.getByText('This browser', { exact: true })).toBeVisible();
 
-  // Cloud compute needs an account, so signed out there is no engine to pick
-  // between — offering the choice would advertise a mode that cannot run.
-  await expect(page.getByText('Local', { exact: true })).toBeVisible();
-  await expect(page.getByRole('combobox')).toHaveCount(0);
-  await expect(page.getByText('Cloud (fast, nothing stored)')).toHaveCount(0);
+  // Compute mode is independent from persistence mode. Anonymous plans may use
+  // the transient Rust service without enabling cloud data storage.
+  const computeEngine = page.getByRole('combobox').first();
+  await expect(computeEngine).toBeVisible();
+  await computeEngine.click();
+  await expect(page.getByRole('option', { name: 'Cloud (fast, nothing stored)' })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Local (never leaves device)' })).toBeVisible();
 });
 
 test('an account can be added locally and Plan remains reachable', async ({ page }) => {

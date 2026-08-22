@@ -1,10 +1,5 @@
-'use client';
-
-export const dynamic = 'force-dynamic';
-
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { signIn, useAuth } from '@/lib/firebase';
 
 export default function SignInPage() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,9 +18,9 @@ export default function SignInPage() {
   // Redirect to home if already logged in
   useEffect(() => {
     if (!loading && user) {
-      router.push('/');
+      navigate('/');
     }
-  }, [user, loading, router]);
+  }, [user, loading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,12 +98,12 @@ export default function SignInPage() {
 
             <p className="text-muted-foreground text-center text-sm">
               Don&apos;t have an account?{' '}
-              <Link href="/auth/signup" className="text-primary hover:underline">
+              <Link to="/auth/signup" className="text-primary hover:underline">
                 Sign up
               </Link>
             </p>
             <p className="text-muted-foreground text-center text-sm">
-              <Link href="/" className="hover:underline">
+              <Link to="/" className="hover:underline">
                 Continue without an account
               </Link>{' '}
               Your data stays in this browser.

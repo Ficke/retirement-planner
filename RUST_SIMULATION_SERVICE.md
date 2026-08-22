@@ -20,7 +20,7 @@ For `/api/batch`, use `responseMode: "summary"` to return compact success
 probabilities. Omitting the field preserves the legacy full response for browser
 bundles that were open during deployment.
 
-The Rust service is private in production. Public Next.js routes authenticate
+The Rust service is private in production. Public Hono routes authenticate
 to Cloud Run, validate and clamp inputs, rate-limit by the trusted client
 address, and normalize upstream errors.
 
@@ -60,12 +60,13 @@ implementations do not promise identical return draws across engines.
 From the repository root:
 
 ```bash
-cargo run --manifest-path rust-simulation-service/Cargo.toml
+pnpm dev:rust
 ```
 
 The service listens on port `8081` by default. Override it with `PORT`. Override
 Rayon sizing with `SIMULATION_THREADS`; otherwise local development uses the
-process's available parallelism.
+process's available parallelism. `pnpm dev:rust` uses an optimized build so
+local performance matches the production binary rather than Rust's debug mode.
 
 Useful checks:
 

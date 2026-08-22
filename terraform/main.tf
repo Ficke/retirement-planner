@@ -66,7 +66,8 @@ module "rust_simulation" {
   # Pin Rayon to the CPU allocation instead of relying on host/cgroup
   # discovery, which can otherwise expose more host cores than the container.
   env_vars = {
-    SIMULATION_THREADS = var.rust_cpu_limit
+    SIMULATION_THREADS         = var.rust_cpu_limit
+    MAX_CONCURRENT_SIMULATIONS = "1"
   }
   secret_env_vars = {}
 
@@ -105,7 +106,7 @@ module "rust_simulation" {
   ]
 }
 
-# Cloud Run service for the Next.js application
+# Cloud Run service for the Vite/Hono application
 module "cloud_run" {
   source = "./modules/cloud-run"
 
@@ -201,7 +202,7 @@ resource "google_cloudbuild_trigger" "main_branch" {
   filename = "cloudbuild.yaml"
 
   # Build-time substitutions passed as Kaniko --build-arg.
-  # Use for NEXT_PUBLIC_* vars that must be baked into the client JS bundle.
+  # Use for VITE_* vars that must be baked into the client JS bundle.
   substitutions = var.build_substitutions
 
   depends_on = [google_project_service.required_apis]

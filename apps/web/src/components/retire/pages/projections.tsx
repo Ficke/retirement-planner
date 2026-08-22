@@ -13,6 +13,8 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { usePlan } from "@/state/usePlan";
 import type { RetirementPlan, SimulationResult, YearlyProjection } from "@/domain/types";
+import { birthYearOf, remainingYearFractionOf } from "@/domain/age";
+import { getRmdStartAge } from "@/data/rmd-tables";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,7 +82,7 @@ function YearlyTable({ data }: { data: Row[] }) {
         accessorKey: "externalIncome",
         header: () => <span className="block text-right">Income</span>,
         cell: ({ getValue }) => (
-          <span className="block text-right font-mono">
+          <span className="text-money-in block text-right font-mono">
             {fmtCurrency(getValue<number>(), true)}
           </span>
         ),
@@ -89,7 +91,7 @@ function YearlyTable({ data }: { data: Row[] }) {
         accessorKey: "spending",
         header: () => <span className="block text-right">Spending</span>,
         cell: ({ getValue }) => (
-          <span className="text-danger block text-right font-mono">
+          <span className="text-money-out block text-right font-mono">
             −{fmtCurrency(getValue<number>(), true)}
           </span>
         ),
@@ -98,7 +100,7 @@ function YearlyTable({ data }: { data: Row[] }) {
         accessorKey: "taxes",
         header: () => <span className="block text-right">Taxes</span>,
         cell: ({ getValue }) => (
-          <span className="text-danger block text-right font-mono">
+          <span className="text-money-out block text-right font-mono">
             −{fmtCurrency(getValue<number>(), true)}
           </span>
         ),
@@ -406,7 +408,15 @@ export function ProjectionDetails({
               : "No projection data. Adjust your plan to run."}
           </div>
         ) : (
-          <CashFlowChart projections={cashFlowRows} height={400} />
+          <CashFlowChart
+            projections={cashFlowRows}
+            height={400}
+            rmdStartAge={getRmdStartAge(birthYearOf(plan.profile.birthDate))}
+            partialYear={selectedBucket?.projections[0] ? {
+              age: selectedBucket.projections[0].age,
+              fraction: remainingYearFractionOf(plan.profile.asOfDate),
+            } : undefined}
+          />
         )}
       </DashboardCard>
 

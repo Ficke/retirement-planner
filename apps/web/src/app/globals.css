@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+:root {
+  --font-geist-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -36,12 +41,14 @@
   --color-account-traditional: var(--account-traditional);
   --color-account-roth: var(--account-roth);
   --color-account-hsa: var(--account-hsa);
-  --color-flow-salary: var(--flow-salary);
-  --color-flow-social: var(--flow-social);
-  --color-flow-portfolio: var(--flow-portfolio);
-  --color-flow-living: var(--flow-living);
-  --color-flow-healthcare: var(--flow-healthcare);
-  --color-flow-tax: var(--flow-tax);
+  --color-money-in: var(--money-in-3);
+  --color-money-out: var(--money-out-3);
+  --color-money-in-1: var(--money-in-1);
+  --color-money-in-2: var(--money-in-2);
+  --color-money-in-3: var(--money-in-3);
+  --color-money-out-1: var(--money-out-1);
+  --color-money-out-2: var(--money-out-2);
+  --color-money-out-3: var(--money-out-3);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -126,17 +133,16 @@ details[open] summary ~ * {
   --account-roth: oklch(58% 0.10 320);
   --account-hsa: oklch(58% 0.09 190);
   /*
-   * Cash-flow series, six categorical slots in a fixed order. Validated for
-   * lightness band, chroma floor, protan/deutan separation, and contrast
-   * against the card, in this mode and in dark. Re-run the check before
-   * re-stepping any slot; the order is what makes the adjacent pairs safe.
+   * Money uses two semantic families everywhere: cool hues enter the plan and
+   * warm hues leave it. Lightness steps, labels, and fixed stack order keep
+   * adjacent categories identifiable when hue perception is reduced.
    */
-  --flow-salary: oklch(60% 0.11 162);
-  --flow-social: oklch(63% 0.13 80);
-  --flow-portfolio: oklch(56% 0.11 250);
-  --flow-living: oklch(65% 0.12 45);
-  --flow-healthcare: oklch(58% 0.13 320);
-  --flow-tax: oklch(46% 0.12 20);
+  --money-in-1: var(--success);
+  --money-in-2: oklch(55% 0.075 205);
+  --money-in-3: oklch(53% 0.095 250);
+  --money-out-1: oklch(61% 0.09 70);
+  --money-out-2: oklch(55% 0.095 350);
+  --money-out-3: oklch(49% 0.105 25);
 }
 
 .dark {
@@ -186,14 +192,13 @@ details[open] summary ~ * {
   --account-traditional: oklch(70% 0.11 280);
   --account-roth: oklch(70% 0.12 320);
   --account-hsa: oklch(70% 0.11 190);
-  /* Its own steps, not a flip of the light ones: the dark band is narrower at
-   * both ends, so every slot is re-validated against the dark card. */
-  --flow-salary: oklch(66% 0.12 162);
-  --flow-social: oklch(66% 0.13 80);
-  --flow-portfolio: oklch(62% 0.12 250);
-  --flow-living: oklch(67% 0.12 45);
-  --flow-healthcare: oklch(63% 0.13 320);
-  --flow-tax: oklch(52% 0.13 20);
+  /* Dark mode preserves the two hue families while lifting their lightness. */
+  --money-in-1: var(--success);
+  --money-in-2: oklch(68% 0.10 205);
+  --money-in-3: oklch(66% 0.12 250);
+  --money-out-1: oklch(72% 0.11 70);
+  --money-out-2: oklch(67% 0.12 350);
+  --money-out-3: oklch(61% 0.13 25);
 }
 
 @layer base {
@@ -204,4 +209,3 @@ details[open] summary ~ * {
     @apply bg-background text-foreground;
   }
 }
-

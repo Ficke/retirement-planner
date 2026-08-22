@@ -2,6 +2,24 @@ import type { OutcomeCashFlowRow } from "@/domain/types";
 
 export type CashFlowRow = Record<string, number> & { age: number };
 
+function annualize(row: OutcomeCashFlowRow, multiplier: number): OutcomeCashFlowRow {
+  return {
+    ...row,
+    income: row.income * multiplier,
+    spending: row.spending * multiplier,
+    taxes: row.taxes * multiplier,
+    savings: row.savings * multiplier,
+    socialSecurityBenefit: row.socialSecurityBenefit * multiplier,
+    withdrawalTaxable: row.withdrawalTaxable * multiplier,
+    withdrawalTraditional: row.withdrawalTraditional * multiplier,
+    withdrawalRoth: row.withdrawalRoth * multiplier,
+    withdrawalHSA: row.withdrawalHSA * multiplier,
+    healthcareCost: row.healthcareCost == null
+      ? row.healthcareCost
+      : row.healthcareCost * multiplier,
+  };
+}
+
 /**
  * A required distribution the year did not need is withdrawn and paid straight
  * back into the taxable bucket. It never reaches the household, and at the ages
@@ -30,15 +48,22 @@ function netWithdrawals(row: OutcomeCashFlowRow) {
 }
 
 /**
- * One plotted row per modeled year, holding both stacks and the money-in line.
+ * One plotted row per modeled year, holding both cash-flow stacks.
  *
- * The panels only mean anything together: money in less money out is the
- * year's saving, which the chart draws as the space under the line rather than
- * as a band. `toCashFlowRows` is where that has to stay true, so it is kept
- * apart from the component and covered directly.
+ * `toCashFlowRows` keeps the account-transfer netting and spending breakdown
+ * apart from the component so their cash reconciliation can be tested directly.
  */
-export function toCashFlowRows(projections: OutcomeCashFlowRow[]): CashFlowRow[] {
-  return projections.map((row) => {
+export function toCashFlowRows(
+  projections: OutcomeCashFlowRow[],
+  partialYear?: { age: number; fraction: number },
+): CashFlowRow[] {
+  return projections.map((projection) => {
+    const multiplier = partialYear?.age === projection.age
+      && partialYear.fraction > 0
+      && partialYear.fraction <= 1
+      ? 1 / partialYear.fraction
+      : 1;
+    const row = multiplier === 1 ? projection : annualize(projection, multiplier);
     const drawn = netWithdrawals(row);
     const salary = row.isRetired ? 0 : row.income;
     // New engines report funded healthcare, capped on each path before cohort
@@ -53,8 +78,6 @@ export function toCashFlowRows(projections: OutcomeCashFlowRow[]): CashFlowRow[]
       living: row.spending - healthcare,
       healthcare,
       tax: row.taxes,
-      moneyIn: salary + row.socialSecurityBenefit + drawn.portfolio,
-      saved: Math.max(0, row.savings),
     };
   });
 }

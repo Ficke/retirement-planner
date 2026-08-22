@@ -7,7 +7,7 @@ Working branch: `codex/set-up-adamfickedev-on-cloudflare`
 ## Objective
 
 Serve the retirement planner at `https://adamficke.dev` through a small
-Cloudflare Worker that securely proxies to the existing Next.js Cloud Run
+Cloudflare Worker that securely proxies to the Vite/Hono Cloud Run
 service. Manage stable Cloudflare infrastructure with Terraform, deploy Worker
 code with Wrangler, validate the complete application on the new domain, remove
 the unused AWS hosting resources, and enable DNSSEC.
@@ -21,7 +21,7 @@ mutations in the required order.
 
 Subagents may be assigned independent lanes such as:
 
-- Worker and Next.js origin-security implementation/review
+- Worker and Hono origin-security implementation/review
 - Cloudflare Terraform, DNS import, and CI implementation/review
 - Read-only provider inventory and validation across Cloudflare, GCP, Firebase,
   Squarespace, and AWS
@@ -40,7 +40,7 @@ Browser
   -> Cloudflare DNS / TLS / WAF
   -> retire-plan-edge Worker
   -> public Cloud Run URL over HTTPS with origin secret
-  -> Next.js
+  -> Hono (API + Vite SPA)
   -> IAM-authenticated Rust Cloud Run service for server simulations
 ```
 
@@ -57,11 +57,11 @@ Browser
 ### Origin security and client IP
 
 - Store one high-entropy origin secret as both a Cloudflare Worker secret and a
-  Google Secret Manager secret injected into the Next.js service.
+  Google Secret Manager secret injected into the Hono service.
 - The Worker removes any client-supplied protected forwarding headers, then
   supplies the origin secret, verified client IP, original host, scheme, and a
   request correlation identifier.
-- Next.js rejects requests without the correct secret using a timing-safe
+- Hono rejects requests without the correct secret using a timing-safe
   comparison. Only `/healthz` is exempt for Cloud Run probes, and that
   exemption is load-bearing: the web service runs startup and liveness probes
   against `/healthz` on the container port, so enforcing the secret there would
@@ -72,9 +72,9 @@ Browser
 - Cloud Build's candidate smoke test supplies the secret.
 - Direct public requests to the `run.app` application URL receive `403`, while
   the URL remains technically available for Cloudflare and Cloud Build.
-- Next.js trusts the Worker-provided client IP only after origin authentication;
+- Hono trusts the Worker-provided client IP only after origin authentication;
   it no longer relies on a fixed forwarded-proxy hop count for Worker traffic.
-- Next.js verifies against a primary secret and an optional fallback, so the two
+- Hono verifies against a primary secret and an optional fallback, so the two
   systems can be updated in either order during a rotation.
 
 #### Rotating the origin secret
@@ -113,9 +113,9 @@ value accepted until it runs.
 ### Caching
 
 - Use the Workers Cache API explicitly for successful immutable `GET`
-  responses under `/_next/static/*`; the `run.app` origin is not itself a
+  responses under `/assets/*`; the `run.app` origin is not itself a
   Cloudflare-proxied cache target.
-- Preserve Next.js's content-hashed, one-year immutable asset headers.
+- Preserve Vite's content-hashed, one-year immutable asset headers.
 - Add `Cloudflare-CDN-Cache-Control: no-store` to every other response.
 - Never edge-cache HTML, `/api/*`, auth routes, simulations, redirects, or
   error responses.
@@ -134,7 +134,7 @@ value accepted until it runs.
 Workers Free enforces a hard 100,000 request/day cap and cache hits count
 against it. A route has no non-Worker fallback, so exhausting the cap takes the
 site down until the UTC day rolls over. Every page subresource counts, which
-makes `/_next/static/*` a likelier exhaustion path than the simulation API.
+makes `/assets/*` a likelier exhaustion path than the simulation API.
 Nothing mitigates this initially; Bot Fight Mode and a zone-wide rate-limit rule
 are the levers if it is ever reached.
 
@@ -155,7 +155,7 @@ are the levers if it is ever reached.
   Authentication Authorized Domains.
 - Verify browser API-key application restrictions allow those origins and keep
   the key restricted to Firebase APIs.
-- Set Next.js `metadataBase` and canonical metadata to
+- Set the SPA canonical metadata to
   `https://adamficke.dev`.
 - Remove the temporary Firebase staging authorization after cutover.
 
@@ -267,7 +267,7 @@ Verified 2026-08-17 by read-only inventory.
   `all` and `allUsers` holding `roles/run.invoker`, as the edge proxy requires.
   It runs as `retire-plan-sa` with a 300-second timeout.
 - Rust Cloud Run service is private and IAM-invoked by the web service.
-- Secret Manager holds `DATABASE_URL` and `FIREBASE_PRIVATE_KEY`.
+- Secret Manager holds `DATABASE_URL`, `ORIGIN_SECRET`, and `SIGNUP_INVITE_CODES`.
   `ORIGIN_SECRET` exists in neither Secret Manager nor the deployed revision.
 - The Firebase browser key is restricted to Firebase API targets but carries no
   HTTP referrer restrictions, so adding them is new hardening rather than a
@@ -338,7 +338,7 @@ and no resource proposed for deletion has another consumer.
       redirects, static-only cache policy, structured failures, and correlation.
 - [x] Add Worker tests for all methods, bodies, spoofed headers, caching,
       redirect safety, upstream failures, and long-running streamed responses.
-- [x] Add Next.js timing-safe origin validation and trusted client-IP handling.
+- [x] Add Hono timing-safe origin validation and trusted client-IP handling.
 - [x] Exempt only `/healthz` from origin authentication.
 - [x] Update Cloud Build smoke check and IAM for secret access.
 - [x] Add canonical application metadata.
@@ -430,7 +430,7 @@ Gate: DNSSEC validates and the production smoke suite remains green.
 - Sign-up, sign-in, sign-out, cloud-sync toggle, profile, and account CRUD work.
 - Local Web Worker simulations and server Monte Carlo/batch simulations work.
 - Simulation API receives the verified end-user IP and rate limits correctly.
-- Only `/_next/static/*` can produce Cloudflare cache hits; HTML/API responses
+- Only `/assets/*` can produce Cloudflare cache hits; HTML/API responses
   remain uncacheable at Cloudflare.
 - Worker responses stream without buffering and long batch calls complete.
 - No origin hostname or secret appears in public responses or logs.
@@ -483,7 +483,7 @@ does not remove it. Nothing served from the new origin can revoke it.
 - 2026-08-16: Use one Worker and a temporary staging hostname.
 - 2026-08-16: Split stable infrastructure to Terraform and code delivery to
   Wrangler.
-- 2026-08-16: Cache only hashed Next.js static assets.
+- 2026-08-18: Cache only hashed Vite static assets.
 - 2026-08-16: Automatically deploy Worker code from GitHub Actions after merge.
 - 2026-08-16: Make Terraform authoritative for all user-created zone records.
 - 2026-08-16: Use full invocation logs and 10% tracing.
@@ -492,7 +492,7 @@ does not remove it. Nothing served from the new origin can revoke it.
 - 2026-08-16: Keep the existing Firebase auth domain.
 - 2026-08-16: Perform cutover, AWS retirement, and DNSSEC activation in one
   coordinated migration, with a validation gate before destructive cleanup.
-- 2026-08-16: Use the Workers Cache API for immutable Next.js static GETs
+- 2026-08-18: Use the Workers Cache API for immutable Vite static GETs
   because `run.app` is not a Cloudflare-proxied cache origin.
 - 2026-08-16: Let Worker custom-domain resources own their generated DNS records
   and remove the legacy apex in a separate apply before enabling the apex.

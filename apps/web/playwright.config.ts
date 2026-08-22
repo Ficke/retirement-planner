@@ -22,10 +22,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm dev',
+    // Browser smoke tests run in local/offline mode. Starting the combined
+    // client + API watcher couples Vite's lifetime to the API process through
+    // concurrently --kill-others, so an unrelated watcher failure can tear
+    // down the page server underneath Playwright.
+    command: 'pnpm dev:client',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
-    // Cold Turbopack compile on a CI runner takes well over the 60s default.
+    // Dependency optimization and the first Vite transform can exceed the default on CI.
     timeout: 180_000,
   },
 });

@@ -2,7 +2,7 @@
 # Key improvements:
 # - Rust simulation service deployed first (IAM-authenticated)
 # - Tests run in GitHub Actions on PR (not duplicated here)
-# - Kaniko for ALL Docker builds with layer caching (both Rust + Next.js)
+# - Kaniko for ALL Docker builds with layer caching (both Rust + Vite/Hono)
 # - Consistent build process, no 'images' section conflicts
 # - Total time reduction: ~50% faster builds
 
@@ -12,22 +12,22 @@ substitutions:
   _REGION: us-central1
   _REGISTRY: us-central1-docker.pkg.dev
   _REPOSITORY: retire-plan
-  # Firebase client config — baked into the Next.js JS bundle by next build.
+  # Firebase client config — baked into the Vite JS bundle.
   # Not secrets (Firebase client config is intentionally public; security via Firebase Rules).
   # Actual values are set in the Cloud Build trigger via Terraform build_substitutions.
-  _FIREBASE_API_KEY: ''
-  _FIREBASE_AUTH_DOMAIN: ''
-  _FIREBASE_PROJECT_ID: ''
-  _FIREBASE_STORAGE_BUCKET: ''
-  _FIREBASE_MESSAGING_SENDER_ID: ''
-  _FIREBASE_APP_ID: ''
-  _FIREBASE_MEASUREMENT_ID: ''
+  _VITE_FIREBASE_API_KEY: ''
+  _VITE_FIREBASE_AUTH_DOMAIN: ''
+  _VITE_FIREBASE_PROJECT_ID: ''
+  _VITE_FIREBASE_STORAGE_BUCKET: ''
+  _VITE_FIREBASE_MESSAGING_SENDER_ID: ''
+  _VITE_FIREBASE_APP_ID: ''
+  _VITE_FIREBASE_MEASUREMENT_ID: ''
   _ORIGIN_SECRET_VERSION: '1'
 
 steps:
   # ===== BUILD PHASE (parallel) =====
   # Both images build concurrently. Neither service is deployed until both succeed.
-  # A broken Next.js build can no longer leave a half-deployed Rust service behind.
+  # A broken web build can no longer leave a half-deployed Rust service behind.
 
   - name: 'gcr.io/kaniko-project/executor:latest'
     id: 'build-and-push-rust'
@@ -54,13 +54,13 @@ steps:
       - '--compressed-caching=false'
       - '--snapshot-mode=redo'
       - '--use-new-run'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${_FIREBASE_MESSAGING_SENDER_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_APP_ID=${_FIREBASE_APP_ID}'
-      - '--build-arg=NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${_FIREBASE_MEASUREMENT_ID}'
+      - '--build-arg=VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY}'
+      - '--build-arg=VITE_FIREBASE_AUTH_DOMAIN=${_VITE_FIREBASE_AUTH_DOMAIN}'
+      - '--build-arg=VITE_FIREBASE_PROJECT_ID=${_VITE_FIREBASE_PROJECT_ID}'
+      - '--build-arg=VITE_FIREBASE_STORAGE_BUCKET=${_VITE_FIREBASE_STORAGE_BUCKET}'
+      - '--build-arg=VITE_FIREBASE_MESSAGING_SENDER_ID=${_VITE_FIREBASE_MESSAGING_SENDER_ID}'
+      - '--build-arg=VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID}'
+      - '--build-arg=VITE_FIREBASE_MEASUREMENT_ID=${_VITE_FIREBASE_MEASUREMENT_ID}'
 
   # ===== DEPLOY PHASE =====
   # Only runs if both builds above passed.
@@ -104,8 +104,8 @@ steps:
       # startup CPU boost — is owned by Terraform (terraform/variables.tf).
       # `gcloud run deploy` preserves any setting it is not told about, so this
       # step ships the new image and leaves the shape alone.
-      # Do NOT re-add --cpu/--memory here: passing them overwrote the
-      # Terraform-applied 4 vCPU / 2Gi on every push to main.
+      # Do not add --cpu or --memory here; either flag would override
+      # Terraform-owned resource sizing on every deployment.
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'promote-rust'
@@ -180,7 +180,7 @@ steps:
       - '--to-latest'
 
 # Note: No 'images' section needed - Kaniko pushes images directly via --destination flags
-# Both Rust and Next.js images are built and pushed by Kaniko in one step
+# Both Rust and web images are built and pushed by Kaniko in one step
 
 # Build timeout (20 minutes)
 timeout: '1200s'

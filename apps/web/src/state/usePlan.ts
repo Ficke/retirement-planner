@@ -317,8 +317,9 @@ interface PlanState {
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
-  /** A plan change is waiting on the debounce, so results are one edit behind. */
+  /** The headline result is stale or its replacement is running. */
   simulationPending: boolean;
+  /** The sensitivity curves are stale or their replacement batch is running. */
   sensitivityPending: boolean;
 
   bootstrapped: boolean;
@@ -358,15 +359,30 @@ function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
   return state.authUser?.id ?? null;
 }
 
-/**
- * The cloud engine is for signed-in users, so a signed-out session runs the
- * Web Worker regardless of the stored preference. Checking here keeps anonymous
- * sessions from spending a round trip on a 401 before falling back.
- */
 export function cloudComputeEnabled(
-  state: Pick<PlanState, 'authUser' | 'useServerSideCalculations'>,
+  state: Pick<PlanState, 'useServerSideCalculations'>,
 ): boolean {
-  return state.useServerSideCalculations && state.authUser !== null;
+  return state.useServerSideCalculations;
+}
+
+export function sensitivityAnalysisReady(
+  state: Pick<
+    PlanState,
+    | 'plan'
+    | 'simulationPlan'
+    | 'simulationPending'
+    | 'isSimulatingMain'
+    | 'isSimulatingSensitivities'
+    | 'sensitivityPending'
+  >,
+): boolean {
+  if (!state.sensitivityPending || state.isSimulatingSensitivities) return false;
+
+  const headlineIsRunning = state.isSimulatingMain && state.simulationPending;
+  const headlineIsCurrent = state.simulationPlan === state.plan
+    && !state.isSimulatingMain
+    && !state.simulationPending;
+  return headlineIsRunning || headlineIsCurrent;
 }
 
 /**

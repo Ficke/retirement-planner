@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CashFlowChart } from '@/components/ui/charts/cash-flow-chart';
 import { toCashFlowRows } from '@/components/ui/charts/cash-flow-data';
 import type { OutcomeCashFlowRow } from '@/domain/types';
+import { remainingYearFractionOf } from '@/domain/age';
 
 function row(overrides: Partial<OutcomeCashFlowRow>): OutcomeCashFlowRow {
   return {
@@ -24,6 +25,7 @@ function row(overrides: Partial<OutcomeCashFlowRow>): OutcomeCashFlowRow {
 }
 
 const moneyOut = (r: Record<string, number>) => r.living + r.healthcare + r.tax;
+const moneyIn = (r: Record<string, number>) => r.salary + r.socialSecurity + r.portfolio;
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -34,9 +36,38 @@ describe('cash-flow chart rows', () => {
       taxes: 20_000, savings: 30_000,
     })]);
 
-    expect(r.moneyIn).toBe(100_000);
+    expect(moneyIn(r)).toBe(100_000);
     expect(moneyOut(r)).toBe(70_000);
-    expect(r.moneyIn - moneyOut(r)).toBe(r.saved);
+    expect(moneyIn(r) - moneyOut(r)).toBe(30_000);
+  });
+
+  it('annualizes every cash flow in the initial partial year', () => {
+    const [r] = toCashFlowRows([row({
+      age: 70, spending: 30_000, taxes: 2_500, savings: -22_500,
+      socialSecurityBenefit: 10_000, withdrawalTaxable: 22_500,
+      healthcareCost: 7_000,
+    })], { age: 70, fraction: 0.5 });
+
+    expect(moneyIn(r)).toBe(65_000);
+    expect(moneyOut(r)).toBe(65_000);
+    expect(r.portfolio).toBe(45_000);
+    expect(r.healthcare).toBe(14_000);
+  });
+
+  it('does not annualize the first visible row when the true partial year was filtered out', () => {
+    const [r] = toCashFlowRows([row({
+      age: 65, spending: 60_000, taxes: 5_000,
+      withdrawalTaxable: 65_000, savings: -65_000,
+    })], { age: 40, fraction: 0.5 });
+
+    expect(moneyIn(r)).toBe(65_000);
+    expect(moneyOut(r)).toBe(65_000);
+  });
+
+  it('uses the same inclusive calendar fraction as the projection engine', () => {
+    expect(remainingYearFractionOf('2025-01-01')).toBe(1);
+    expect(remainingYearFractionOf('2025-12-31')).toBeCloseTo(1 / 365, 12);
+    expect(remainingYearFractionOf('2024-12-31')).toBeCloseTo(1 / 366, 12);
   });
 
   it('closes the gap in a retirement year funded by the portfolio', () => {
@@ -46,9 +77,8 @@ describe('cash-flow chart rows', () => {
       healthcareCost: 14_000,
     })]);
 
-    expect(r.moneyIn).toBe(65_000);
+    expect(moneyIn(r)).toBe(65_000);
     expect(moneyOut(r)).toBe(65_000);
-    expect(r.saved).toBe(0);
     expect(r.living + r.healthcare).toBe(60_000);
   });
 
@@ -63,7 +93,7 @@ describe('cash-flow chart rows', () => {
     // rest went straight back into taxable.
     expect(r.portfolio).toBe(50_000);
     expect(r.fromTraditional).toBe(50_000);
-    expect(r.moneyIn).toBe(70_000);
+    expect(moneyIn(r)).toBe(70_000);
     expect(moneyOut(r)).toBe(70_000);
   });
 
@@ -74,7 +104,7 @@ describe('cash-flow chart rows', () => {
       healthcareCost: 15_000,
     })]);
 
-    expect(moneyOut(r)).toBeLessThanOrEqual(r.moneyIn);
+    expect(moneyOut(r)).toBeLessThanOrEqual(moneyIn(r));
     expect(r.living).toBeGreaterThanOrEqual(0);
     expect(r.living + r.healthcare).toBe(4_000);
   });
@@ -86,10 +116,10 @@ describe('cash-flow chart rows', () => {
 
     expect(r.healthcare).toBe(0);
     expect(r.living).toBe(40_000);
-    expect(moneyOut(r)).toBe(r.moneyIn);
+    expect(moneyOut(r)).toBe(moneyIn(r));
   });
 
-  it('renders visible stacks and an income marker for a one-year phase', () => {
+  it('renders both sides of a one-year phase in one chart without a savings line', () => {
     // Vitest compiles this client component with the classic JSX runtime.
     vi.stubGlobal('React', React);
     const projection = row({
@@ -107,6 +137,7 @@ describe('cash-flow chart rows', () => {
     }));
 
     expect(container.querySelector('.recharts-bar-rectangle')).not.toBeNull();
-    expect(container.querySelector('.recharts-line-dot')).not.toBeNull();
+    expect(container.querySelectorAll('.recharts-wrapper')).toHaveLength(1);
+    expect(container.querySelector('.recharts-line')).toBeNull();
   });
 });

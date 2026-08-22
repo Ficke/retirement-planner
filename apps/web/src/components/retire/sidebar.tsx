@@ -1,5 +1,3 @@
-"use client";
-
 import {
   ChevronLeft,
   LogIn,
@@ -10,7 +8,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import { signOut } from "@/lib/firebase";
@@ -50,7 +48,7 @@ export function Sidebar({
   /** null → anonymous (local-only data mode) */
   user: { name: string; email: string } | null;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const initials = user
     ? user.name
         .split(" ")
@@ -173,7 +171,7 @@ export function Sidebar({
               variant="outline"
               size={collapsed ? "icon" : "sm"}
               className={cn(!collapsed && "w-full justify-start gap-2")}
-              onClick={() => router.push("/auth/signin")}
+              onClick={() => navigate("/auth/signin")}
             >
               <LogIn className="size-4 shrink-0" />
               {!collapsed && "Sign in"}
