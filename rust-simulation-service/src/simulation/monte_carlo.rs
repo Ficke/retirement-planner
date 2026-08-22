@@ -42,6 +42,7 @@ impl CancellationToken {
 /// without improving the percentile calculation.
 struct PathSummary {
     terminal_wealth: f64,
+    after_tax_terminal_wealth: f64,
     portfolio_values: Vec<f64>,
     cash_flows: Vec<OutcomeCashFlowRow>,
     success: bool,
@@ -76,6 +77,7 @@ pub fn run_simulation_cancellable(
                 config.block_size,
             )?;
             let terminal_wealth = result.terminal_wealth;
+            let after_tax_terminal_wealth = result.after_tax_terminal_wealth;
             let success = result.success;
             let mut portfolio_values = Vec::with_capacity(result.projections.len());
             let mut cash_flows = Vec::with_capacity(result.projections.len());
@@ -98,6 +100,7 @@ pub fn run_simulation_cancellable(
             }
             Ok(PathSummary {
                 terminal_wealth,
+                after_tax_terminal_wealth,
                 portfolio_values,
                 cash_flows,
                 success,
@@ -236,10 +239,16 @@ fn aggregate_results(
         .count();
     let success_probability = success_count as f64 / path_count as f64;
 
-    let mut terminal_outcomes: Vec<(f64, usize)> = path_summaries
+    let mut terminal_outcomes: Vec<(f64, usize, f64)> = path_summaries
         .iter()
         .enumerate()
-        .map(|(path_index, summary)| (summary.terminal_wealth, path_index))
+        .map(|(path_index, summary)| {
+            (
+                summary.terminal_wealth,
+                path_index,
+                summary.after_tax_terminal_wealth,
+            )
+        })
         .collect();
     terminal_outcomes.sort_by(|a, b| a.0.total_cmp(&b.0));
 
@@ -314,7 +323,7 @@ fn aggregate_results(
                         withdrawal_hsa: 0.0,
                         healthcare_cost: 0.0,
                     };
-                    for (_, path_index) in cohort {
+                    for (_, path_index, _) in cohort {
                         let row = &path_summaries[*path_index].cash_flows[year_index];
                         mean.income += row.income;
                         mean.spending += row.spending;
@@ -342,7 +351,7 @@ fn aggregate_results(
                 .collect();
             let bucket_successes = cohort
                 .iter()
-                .filter(|(_, path_index)| path_summaries[*path_index].success)
+                .filter(|(_, path_index, _)| path_summaries[*path_index].success)
                 .count();
             Ok(OutcomeBucket {
                 center_percentile,
@@ -357,6 +366,9 @@ fn aggregate_results(
     Ok(SimulationResult {
         success_probability,
         median_terminal_wealth: terminal_outcomes[p50_index].0,
+        // Read off the same path as the median, not a separately ordered
+        // distribution, so the pair describes one outcome rather than two.
+        median_after_tax_terminal_wealth: terminal_outcomes[p50_index].2,
         percentile5_terminal_wealth: terminal_outcomes[p5_index].0,
         percentile10_terminal_wealth: terminal_outcomes[p10_index].0,
         percentile90_terminal_wealth: terminal_outcomes[p90_index].0,

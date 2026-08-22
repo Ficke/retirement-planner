@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 5;
+pub const PLAN_SCHEMA_VERSION: u32 = 6;
 
 /// Medicare eligibility, which is where retirement premiums step down.
 pub const MEDICARE_AGE: u32 = 65;
@@ -143,6 +143,52 @@ pub struct AnnualContributions {
     pub taxable: f64,
 }
 
+/// How much ordinary income a conversion year may reach. Bracket ceilings cap
+/// taxable income at the named bracket's top; `IrmaaTier` caps MAGI below the
+/// first Medicare surcharge tier instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RothConversionCeiling {
+    #[serde(rename = "bracket12")]
+    Bracket12,
+    #[serde(rename = "bracket22")]
+    Bracket22,
+    #[serde(rename = "bracket24")]
+    Bracket24,
+    #[serde(rename = "bracket32")]
+    Bracket32,
+    #[serde(rename = "irmaaTier")]
+    IrmaaTier,
+}
+
+/// Conversions run from retirement through the year before RMDs begin, so both
+/// ends of the window are derived and only the policy is carried.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RothConversionPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_conversion_ceiling")]
+    pub ceiling: RothConversionCeiling,
+}
+
+impl Default for RothConversionPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ceiling: default_conversion_ceiling(),
+        }
+    }
+}
+
+fn default_conversion_ceiling() -> RothConversionCeiling {
+    RothConversionCeiling::Bracket24
+}
+
+/// Rate applied to the Traditional and HSA balances left at the horizon, to
+/// report terminal wealth after the tax nobody has paid yet.
+fn default_terminal_tax_rate() -> f64 {
+    0.30
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionSettings {
     #[serde(rename = "simulationModel")]
@@ -157,6 +203,12 @@ pub struct ProjectionSettings {
     /// Without a backdoor conversion, a Roth IRA contribution is not modeled.
     #[serde(rename = "useBackdoorRoth", default)]
     pub use_backdoor_roth: bool,
+    /// Absent from plans saved before conversions existed, where the default
+    /// leaves them off — which is the behavior those plans were built against.
+    #[serde(rename = "rothConversion", default)]
+    pub roth_conversion: RothConversionPolicy,
+    #[serde(rename = "terminalTaxRate", default = "default_terminal_tax_rate")]
+    pub terminal_tax_rate: f64,
 }
 
 fn default_random_seed() -> u64 {
@@ -196,6 +248,11 @@ pub struct PathProjection {
     pub withdrawal_roth: f64,
     #[serde(rename = "rmdAmount")]
     pub rmd_amount: f64,
+    /// Pre-tax dollars moved Traditional -> Roth this year. An internal
+    /// transfer, so it is no part of `spending` or the withdrawal totals; only
+    /// the tax it adds reaches `taxes`.
+    #[serde(rename = "rothConversion", default)]
+    pub roth_conversion: f64,
     #[serde(rename = "depositTaxable")]
     pub deposit_taxable: f64,
     #[serde(rename = "depositTraditional")]
@@ -219,6 +276,9 @@ pub struct PathProjection {
 pub struct PathResult {
     #[serde(rename = "terminalWealth")]
     pub terminal_wealth: f64,
+    /// Terminal wealth net of the tax still owed on Traditional and HSA.
+    #[serde(rename = "afterTaxTerminalWealth", default)]
+    pub after_tax_terminal_wealth: f64,
     pub projections: Vec<PathProjection>,
     pub success: bool,
 }
@@ -277,6 +337,10 @@ pub struct SimulationResult {
     /// Fraction of paths that fully fund every modeled working and retirement year.
     #[serde(rename = "successProbability")]
     pub success_probability: f64,
+    /// The median path's terminal wealth net of the tax owed on its Traditional
+    /// and HSA balances. Reported beside the gross figure, not in place of it.
+    #[serde(rename = "medianAfterTaxTerminalWealth", default)]
+    pub median_after_tax_terminal_wealth: f64,
     #[serde(rename = "medianTerminalWealth")]
     pub median_terminal_wealth: f64,
     #[serde(rename = "percentile5TerminalWealth")]

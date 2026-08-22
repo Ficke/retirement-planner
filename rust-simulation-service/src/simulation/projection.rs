@@ -11,6 +11,7 @@ use super::healthcare_premiums::{expected_premium_contribution, irmaa_annual_sur
 use super::historical_data;
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
+use super::roth_conversion::{roth_conversion_for, RothConversionInput};
 use super::ssa::{calculate_ssa_benefit, estimate_salary_history};
 use super::tax::{
     calculate_retirement_tax, calculate_working_cash_flow, ContributionPolicy, Household,
@@ -412,8 +413,9 @@ fn project_scenario_internal(
         // in both the working and retirement branches below.
         let income;
         let spending;
-        let taxes;
+        let mut taxes;
         let savings;
+        let mut roth_conversion = 0.0;
         let mut social_security_benefit = 0.0;
         let mut withdrawal_taxable = 0.0;
         let mut withdrawal_traditional = 0.0;
@@ -725,6 +727,43 @@ fn project_scenario_internal(
                 deposit_to_bucket(&mut accounts, AccountType::Taxable, deposit_taxable);
             }
 
+            // Converting after the year's spending is funded is both the
+            // realistic order -- the amount is chosen in December, once income
+            // is known -- and the only one that cannot overfill the ceiling,
+            // since every ordinary dollar the year will report has already been
+            // realized. A year that could not fund itself has nothing spare to
+            // convert with.
+            if current_age < rmd_start_age && !insufficient_funds {
+                let conversion = roth_conversion_for(&RothConversionInput {
+                    policy: plan.assumptions.roth_conversion,
+                    traditional_withdrawals: withdrawal_traditional,
+                    social_security_benefit,
+                    qualified_income: withdrawal_taxable * plan.assumptions.taxable_gain_ratio,
+                    taxable_withdrawals: withdrawal_taxable,
+                    taxable_gain_ratio: plan.assumptions.taxable_gain_ratio,
+                    household: &household,
+                    state: &profile.state,
+                    tax_year,
+                    traditional_balance: balance_of_bucket(&accounts, AccountType::Traditional),
+                    taxable_balance: balance_of_bucket(&accounts, AccountType::Taxable),
+                });
+                if conversion.converted > 0.0 {
+                    draw_from_bucket(
+                        &mut accounts,
+                        AccountType::Traditional,
+                        conversion.converted,
+                    );
+                    draw_from_bucket(&mut accounts, AccountType::Taxable, conversion.from_taxable);
+                    deposit_to_bucket(
+                        &mut accounts,
+                        AccountType::Roth,
+                        conversion.converted - conversion.withheld,
+                    );
+                    roth_conversion = conversion.converted;
+                    taxes += conversion.tax;
+                }
+            }
+
             // Calculate actual spending based on available funds
             spending = if insufficient_funds {
                 // If funds are insufficient, actual spending is limited to what's available
@@ -756,6 +795,7 @@ fn project_scenario_internal(
         magi_by_year.push(
             income
                 + withdrawal_traditional
+                + roth_conversion
                 + withdrawal_taxable * plan.assumptions.taxable_gain_ratio,
         );
 
@@ -778,6 +818,7 @@ fn project_scenario_internal(
                 withdrawal_roth,
                 withdrawal_hsa,
                 rmd_amount,
+                roth_conversion,
                 deposit_taxable,
                 deposit_traditional,
                 deposit_roth,
@@ -794,6 +835,10 @@ fn project_scenario_internal(
     let terminal_wealth = portfolio_value;
     Ok(PathResult {
         terminal_wealth,
+        after_tax_terminal_wealth: after_tax_wealth_of(
+            &accounts,
+            plan.assumptions.terminal_tax_rate,
+        ),
         projections,
         success,
     })
@@ -843,6 +888,51 @@ struct WithdrawalContext<'a> {
 /// keeps that balance out of the taxable-gain calculation.
 ///
 /// Returns the amount deposited, for the caller's cash-flow row.
+fn balance_of_bucket(accounts: &[Account], account_type: AccountType) -> f64 {
+    accounts
+        .iter()
+        .filter(|account| account.account_type == account_type)
+        .map(|account| account.balance)
+        .sum()
+}
+
+/// Take `amount` from one bucket, or whatever of it that bucket holds.
+fn draw_from_bucket(accounts: &mut [Account], account_type: AccountType, amount: f64) -> f64 {
+    if amount <= 0.0 {
+        return 0.0;
+    }
+    match accounts
+        .iter_mut()
+        .find(|account| account.account_type == account_type)
+    {
+        Some(bucket) => {
+            let drawn = amount.min(bucket.balance);
+            bucket.balance -= drawn;
+            drawn
+        }
+        None => 0.0,
+    }
+}
+
+/// What the portfolio is worth once the tax nobody has paid yet is settled.
+///
+/// Traditional and HSA balances are income in respect of a decedent: no step-up
+/// in basis, and ordinary rates on every dollar. Taxable and Roth pass through
+/// whole -- an inherited taxable account steps its basis up to date-of-death
+/// value, and a Roth owes nothing either way.
+fn after_tax_wealth_of(accounts: &[Account], terminal_tax_rate: f64) -> f64 {
+    accounts
+        .iter()
+        .map(|account| {
+            let taxed = matches!(
+                account.account_type,
+                AccountType::Traditional | AccountType::Hsa
+            );
+            account.balance * if taxed { 1.0 - terminal_tax_rate } else { 1.0 }
+        })
+        .sum()
+}
+
 fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amount: f64) -> f64 {
     if amount <= 0.0 {
         return 0.0;
@@ -1108,11 +1198,11 @@ fn is_leap_year(year: i32) -> bool {
 mod tests {
     use super::*;
     use crate::types::FilingStatus;
-    use crate::types::PLAN_SCHEMA_VERSION;
     use crate::types::{
         AssetWeights, ProjectionSettings, RetirementHealthcare, SimulationModel,
         SocialSecuritySettings, UserProfile,
     };
+    use crate::types::{RothConversionCeiling, RothConversionPolicy, PLAN_SCHEMA_VERSION};
 
     fn test_plan() -> RetirementPlan {
         RetirementPlan {
@@ -1164,8 +1254,138 @@ mod tests {
                 taxable_gain_ratio: 0.5,
                 hsa_eligible: false,
                 use_backdoor_roth: false,
+                roth_conversion: RothConversionPolicy::default(),
+                terminal_tax_rate: 0.30,
             },
         }
+    }
+
+    /// A pre-tax-heavy plan with a long gap between retirement and RMDs, which
+    /// is the shape a conversion setting exists for.
+    fn conversion_plan(policy: RothConversionPolicy) -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1960-01-01".to_string();
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.profile.current_salary = 0.0;
+        plan.profile.retirement_age = 65;
+        plan.profile.life_expectancy = 95;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.social_security.enabled = false;
+        plan.accounts = vec![
+            Account {
+                account_type: AccountType::Traditional,
+                balance: 3_000_000.0,
+                asset_weights: AssetWeights {
+                    stocks: 0.6,
+                    bonds: 0.4,
+                },
+                is_surplus_cash: false,
+            },
+            Account {
+                account_type: AccountType::Taxable,
+                balance: 800_000.0,
+                asset_weights: AssetWeights {
+                    stocks: 0.7,
+                    bonds: 0.3,
+                },
+                is_surplus_cash: false,
+            },
+        ];
+        plan.assumptions.roth_conversion = policy;
+        plan
+    }
+
+    fn conversion_config() -> ProjectionConfig {
+        ProjectionConfig {
+            seed: 42,
+            use_historical_bootstrap: false,
+            block_size: 5,
+        }
+    }
+
+    #[test]
+    fn converts_nothing_when_the_policy_is_off() {
+        let result = project_scenario(
+            &conversion_plan(RothConversionPolicy::default()),
+            conversion_config(),
+        )
+        .unwrap();
+        assert!(result
+            .projections
+            .iter()
+            .all(|year| year.roth_conversion == 0.0));
+    }
+
+    #[test]
+    fn converts_only_between_retirement_and_the_first_rmd() {
+        let plan = conversion_plan(RothConversionPolicy {
+            enabled: true,
+            ceiling: RothConversionCeiling::Bracket24,
+        });
+        let result = project_scenario(&plan, conversion_config()).unwrap();
+        let converting: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|year| year.roth_conversion > 0.0)
+            .collect();
+
+        assert!(!converting.is_empty());
+        // Born 1960, so RMDs wait until 75 and the window is ten years long.
+        assert!(converting
+            .iter()
+            .all(|year| year.age >= 65 && year.age < 75));
+    }
+
+    #[test]
+    fn a_higher_ceiling_converts_more() {
+        let total = |ceiling| {
+            project_scenario(
+                &conversion_plan(RothConversionPolicy {
+                    enabled: true,
+                    ceiling,
+                }),
+                conversion_config(),
+            )
+            .unwrap()
+            .projections
+            .iter()
+            .map(|year| year.roth_conversion)
+            .sum::<f64>()
+        };
+
+        assert!(total(RothConversionCeiling::Bracket24) > total(RothConversionCeiling::Bracket12));
+        assert!(total(RothConversionCeiling::Bracket32) > total(RothConversionCeiling::Bracket24));
+    }
+
+    #[test]
+    fn conversions_shrink_the_first_required_distribution() {
+        let first_rmd = |policy| {
+            project_scenario(&conversion_plan(policy), conversion_config())
+                .unwrap()
+                .projections
+                .iter()
+                .find(|year| year.age == 75)
+                .unwrap()
+                .rmd_amount
+        };
+
+        assert!(
+            first_rmd(RothConversionPolicy {
+                enabled: true,
+                ceiling: RothConversionCeiling::Bracket24,
+            }) < first_rmd(RothConversionPolicy::default())
+        );
+    }
+
+    #[test]
+    fn after_tax_terminal_wealth_discounts_the_pre_tax_balance() {
+        let result = project_scenario(
+            &conversion_plan(RothConversionPolicy::default()),
+            conversion_config(),
+        )
+        .unwrap();
+        assert!(result.after_tax_terminal_wealth < result.terminal_wealth);
+        assert!(result.after_tax_terminal_wealth > result.terminal_wealth * 0.69);
     }
 
     /// Overspending during working years, funded only by the portfolio.
