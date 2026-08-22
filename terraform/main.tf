@@ -166,6 +166,16 @@ resource "google_secret_manager_secret_iam_member" "cloud_build_origin_secret_ac
   member    = "serviceAccount:${element(reverse(split("/", var.cloud_build_service_account)), 0)}"
 }
 
+# The deployment pipeline runs a read-only, no-lock plan to catch unapplied
+# Terraform changes before promoting a new application revision.
+resource "google_storage_bucket_iam_member" "cloud_build_tfstate_reader" {
+  count = var.enable_cloud_build_trigger ? 1 : 0
+
+  bucket = "retire-plan-tfstate-${var.project_id}"
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${element(reverse(split("/", var.cloud_build_service_account)), 0)}"
+}
+
 # Cloud Build trigger for automated deployments (optional)
 resource "google_cloudbuild_trigger" "main_branch" {
   count = var.enable_cloud_build_trigger ? 1 : 0
