@@ -317,8 +317,9 @@ interface PlanState {
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
-  /** A plan change is waiting on the debounce, so results are one edit behind. */
+  /** The headline result is stale or its replacement is running. */
   simulationPending: boolean;
+  /** The sensitivity curves are stale or their replacement batch is running. */
   sensitivityPending: boolean;
 
   bootstrapped: boolean;
@@ -362,6 +363,26 @@ export function cloudComputeEnabled(
   state: Pick<PlanState, 'useServerSideCalculations'>,
 ): boolean {
   return state.useServerSideCalculations;
+}
+
+export function sensitivityAnalysisReady(
+  state: Pick<
+    PlanState,
+    | 'plan'
+    | 'simulationPlan'
+    | 'simulationPending'
+    | 'isSimulatingMain'
+    | 'isSimulatingSensitivities'
+    | 'sensitivityPending'
+  >,
+): boolean {
+  if (!state.sensitivityPending || state.isSimulatingSensitivities) return false;
+
+  const headlineIsRunning = state.isSimulatingMain && state.simulationPending;
+  const headlineIsCurrent = state.simulationPlan === state.plan
+    && !state.isSimulatingMain
+    && !state.simulationPending;
+  return headlineIsRunning || headlineIsCurrent;
 }
 
 /**

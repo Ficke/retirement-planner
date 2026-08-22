@@ -9,12 +9,18 @@ export async function proxyToRustService(
   payload: unknown,
   timeoutMs: number,
   unavailableLabel: string,
+  callerSignal?: AbortSignal,
 ): Promise<Response> {
+  const upstreamStartedAt = performance.now();
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, timeoutSignal])
+    : timeoutSignal;
   const rustResponse = await fetchRustService(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal,
   });
 
   if (!rustResponse.ok) {
@@ -28,7 +34,10 @@ export async function proxyToRustService(
 
   return new Response(rustResponse.body, {
     status: rustResponse.status,
-    headers: { 'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json' },
+    headers: {
+      'Content-Type': rustResponse.headers.get('content-type') ?? 'application/json',
+      'Server-Timing': `rust;dur=${(performance.now() - upstreamStartedAt).toFixed(1)}`,
+    },
   });
 }
 

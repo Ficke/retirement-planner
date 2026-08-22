@@ -99,6 +99,18 @@ describe('fetchRustService', () => {
     await expect(fetchRustService('/api/simulate', { method: 'POST' })).rejects.toBe(aborted);
   });
 
+  it('uses the signal reason when the transport reports a generic disconnect', async () => {
+    process.env.RUST_SERVICE_URL = 'http://localhost:8081';
+    const controller = new AbortController();
+    controller.abort();
+    fetchMock.mockRejectedValue(new TypeError('Client connection prematurely closed'));
+
+    await expect(fetchRustService('/api/simulate', {
+      method: 'POST',
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('wraps a transport failure as an unavailable service', async () => {
     process.env.RUST_SERVICE_URL = 'http://localhost:8081';
     fetchMock.mockRejectedValue(new TypeError('fetch failed'));

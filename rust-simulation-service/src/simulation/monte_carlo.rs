@@ -1,5 +1,9 @@
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tracing::info;
 
 use crate::simulation::projection::{project_scenario, project_scenario_summary, ProjectionConfig};
@@ -9,6 +13,29 @@ use crate::types::{
 };
 
 const OUTCOME_CENTERS: [u32; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+#[derive(Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn ensure_active(&self) -> Result<()> {
+        if self.is_cancelled() {
+            Err(anyhow!("Simulation canceled"))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 /// The aggregation phase only needs one value per path and year. Keeping the
 /// complete cash-flow object for every Monte Carlo path multiplies memory use
@@ -22,7 +49,16 @@ struct PathSummary {
 
 /// Run Monte Carlo paths in parallel, then aggregate them without retaining
 /// every cash-flow field for every path.
+#[cfg(test)]
 pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<SimulationResult> {
+    run_simulation_cancellable(plan, config, CancellationToken::default())
+}
+
+pub fn run_simulation_cancellable(
+    plan: RetirementPlan,
+    config: MCConfig,
+    cancellation: CancellationToken,
+) -> Result<SimulationResult> {
     let start_time = std::time::Instant::now();
     info!(
         "Starting Monte Carlo simulation with {} paths",
@@ -32,6 +68,7 @@ pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<Simulati
     let path_summaries: Vec<PathSummary> = (0..config.paths)
         .into_par_iter()
         .map(|path_index| {
+            cancellation.ensure_active()?;
             let result = run_single_path(
                 &plan,
                 config.seed.wrapping_add(path_index as u64),
@@ -68,19 +105,29 @@ pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<Simulati
         })
         .collect::<Result<Vec<_>>>()?;
 
+    cancellation.ensure_active()?;
+
     info!(
         "Completed {} paths in {:?}",
         config.paths,
         start_time.elapsed()
     );
 
-    aggregate_results(&plan, &config, path_summaries)
+    aggregate_results(&plan, &config, path_summaries, &cancellation)
 }
 
 /// Run all sweep points path-major. Each Rayon task owns a local vector of
 /// success counts, so the only shared work is the final vector reduction.
+#[cfg(test)]
 pub fn run_sweep(
     simulations: Vec<BatchSimulationRequest>,
+) -> Result<Vec<BatchSimulationSummaryResponse>> {
+    run_sweep_cancellable(simulations, CancellationToken::default())
+}
+
+pub fn run_sweep_cancellable(
+    simulations: Vec<BatchSimulationRequest>,
+    cancellation: CancellationToken,
 ) -> Result<Vec<BatchSimulationSummaryResponse>> {
     if simulations.is_empty() {
         return Ok(Vec::new());
@@ -97,7 +144,9 @@ pub fn run_sweep(
         .try_fold(
             || vec![0_u32; scenario_count],
             |mut counts, path_index| -> Result<Vec<u32>> {
+                cancellation.ensure_active()?;
                 for (scenario_index, simulation) in simulations.iter().enumerate() {
+                    cancellation.ensure_active()?;
                     if path_index >= simulation.config.paths {
                         continue;
                     }
@@ -125,6 +174,8 @@ pub fn run_sweep(
                 Ok(left)
             },
         )?;
+
+    cancellation.ensure_active()?;
 
     Ok(simulations
         .into_iter()
@@ -161,7 +212,9 @@ fn aggregate_results(
     plan: &RetirementPlan,
     config: &MCConfig,
     path_summaries: Vec<PathSummary>,
+    cancellation: &CancellationToken,
 ) -> Result<SimulationResult> {
+    cancellation.ensure_active()?;
     if path_summaries.is_empty() {
         return Err(anyhow!("No simulation paths provided"));
     }
@@ -191,6 +244,7 @@ fn aggregate_results(
     terminal_outcomes.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let representative_path_index = terminal_outcomes[p50_index].1;
+    cancellation.ensure_active()?;
     let representative = run_single_path(
         plan,
         config.seed.wrapping_add(representative_path_index as u64),
@@ -210,6 +264,7 @@ fn aggregate_results(
 
     let mut yearly_projections = Vec::with_capacity(year_count);
     for (year_index, representative_projection) in representative.projections.iter().enumerate() {
+        cancellation.ensure_active()?;
         let mut portfolio_values: Vec<f64> = path_summaries
             .iter()
             .map(|summary| summary.portfolio_values[year_index])
@@ -232,7 +287,8 @@ fn aggregate_results(
 
     let outcome_buckets = OUTCOME_CENTERS
         .into_iter()
-        .map(|center_percentile| {
+        .map(|center_percentile| -> Result<OutcomeBucket> {
+            cancellation.ensure_active()?;
             let lower_percentile = center_percentile - 5;
             let upper_percentile = center_percentile + 5;
             let start = ((path_count * lower_percentile as usize) / 100).min(path_count - 1);
@@ -288,15 +344,15 @@ fn aggregate_results(
                 .iter()
                 .filter(|(_, path_index)| path_summaries[*path_index].success)
                 .count();
-            OutcomeBucket {
+            Ok(OutcomeBucket {
                 center_percentile,
                 lower_percentile,
                 upper_percentile,
                 success_probability: bucket_successes as f64 / count,
                 projections,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(SimulationResult {
         success_probability,
@@ -422,5 +478,44 @@ mod tests {
 
         let median = &result.outcome_buckets[4];
         assert_eq!((median.lower_percentile, median.upper_percentile), (45, 55));
+    }
+
+    #[test]
+    fn canceled_simulation_stops_before_projecting_paths() {
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+
+        let result = run_simulation_cancellable(
+            plan(60_000.0),
+            MCConfig {
+                paths: 100,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+            cancellation,
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "Simulation canceled");
+    }
+
+    #[test]
+    fn canceled_sweep_stops_before_projecting_scenarios() {
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        let simulation = BatchSimulationRequest {
+            id: "canceled".into(),
+            plan: plan(60_000.0),
+            config: MCConfig {
+                paths: 100,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        };
+
+        let result = run_sweep_cancellable(vec![simulation], cancellation);
+
+        assert_eq!(result.unwrap_err().to_string(), "Simulation canceled");
     }
 }

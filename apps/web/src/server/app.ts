@@ -360,13 +360,20 @@ async function handleSimulation(c: Context<AppEnvironment>) {
     c.header('Retry-After', String(Math.ceil((pathLimit.reset - Date.now()) / 1000)));
     return c.json({ error: 'Simulation compute quota exceeded. Retry shortly.' }, 429);
   }
-  return proxyToRustService('/api/simulate', validation.data, 30_000, 'Simulation service unavailable');
+  return proxyToRustService(
+    '/api/simulate',
+    validation.data,
+    30_000,
+    'Simulation service unavailable',
+    c.req.raw.signal,
+  );
 }
 
 app.post('/api/simulation/monte-carlo', async (c) => {
   try {
     return await handleSimulation(c);
   } catch (error) {
+    if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
     console.error('Simulation proxy error:', error);
     return (
       simulationProxyError(error, 'Simulation timeout') ??
@@ -409,8 +416,10 @@ app.post('/api/simulation/batch', async (c) => {
       validation.data,
       60_000,
       'Batch simulation service unavailable',
+      c.req.raw.signal,
     );
   } catch (error) {
+    if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
     console.error('Batch simulation proxy error:', error);
     return (
       simulationProxyError(error, 'Batch simulation timeout') ??
@@ -439,8 +448,10 @@ app.post('/api/internal/simulation-probe', async (c) => {
       validation.data,
       30_000,
       'Simulation service unavailable',
+      c.req.raw.signal,
     );
   } catch (error) {
+    if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
     console.error('Simulation probe error:', error);
     return (
       simulationProxyError(error, 'Simulation timeout') ??

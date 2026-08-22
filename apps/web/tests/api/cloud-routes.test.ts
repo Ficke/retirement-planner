@@ -48,6 +48,7 @@ vi.mock('@/lib/rust-service-client', () => ({
 import { app } from '@/server/app';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ORIGIN_SECRET_HEADER, TRUSTED_CLIENT_IP_HEADER } from '@/lib/origin-auth';
+import { proxyToRustService } from '@/lib/simulation-proxy';
 
 const getAccounts = () => app.request('/api/accounts');
 const createAccount = (request: Request) => app.request(request);
@@ -365,6 +366,34 @@ describe('simulation proxy response streaming', () => {
     expect(response.status).toBe(504);
   });
 
+  it('propagates a caller abort signal to the Rust fetch', async () => {
+    let downstreamSignal: AbortSignal | undefined;
+    mocks.fetchRustService.mockImplementation(async (_path, init: RequestInit) => {
+      downstreamSignal = init.signal as AbortSignal;
+      return await new Promise<Response>((_resolve, reject) => {
+        downstreamSignal!.addEventListener('abort', () => {
+          const aborted = new Error('The operation was aborted');
+          aborted.name = 'AbortError';
+          reject(aborted);
+        }, { once: true });
+      });
+    });
+    const controller = new AbortController();
+
+    const responsePromise = proxyToRustService(
+      '/api/simulate',
+      monteCarloBody,
+      30_000,
+      'Simulation service unavailable',
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(downstreamSignal).toBeDefined());
+    controller.abort();
+
+    await expect(responsePromise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(downstreamSignal?.aborted).toBe(true);
+  });
+
   it('passes the successful headline response body through without parsing it', async () => {
     const firstChunk = new TextEncoder().encode('{"successProbability":0.75');
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
@@ -388,6 +417,7 @@ describe('simulation proxy response streaming', () => {
       const response = await beforeStreamClose(Promise.resolve(runMonteCarlo(request)));
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(response.headers.get('server-timing')).toMatch(/^rust;dur=/);
       expect(jsonSpy).not.toHaveBeenCalled();
 
       const reader = response.body!.getReader();

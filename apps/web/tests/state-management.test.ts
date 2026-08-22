@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { cloudComputeEnabled, hydratePlan, usePlan } from '@/state/usePlan';
+import {
+  cloudComputeEnabled,
+  hydratePlan,
+  sensitivityAnalysisReady,
+  usePlan,
+} from '@/state/usePlan';
 import { ageOn } from '@/domain/age';
 import type {
   RetirementAgeAnalysisResult,
@@ -175,5 +180,50 @@ describe('cloud compute gating', () => {
   it('uses the compute preference independently of the persistence mode', () => {
     expect(cloudComputeEnabled({ useServerSideCalculations: true })).toBe(true);
     expect(cloudComputeEnabled({ useServerSideCalculations: false })).toBe(false);
+  });
+});
+
+describe('sensitivity scheduling', () => {
+  const plan = usePlan.getState().plan;
+  const readyState = {
+    plan,
+    simulationPlan: plan,
+    simulationPending: false,
+    isSimulatingMain: false,
+    isSimulatingSensitivities: false,
+    sensitivityPending: true,
+  };
+
+  it('waits for the debounced headline to start before starting sensitivity work', () => {
+    expect(sensitivityAnalysisReady({
+      ...readyState,
+      simulationPlan: null,
+      simulationPending: true,
+    })).toBe(false);
+    expect(sensitivityAnalysisReady({
+      ...readyState,
+      simulationPlan: null,
+      simulationPending: true,
+      isSimulatingMain: true,
+    })).toBe(true);
+    expect(sensitivityAnalysisReady(readyState)).toBe(true);
+  });
+
+  it('does not start sensitivity work twice or retry a completed attempt', () => {
+    expect(sensitivityAnalysisReady({
+      ...readyState,
+      isSimulatingSensitivities: true,
+    })).toBe(false);
+    expect(sensitivityAnalysisReady({
+      ...readyState,
+      sensitivityPending: false,
+    })).toBe(false);
+  });
+
+  it('does not start sensitivity work from a stale completed headline', () => {
+    expect(sensitivityAnalysisReady({
+      ...readyState,
+      plan: { ...plan },
+    })).toBe(false);
   });
 });

@@ -23,7 +23,7 @@ The Rust service is optional. Without it the app falls back to the client-side
 Web Worker automatically:
 
 ```bash
-cd rust-simulation-service && cargo run    # :8081
+pnpm dev:rust                              # :8081, optimized build
 ```
 
 Set `RUST_SERVICE_URL=http://localhost:8081` in `.env.local` to use it.
@@ -48,8 +48,11 @@ pnpm lint             # eslint
 ```
 
 ```bash
+# from the repository root
+pnpm dev:rust          # start the optimized engine
+
 # from rust-simulation-service/
-cargo run             # start engine
+cargo run             # debugging build; do not use for performance comparisons
 cargo test            # unit tests
 cargo clippy          # lints
 ```

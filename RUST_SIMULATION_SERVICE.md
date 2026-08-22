@@ -60,12 +60,13 @@ implementations do not promise identical return draws across engines.
 From the repository root:
 
 ```bash
-cargo run --manifest-path rust-simulation-service/Cargo.toml
+pnpm dev:rust
 ```
 
 The service listens on port `8081` by default. Override it with `PORT`. Override
 Rayon sizing with `SIMULATION_THREADS`; otherwise local development uses the
-process's available parallelism.
+process's available parallelism. `pnpm dev:rust` uses an optimized build so
+local performance matches the production binary rather than Rust's debug mode.
 
 Useful checks:
 

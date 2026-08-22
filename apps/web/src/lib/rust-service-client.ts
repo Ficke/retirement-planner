@@ -62,6 +62,12 @@ export async function fetchRustService(path: string, init: RequestInit): Promise
   try {
     return await fetch(`${serviceUrl}${path}`, { ...init, headers });
   } catch (error) {
+    if (init.signal?.aborted) {
+      const reason = init.signal.reason;
+      throw reason instanceof Error
+        ? reason
+        : new DOMException('The operation was aborted', 'AbortError');
+    }
     // An aborted request is the caller's timeout, not an unreachable service;
     // it has to stay distinguishable so the routes can still answer 504.
     if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {

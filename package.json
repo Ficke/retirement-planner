@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm -C apps/web dev",
+    "dev:rust": "cargo run --release --manifest-path rust-simulation-service/Cargo.toml",
     "build": "pnpm -C apps/web build",
     "start": "pnpm -C apps/web start",
     "lint": "pnpm -C apps/web lint",

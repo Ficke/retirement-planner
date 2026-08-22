@@ -46,6 +46,7 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
+      - MAX_CONCURRENT_SIMULATIONS=1
     restart: unless-stopped
     # No healthcheck: the runtime image (debian-slim) ships neither wget nor
     # curl. Probe it from the host instead: curl localhost:8081/healthz
