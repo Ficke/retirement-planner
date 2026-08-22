@@ -12,7 +12,7 @@ import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { retirementSpendingOf } from '@/domain/age';
 import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
-import { leverRange } from '@/domain/levers';
+import { CONVERSION_STEPS, leverRange } from '@/domain/levers';
 import type {
   RetirementPlan,
   SimulationPlan,
@@ -20,7 +20,8 @@ import type {
   SimulationSummary,
   SSAnalysisResult,
   SpendingAnalysisResult,
-  RetirementAgeAnalysisResult
+  RetirementAgeAnalysisResult,
+  RothConversionAnalysisResult
 } from '@/domain/types';
 
 export interface SimulationService {
@@ -35,6 +36,7 @@ export interface SensitivityAnalysisResults {
   socialSecurity: SSAnalysisResult[];
   spending: SpendingAnalysisResult[];
   retirementAge: RetirementAgeAnalysisResult[];
+  rothConversion: RothConversionAnalysisResult[];
 }
 
 export const MAIN_PATHS = 5000;
@@ -127,6 +129,27 @@ function retirementAgeScenarios(plan: RetirementPlan, seed: number): { retiremen
       plan: {
         ...plan,
         profile: { ...plan.profile, retirementAge },
+      },
+      paths: SWEEP_PATHS,
+      seed,
+    },
+  }));
+}
+
+function rothConversionScenarios(
+  plan: RetirementPlan,
+  seed: number,
+): { step: number; scenario: Scenario }[] {
+  return leverRange('rothConversion', plan).sweepValues.map((step) => ({
+    step,
+    scenario: {
+      id: `rothConversion-${step}`,
+      plan: {
+        ...plan,
+        assumptions: {
+          ...plan.assumptions,
+          rothConversion: CONVERSION_STEPS[step].policy,
+        },
       },
       paths: SWEEP_PATHS,
       seed,
@@ -314,7 +337,22 @@ class SimulationServiceImpl implements SimulationService {
     });
   }
 
-  /** Run all three sensitivity curves in one bounded server batch. */
+  async runRothConversionAnalysis(
+    plan: RetirementPlan,
+    useServerSide = true,
+    signal?: AbortSignal,
+  ): Promise<RothConversionAnalysisResult[]> {
+    const seed = baseSeed(plan);
+    const entries = rothConversionScenarios(plan, seed);
+    const results = await runScenarios(entries.map((e) => e.scenario), plan, useServerSide, signal);
+    return entries.map(({ step, scenario }) => {
+      const result = results.get(scenario.id);
+      if (!result) throw new Error(`Missing result for conversion step ${step}`);
+      return { step, result };
+    });
+  }
+
+  /** Run every sensitivity curve in one bounded server batch. */
   async runSensitivityAnalyses(
     plan: RetirementPlan,
     useServerSide = true,
@@ -324,10 +362,12 @@ class SimulationServiceImpl implements SimulationService {
     const socialSecurityEntries = ssScenarios(plan, seed);
     const spendingEntries = spendingScenarios(plan, seed);
     const retirementAgeEntries = retirementAgeScenarios(plan, seed);
+    const rothConversionEntries = rothConversionScenarios(plan, seed);
     const allScenarios = [
       ...socialSecurityEntries.map((entry) => entry.scenario),
       ...spendingEntries.map((entry) => entry.scenario),
       ...retirementAgeEntries.map((entry) => entry.scenario),
+      ...rothConversionEntries.map((entry) => entry.scenario),
     ];
     const results = await runScenarios(allScenarios, plan, useServerSide, signal);
 
@@ -346,6 +386,11 @@ class SimulationServiceImpl implements SimulationService {
         const result = results.get(scenario.id);
         if (!result) throw new Error(`Missing result for retirement age ${retirementAge}`);
         return { retirementAge, result };
+      }),
+      rothConversion: rothConversionEntries.map(({ step, scenario }) => {
+        const result = results.get(scenario.id);
+        if (!result) throw new Error(`Missing result for conversion step ${step}`);
+        return { step, result };
       }),
     };
   }

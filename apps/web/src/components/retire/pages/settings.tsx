@@ -44,6 +44,7 @@ import {
 } from "@/components/retire/ui";
 import { fmtCurrency } from "../format";
 import { getRmdStartAge } from "@/data/rmd-tables";
+import { conversionLabelOf, conversionStepOf } from "@/domain/levers";
 import { birthYearOf } from "@/domain/age";
 
 export function PageSettings() {
@@ -265,6 +266,13 @@ export function PageSettings() {
                 source="IRC 36B, Rev. Proc. 2025-25"
               />
               <ReferenceRow
+                label="Roth conversion window"
+                value={a.rothConversion.enabled
+                  ? `Ages ${conversionWindow.from}–${conversionWindow.to}, up to ${conversionLabelOf(conversionStepOf(plan))}`
+                  : "Off"}
+                source="Plan page"
+              />
+              <ReferenceRow
                 label="Medicare IRMAA"
                 value="2026 tiers, 2-year lookback"
                 source="CMS"
@@ -276,69 +284,6 @@ export function PageSettings() {
               />
             </TableBody>
           </Table>
-        </DashboardCard>
-
-        <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">
-          Roth conversions
-        </h2>
-        <DashboardCard>
-          <Setting
-            label="Convert pre-tax savings to Roth"
-            helper="Fills up the low-income years between retiring and your first RMD, so the balance RMDs are calculated from is smaller. You pay the tax now instead of later, which only wins if your rate is lower now."
-            badge={
-              a.rothConversion.enabled ? (
-                <Badge variant="secondary" className="bg-info/15 text-info">
-                  Ages {conversionWindow.from}–{conversionWindow.to}
-                </Badge>
-              ) : undefined
-            }
-          >
-            <ToggleGroup
-              type="single"
-              value={a.rothConversion.enabled ? "on" : "off"}
-              onValueChange={(v) => {
-                if (!v) return;
-                updateAssumptions({
-                  rothConversion: { ...a.rothConversion, enabled: v === "on" },
-                });
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="off">Off</ToggleGroupItem>
-              <ToggleGroupItem value="on">On</ToggleGroupItem>
-            </ToggleGroup>
-          </Setting>
-          <div className="border-border mt-4 border-t pt-4">
-            <Setting
-              label="Convert up to"
-              helper="Each year converts as much as fits under this ceiling. Higher fills faster but pays a higher rate to do it."
-            >
-              <Select
-                value={a.rothConversion.ceiling}
-                onValueChange={(value) =>
-                  updateAssumptions({
-                    rothConversion: {
-                      ...a.rothConversion,
-                      ceiling: value as typeof a.rothConversion.ceiling,
-                    },
-                  })
-                }
-                disabled={!a.rothConversion.enabled}
-              >
-                <SelectTrigger className="max-w-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="irmaaTier">Under the Medicare surcharge</SelectItem>
-                  <SelectItem value="bracket12">Top of the 12% bracket</SelectItem>
-                  <SelectItem value="bracket22">Top of the 22% bracket</SelectItem>
-                  <SelectItem value="bracket24">Top of the 24% bracket</SelectItem>
-                  <SelectItem value="bracket32">Top of the 32% bracket</SelectItem>
-                </SelectContent>
-              </Select>
-            </Setting>
-          </div>
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">

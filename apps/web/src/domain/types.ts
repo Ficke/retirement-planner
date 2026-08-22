@@ -232,6 +232,12 @@ export interface RetirementAgeAnalysisResult {
   result: SimulationSummary;
 }
 
+export interface RothConversionAnalysisResult {
+  /** Position in `CONVERSION_STEPS`, where zero converts nothing. */
+  step: number;
+  result: SimulationSummary;
+}
+
 /** One modeled year on one path: every cash flow, in real dollars. */
 export interface PathProjection {
   year: number;

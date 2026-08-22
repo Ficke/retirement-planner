@@ -1,12 +1,54 @@
 import { MIN_RETIREMENT_AGE } from './constants';
-import type { RetirementPlan } from './types';
+import type { RetirementPlan, RothConversionPolicy } from './types';
 
 /**
- * The three plan levers the Plan page exposes. Slider bounds, the sensitivity
- * curve's x domain, and the sweep's scenario values all resolve from one range
- * per lever, so a slider can never reach a value the curve does not plot.
+ * Conversion ceilings in the order of how much they actually convert, which is
+ * the order a slider has to put them in. The IRMAA cap is measured on MAGI
+ * rather than taxable income, and after the standard and senior deductions it
+ * lands between the 12% and 22% bracket tops rather than where its larger
+ * dollar figure suggests.
+ *
+ * Index 0 converts nothing, so the lever's own zero is the off switch.
  */
-export type LeverKey = 'retirementAge' | 'spending' | 'socialSecurityClaimAge';
+export const CONVERSION_STEPS: { policy: RothConversionPolicy; label: string }[] = [
+  { policy: { enabled: false, ceiling: 'bracket24' }, label: 'Off' },
+  { policy: { enabled: true, ceiling: 'bracket12' }, label: '12%' },
+  { policy: { enabled: true, ceiling: 'irmaaTier' }, label: 'IRMAA' },
+  { policy: { enabled: true, ceiling: 'bracket22' }, label: '22%' },
+  { policy: { enabled: true, ceiling: 'bracket24' }, label: '24%' },
+  { policy: { enabled: true, ceiling: 'bracket32' }, label: '32%' },
+];
+
+/** Where a plan's policy sits on the slider. Anything unrecognized reads as off. */
+export function conversionStepOf(plan: RetirementPlan): number {
+  const { enabled, ceiling } = plan.assumptions.rothConversion;
+  if (!enabled) return 0;
+  const index = CONVERSION_STEPS.findIndex(
+    (step) => step.policy.enabled && step.policy.ceiling === ceiling,
+  );
+  return index === -1 ? 0 : index;
+}
+
+export function conversionLabelOf(step: number): string {
+  return CONVERSION_STEPS[Math.round(step)]?.label ?? 'Off';
+}
+
+/**
+ * The plan levers the Plan page exposes. Slider bounds, the sensitivity curve's
+ * x domain, and the sweep's scenario values all resolve from one range per
+ * lever, so a slider can never reach a value the curve does not plot.
+ *
+ * A lever's value is always a number, because the slider and the curve's x axis
+ * both need one. The conversion ceiling is a choice rather than a quantity, so
+ * its value is a position in `CONVERSION_STEPS` — evenly spaced, which also
+ * keeps the 22% and 24% ceilings from landing on top of each other on a curve
+ * plotted by rate.
+ */
+export type LeverKey =
+  | 'retirementAge'
+  | 'spending'
+  | 'socialSecurityClaimAge'
+  | 'rothConversion';
 
 export interface LeverRange {
   min: number;
@@ -49,6 +91,16 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     maxSweepValues: 9,
     value: (plan) => plan.profile.currentSpending,
     bounds: () => [20_000, 250_000],
+  },
+  rothConversion: {
+    base: [0, CONVERSION_STEPS.length - 1],
+    step: 1,
+    tickStep: 1,
+    sweepStep: 1,
+    maxTicks: CONVERSION_STEPS.length,
+    maxSweepValues: CONVERSION_STEPS.length,
+    value: conversionStepOf,
+    bounds: () => [0, CONVERSION_STEPS.length - 1],
   },
   socialSecurityClaimAge: {
     base: [62, 70],
