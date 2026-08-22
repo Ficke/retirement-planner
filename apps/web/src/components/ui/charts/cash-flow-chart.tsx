@@ -1,7 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
-import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import {
   ChartContainer,
@@ -18,27 +26,36 @@ import type { OutcomeCashFlowRow } from "@/domain/types";
 
 type Series = { key: string; label: string; color: string };
 
-// Stacked from the zero line outward. The four account types run in the order
-// the engine draws them down, so the ramp lightens toward what is spent first.
 const inflow: Series[] = [
-  { key: "earnedIncome", label: "Salary", color: "var(--color-account-salary)" },
-  { key: "socialSecurityBenefit", label: "Social Security", color: "var(--color-account-ss)" },
-  { key: "withdrawalTaxable", label: "Taxable", color: "var(--color-account-taxable)" },
-  { key: "withdrawalTraditional", label: "Traditional", color: "var(--color-account-traditional)" },
-  { key: "withdrawalRoth", label: "Roth", color: "var(--color-account-roth)" },
-  { key: "withdrawalHSA", label: "HSA", color: "var(--color-account-hsa)" },
+  { key: "salary", label: "Salary", color: "var(--color-flow-salary)" },
+  { key: "socialSecurity", label: "Social Security", color: "var(--color-flow-social)" },
+  { key: "portfolio", label: "Portfolio", color: "var(--color-flow-portfolio)" },
 ];
 
 const outflow: Series[] = [
-  { key: "living", label: "Living", color: "var(--color-spend-living)" },
-  { key: "healthcareCost", label: "Healthcare", color: "var(--color-spend-healthcare)" },
-  { key: "taxes", label: "Tax", color: "var(--color-spend-tax)" },
-  { key: "saved", label: "Saved", color: "var(--color-spend-saved)" },
+  { key: "living", label: "Living", color: "var(--color-flow-living)" },
+  { key: "healthcare", label: "Healthcare", color: "var(--color-flow-healthcare)" },
+  { key: "tax", label: "Tax", color: "var(--color-flow-tax)" },
 ];
 
-const config = Object.fromEntries(
-  [...inflow, ...outflow].map((s) => [s.key, { label: s.label, color: s.color }]),
-);
+/**
+ * Which account the year was funded from. A fourth stacked hue per side is
+ * past the count a stack can carry, so this rides the tooltip instead of the
+ * plot — the chart answers "how much came out of the portfolio", and the
+ * tooltip answers "out of which bucket".
+ */
+const buckets: { key: string; label: string }[] = [
+  { key: "fromTaxable", label: "Taxable" },
+  { key: "fromTraditional", label: "Traditional" },
+  { key: "fromRoth", label: "Roth" },
+  { key: "fromHSA", label: "HSA" },
+];
+
+const config = Object.fromEntries([
+  ...[...inflow, ...outflow].map((s) => [s.key, { label: s.label, color: s.color }]),
+  ...buckets.map((b) => [b.key, { label: b.label }]),
+  ["moneyIn", { label: "Money in" }],
+]);
 
 type Row = Record<string, number> & { age: number };
 
@@ -51,25 +68,32 @@ type Row = Record<string, number> & { age: number };
  *
  * Draining Traditional first is where a required distribution comes from.
  */
-function netWithdrawals(row: OutcomeCashFlowRow): Record<string, number> {
-  const buckets = {
-    withdrawalTraditional: row.withdrawalTraditional,
-    withdrawalTaxable: row.withdrawalTaxable,
-    withdrawalRoth: row.withdrawalRoth,
-    withdrawalHSA: row.withdrawalHSA,
+function netWithdrawals(row: OutcomeCashFlowRow) {
+  const drawn = {
+    fromTraditional: row.withdrawalTraditional,
+    fromTaxable: row.withdrawalTaxable,
+    fromRoth: row.withdrawalRoth,
+    fromHSA: row.withdrawalHSA,
   };
-  const gross = Object.values(buckets).reduce((sum, value) => sum + value, 0);
+  const gross = Object.values(drawn).reduce((sum, value) => sum + value, 0);
   let reinvested = Math.max(0, gross - Math.max(0, -row.savings));
-  for (const key of Object.keys(buckets) as (keyof typeof buckets)[]) {
-    const applied = Math.min(reinvested, buckets[key]);
-    buckets[key] -= applied;
+  for (const key of Object.keys(drawn) as (keyof typeof drawn)[]) {
+    const applied = Math.min(reinvested, drawn[key]);
+    drawn[key] -= applied;
     reinvested -= applied;
   }
-  return buckets;
+  const portfolio = Object.values(drawn).reduce((sum, value) => sum + value, 0);
+  return { ...drawn, portfolio };
 }
 
 function total(row: Row, series: Series[]) {
   return series.reduce((sum, s) => sum + row[s.key], 0);
+}
+
+function Swatch({ color }: { color: string }) {
+  return (
+    <span className="size-2.5 flex-none rounded-[3px]" style={{ background: color }} />
+  );
 }
 
 function Legend({ groups }: { groups: { name: string; series: Series[] }[] }) {
@@ -82,15 +106,18 @@ function Legend({ groups }: { groups: { name: string; series: Series[] }[] }) {
           </span>
           {group.series.map((s) => (
             <span key={s.key} className="flex items-center gap-1.5">
-              <span
-                className="size-2.5 flex-none rounded-[3px]"
-                style={{ background: s.color }}
-              />
+              <Swatch color={s.color} />
               {s.label}
             </span>
           ))}
         </div>
       ))}
+      <span className="text-muted-foreground flex items-center gap-1.5">
+        <svg width="14" height="10" aria-hidden className="flex-none">
+          <line x1="0" y1="5" x2="14" y2="5" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+        Money in — what it clears is saved
+      </span>
     </div>
   );
 }
@@ -106,6 +133,7 @@ function Panel({
   markRetirement,
   reversed,
   showAxis,
+  showIncomeLine,
   label,
 }: {
   caption: string;
@@ -118,6 +146,7 @@ function Panel({
   markRetirement?: boolean;
   reversed?: boolean;
   showAxis?: boolean;
+  showIncomeLine?: boolean;
   label: string;
 }) {
   return (
@@ -132,7 +161,7 @@ function Panel({
         role="img"
         aria-label={label}
       >
-        <AreaChart
+        <ComposedChart
           accessibilityLayer
           data={data}
           syncId="cash-flow"
@@ -159,24 +188,33 @@ function Panel({
           {series.map((s) => (
             <Area
               key={s.key}
-              // A plan changes on birthdays. Interpolating between years would
-              // draw transitions the engine never models.
-              type="step"
+              type="monotone"
               dataKey={s.key}
               stackId="1"
-              stroke="var(--color-card)"
-              strokeWidth={1}
+              stroke="none"
               fill={s.color}
               fillOpacity={1}
               isAnimationActive={false}
             />
           ))}
+          {showIncomeLine && (
+            <Line
+              type="monotone"
+              dataKey="moneyIn"
+              // Solid, because the gridlines are already dashed and two dashed
+              // rules meaning different things read as one.
+              stroke="var(--color-foreground)"
+              strokeOpacity={0.55}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+          )}
           {retirementAge != null && (
             <ReferenceLine
               x={retirementAge}
               stroke="var(--color-foreground)"
-              strokeDasharray="3 3"
-              strokeOpacity={0.5}
+              strokeOpacity={0.35}
               label={markRetirement ? {
                 value: "RETIRE",
                 position: "insideTopLeft",
@@ -197,31 +235,64 @@ function Panel({
                   const age = payload?.[0]?.payload?.age;
                   return age != null ? `Age ${age}` : "";
                 }}
-                formatter={(value, name) => (
-                  <span className="flex w-full justify-between gap-4">
-                    <span className="text-muted-foreground">
-                      {config[name as string]?.label ?? String(name)}
+                formatter={(value, name, item) => {
+                  const row = item?.payload as Row | undefined;
+                  const split = name === "portfolio" && row
+                    ? buckets.filter((b) => row[b.key] > 0)
+                    : [];
+                  return (
+                    <span className="flex w-full flex-col gap-0.5">
+                      <span className="flex w-full justify-between gap-4">
+                        <span className="text-muted-foreground">
+                          {config[name as string]?.label ?? String(name)}
+                        </span>
+                        <span className="font-mono tabular-nums">
+                          {fmtCurrency(Number(value), true)}
+                        </span>
+                      </span>
+                      {split.map((b) => (
+                        <span
+                          key={b.key}
+                          className="text-muted-foreground flex w-full justify-between gap-4 pl-2 text-[11px]"
+                        >
+                          <span>{b.label}</span>
+                          <span className="font-mono tabular-nums">
+                            {fmtCurrency(row![b.key], true)}
+                          </span>
+                        </span>
+                      ))}
                     </span>
-                    <span className="font-mono tabular-nums">
-                      {fmtCurrency(Number(value), true)}
-                    </span>
-                  </span>
-                )}
-                footer={(payload) => (
-                  <span className="flex w-full justify-between gap-4 font-medium">
-                    <span>{caption}</span>
-                    <span className="font-mono tabular-nums">
-                      {fmtCurrency(
-                        payload.reduce((sum, item) => sum + Number(item.value ?? 0), 0),
-                        true,
+                  );
+                }}
+                footer={(payload) => {
+                  const row = payload[0]?.payload;
+                  const sum = payload
+                    .filter((item) => item.dataKey !== "moneyIn")
+                    .reduce((acc, item) => acc + Number(item.value ?? 0), 0);
+                  const saved = row?.saved ?? 0;
+                  return (
+                    <span className="flex w-full flex-col gap-0.5">
+                      <span className="flex w-full justify-between gap-4 font-medium">
+                        <span>{caption}</span>
+                        <span className="font-mono tabular-nums">
+                          {fmtCurrency(sum, true)}
+                        </span>
+                      </span>
+                      {showIncomeLine && saved > 0 && (
+                        <span className="text-muted-foreground flex w-full justify-between gap-4">
+                          <span>Saved</span>
+                          <span className="font-mono tabular-nums">
+                            {fmtCurrency(saved, true)}
+                          </span>
+                        </span>
                       )}
                     </span>
-                  </span>
-                )}
+                  );
+                }}
               />
             }
           />
-        </AreaChart>
+        </ComposedChart>
       </ChartContainer>
     </div>
   );
@@ -235,23 +306,29 @@ export function CashFlowChart({
   height?: number;
 }) {
   const data = useMemo<Row[]>(
-    () => projections.map((row) => ({
-      age: row.age,
-      // In retirement `income` is the Social Security benefit, which the
-      // benefit series already stacks.
-      earnedIncome: row.isRetired ? 0 : row.income,
-      socialSecurityBenefit: row.socialSecurityBenefit,
-      ...netWithdrawals(row),
-      living: Math.max(0, row.spending - row.healthcareCost),
-      healthcareCost: row.healthcareCost,
-      taxes: row.taxes,
-      saved: Math.max(0, row.savings),
-    })),
+    () => projections.map((row) => {
+      const drawn = netWithdrawals(row);
+      const salary = row.isRetired ? 0 : row.income;
+      return {
+        age: row.age,
+        salary,
+        socialSecurity: row.socialSecurityBenefit,
+        ...drawn,
+        living: Math.max(0, row.spending - row.healthcareCost),
+        healthcare: row.healthcareCost,
+        tax: row.taxes,
+        // Every dollar in is spent, taxed, or kept, so what the outflow stack
+        // leaves under this line is exactly the year's saving. Drawing it as a
+        // band instead would file saving under money spent.
+        moneyIn: salary + row.socialSecurityBenefit + drawn.portfolio,
+        saved: Math.max(0, row.savings),
+      };
+    }),
     [projections],
   );
 
-  // One scale for both panels. Money in equals money out every year, so
-  // separate scales would make an identity look like a difference.
+  // One scale for both panels. Separate scales would make the gap between them
+  // — the part that carries the saving — unreadable.
   const yScale = useMemo(
     () => niceLinearScale(Math.max(
       0,
@@ -263,8 +340,8 @@ export function CashFlowChart({
     () => ageTicks(data[0]?.age ?? 0, data[data.length - 1]?.age ?? 0),
     [data],
   );
-  // A plan with no HSA, or a filter with no retired years, should not carry a
-  // legend entry for a band the chart never draws.
+  // A filter with no retired years should not carry a legend entry for a band
+  // the chart never draws.
   const [inSeries, outSeries] = useMemo(
     () => [inflow, outflow].map(
       (group) => group.filter((s) => data.some((row) => row[s.key] > 0)),
@@ -320,7 +397,8 @@ export function CashFlowChart({
         retirementAge={retirementAge}
         reversed
         showAxis
-        label="Average annual money out by category for the selected outcome range"
+        showIncomeLine
+        label="Average annual money out by category for the selected outcome range, against the money that came in"
       />
     </div>
   );

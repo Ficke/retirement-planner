@@ -66,7 +66,7 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
 
   for (const side of ['money in by source', 'money out by category']) {
     await expect(page.getByRole('img', {
-      name: `Average annual ${side} for the selected outcome range`,
+      name: new RegExp(`Average annual ${side} for the selected outcome range`),
     })).toBeVisible();
   }
 });
