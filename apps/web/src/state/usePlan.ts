@@ -185,6 +185,8 @@ const defaultPlan: RetirementPlan = {
     taxableGainRatio: 0.5,
     hsaEligible: false,
     useBackdoorRoth: true,
+    rothConversion: { enabled: false, ceiling: 'bracket24' },
+    terminalTaxRate: 0.30,
   },
 };
 

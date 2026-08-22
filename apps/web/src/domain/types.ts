@@ -114,6 +114,30 @@ export interface AnnualContributions {
   taxable: number;
 }
 
+/**
+ * How much ordinary income a conversion year is allowed to reach. Bracket
+ * ceilings cap taxable income at the named bracket's top; `irmaaTier` caps
+ * MAGI below the first Medicare surcharge tier instead, which binds earlier
+ * than any of the bracket tops a conversion would otherwise aim for.
+ */
+export type RothConversionCeiling =
+  | 'bracket12'
+  | 'bracket22'
+  | 'bracket24'
+  | 'bracket32'
+  | 'irmaaTier';
+
+/**
+ * Conversions run from retirement through the year before RMDs begin — the
+ * window where ordinary income is at its lowest and the pre-tax balance can
+ * still be moved before it is forced out. Both ends are derived, so the plan
+ * stores only whether to convert and how far to fill.
+ */
+export interface RothConversionPolicy {
+  enabled: boolean;
+  ceiling: RothConversionCeiling;
+}
+
 export interface ProjectionSettings {
   simulationModel: SimulationModel;
   /** The main simulation and every sensitivity scenario share this root seed. */
@@ -124,6 +148,14 @@ export interface ProjectionSettings {
   hsaEligible: boolean;
   /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
   useBackdoorRoth: boolean;
+  rothConversion: RothConversionPolicy;
+  /**
+   * Rate applied to the Traditional and HSA balances left at the horizon, to
+   * report terminal wealth after the tax nobody has paid yet. Taxable and Roth
+   * pass through whole: a bequeathed taxable account steps up its basis, and a
+   * Roth is already settled.
+   */
+  terminalTaxRate: number;
 }
 
 /** @deprecated Use ProjectionSettings instead */

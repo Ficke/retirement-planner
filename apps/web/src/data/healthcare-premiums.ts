@@ -110,6 +110,17 @@ const IRMAA_TIERS_2026: { singleUpperBound: number; monthlySurcharge: number }[]
  */
 const IRMAA_SEPARATE_BOUNDS = [109_000, 391_000] as const;
 
+/**
+ * The most MAGI a household can report and still owe no surcharge. Conversion
+ * planning aims at this because IRMAA is a cliff: one dollar over buys the
+ * whole next tier, for both spouses, for a year.
+ */
+export function irmaaFreeMagiCeiling(filingStatus: FilingStatus): number {
+  const firstTier = IRMAA_TIERS_2026[0].singleUpperBound;
+  if (filingStatus === 'MarriedFilingSeparately') return IRMAA_SEPARATE_BOUNDS[0];
+  return filingStatus === 'MarriedFilingJointly' ? firstTier * 2 : firstTier;
+}
+
 export function irmaaAnnualSurcharge(
   magi: number,
   filingStatus: FilingStatus,

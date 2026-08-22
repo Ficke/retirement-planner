@@ -27,5 +27,7 @@ export function createTestProjectionSettings(partial?: Partial<ProjectionSetting
     taxableGainRatio: partial?.taxableGainRatio ?? 0.5,
     hsaEligible: partial?.hsaEligible ?? false,
     useBackdoorRoth: partial?.useBackdoorRoth ?? false,
+    rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+    terminalTaxRate: 0.30,
   };
 }
