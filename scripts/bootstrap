@@ -223,13 +223,13 @@ async function setupFromTfvars() {
 
   return buildEnv({
     firebase: {
-      apiKey: tfvars._VITE_FIREBASE_API_KEY,
-      authDomain: tfvars._VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: tfvars._VITE_FIREBASE_PROJECT_ID,
-      storageBucket: tfvars._VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: tfvars._VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: tfvars._VITE_FIREBASE_APP_ID,
-      measurementId: tfvars._VITE_FIREBASE_MEASUREMENT_ID,
+      apiKey: tfvars._FIREBASE_API_KEY,
+      authDomain: tfvars._FIREBASE_AUTH_DOMAIN,
+      projectId: tfvars._FIREBASE_PROJECT_ID,
+      storageBucket: tfvars._FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: tfvars._FIREBASE_MESSAGING_SENDER_ID,
+      appId: tfvars._FIREBASE_APP_ID,
+      measurementId: tfvars._FIREBASE_MEASUREMENT_ID,
     },
     secrets,
   });

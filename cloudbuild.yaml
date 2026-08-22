@@ -15,19 +15,68 @@ substitutions:
   # Firebase client config — baked into the Vite JS bundle.
   # Not secrets (Firebase client config is intentionally public; security via Firebase Rules).
   # Actual values are set in the Cloud Build trigger via Terraform build_substitutions.
-  _VITE_FIREBASE_API_KEY: ''
-  _VITE_FIREBASE_AUTH_DOMAIN: ''
-  _VITE_FIREBASE_PROJECT_ID: ''
-  _VITE_FIREBASE_STORAGE_BUCKET: ''
-  _VITE_FIREBASE_MESSAGING_SENDER_ID: ''
-  _VITE_FIREBASE_APP_ID: ''
-  _VITE_FIREBASE_MEASUREMENT_ID: ''
+  _FIREBASE_API_KEY: ''
+  _FIREBASE_AUTH_DOMAIN: ''
+  _FIREBASE_PROJECT_ID: ''
+  _FIREBASE_STORAGE_BUCKET: ''
+  _FIREBASE_MESSAGING_SENDER_ID: ''
+  _FIREBASE_APP_ID: ''
+  _FIREBASE_MEASUREMENT_ID: ''
   _ORIGIN_SECRET_VERSION: '1'
 
 steps:
   # ===== BUILD PHASE (parallel) =====
   # Both images build concurrently. Neither service is deployed until both succeed.
   # A broken web build can no longer leave a half-deployed Rust service behind.
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'validate-web-build-config'
+    waitFor: ['-']
+    entrypoint: 'sh'
+    env:
+      - 'FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
+      - 'FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}'
+      - 'FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
+      - 'FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
+      - 'FIREBASE_MESSAGING_SENDER_ID=${_FIREBASE_MESSAGING_SENDER_ID}'
+      - 'FIREBASE_APP_ID=${_FIREBASE_APP_ID}'
+    args:
+      - '-c'
+      - |
+        set -eu
+        : "$${FIREBASE_API_KEY:?Cloud Build trigger is missing _FIREBASE_API_KEY}"
+        : "$${FIREBASE_AUTH_DOMAIN:?Cloud Build trigger is missing _FIREBASE_AUTH_DOMAIN}"
+        : "$${FIREBASE_PROJECT_ID:?Cloud Build trigger is missing _FIREBASE_PROJECT_ID}"
+        : "$${FIREBASE_STORAGE_BUCKET:?Cloud Build trigger is missing _FIREBASE_STORAGE_BUCKET}"
+        : "$${FIREBASE_MESSAGING_SENDER_ID:?Cloud Build trigger is missing _FIREBASE_MESSAGING_SENDER_ID}"
+        : "$${FIREBASE_APP_ID:?Cloud Build trigger is missing _FIREBASE_APP_ID}"
+
+  - name: 'hashicorp/terraform:1.15.3'
+    id: 'verify-terraform-applied'
+    waitFor: ['-']
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        terraform -chdir=terraform init -input=false
+
+        set +e
+        terraform -chdir=terraform plan \
+          -var-file=production.tfvars \
+          -detailed-exitcode \
+          -input=false \
+          -lock=false \
+          -no-color \
+          -refresh=false
+        plan_status=$$?
+        set -e
+
+        if [ "$$plan_status" -eq 2 ]; then
+          echo "Production infrastructure has unapplied Terraform changes. Apply and review Terraform before deploying."
+          exit 1
+        fi
+        exit "$$plan_status"
 
   - name: 'gcr.io/kaniko-project/executor:latest'
     id: 'build-and-push-rust'
@@ -45,7 +94,7 @@ steps:
 
   - name: 'gcr.io/kaniko-project/executor:latest'
     id: 'build-and-push'
-    waitFor: ['-']
+    waitFor: ['validate-web-build-config']
     args:
       - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA'
       - '--destination=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest'
@@ -54,13 +103,13 @@ steps:
       - '--compressed-caching=false'
       - '--snapshot-mode=redo'
       - '--use-new-run'
-      - '--build-arg=VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY}'
-      - '--build-arg=VITE_FIREBASE_AUTH_DOMAIN=${_VITE_FIREBASE_AUTH_DOMAIN}'
-      - '--build-arg=VITE_FIREBASE_PROJECT_ID=${_VITE_FIREBASE_PROJECT_ID}'
-      - '--build-arg=VITE_FIREBASE_STORAGE_BUCKET=${_VITE_FIREBASE_STORAGE_BUCKET}'
-      - '--build-arg=VITE_FIREBASE_MESSAGING_SENDER_ID=${_VITE_FIREBASE_MESSAGING_SENDER_ID}'
-      - '--build-arg=VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID}'
-      - '--build-arg=VITE_FIREBASE_MEASUREMENT_ID=${_VITE_FIREBASE_MEASUREMENT_ID}'
+      - '--build-arg=VITE_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
+      - '--build-arg=VITE_FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}'
+      - '--build-arg=VITE_FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
+      - '--build-arg=VITE_FIREBASE_STORAGE_BUCKET=${_FIREBASE_STORAGE_BUCKET}'
+      - '--build-arg=VITE_FIREBASE_MESSAGING_SENDER_ID=${_FIREBASE_MESSAGING_SENDER_ID}'
+      - '--build-arg=VITE_FIREBASE_APP_ID=${_FIREBASE_APP_ID}'
+      - '--build-arg=VITE_FIREBASE_MEASUREMENT_ID=${_FIREBASE_MEASUREMENT_ID}'
 
   # ===== DEPLOY PHASE =====
   # Only runs if both builds above passed.
@@ -82,7 +131,7 @@ steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-rust-candidate'
     entrypoint: gcloud
-    waitFor: ['build-and-push-rust', 'build-and-push']
+    waitFor: ['build-and-push-rust', 'build-and-push', 'verify-terraform-applied']
     args:
       - 'run'
       - 'deploy'

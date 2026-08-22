@@ -162,8 +162,8 @@ variable "cloud_build_service_account" {
 
 # Build-time substitution variables passed as --build-arg to Kaniko.
 # These are distinct from public_env_vars (Cloud Run runtime env vars):
-# VITE_* values must be baked into the client JS bundle during `vite build`,
-# so they must be present at Docker build time — Cloud Run env vars alone are not enough.
+# Firebase values are mapped to VITE_* Docker build arguments and baked into
+# the client JS bundle during `vite build`. Cloud Run env vars are too late.
 # Keys must start with _ per Cloud Build convention.
 variable "build_substitutions" {
   description = "Cloud Build substitution variables passed as Kaniko build args (baked into client bundle)"
@@ -171,13 +171,13 @@ variable "build_substitutions" {
   default     = {}
   # Configure build substitutions in the environment's variable file:
   # build_substitutions = {
-  #   _VITE_FIREBASE_API_KEY             = "AIza..."
-  #   _VITE_FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
-  #   _VITE_FIREBASE_PROJECT_ID          = "your-project-id"
-  #   _VITE_FIREBASE_STORAGE_BUCKET      = "your-project.appspot.com"
-  #   _VITE_FIREBASE_MESSAGING_SENDER_ID = "123456789"
-  #   _VITE_FIREBASE_APP_ID              = "1:123456789:web:abc123"
-  #   _VITE_FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
+  #   _FIREBASE_API_KEY             = "AIza..."
+  #   _FIREBASE_AUTH_DOMAIN         = "your-project.firebaseapp.com"
+  #   _FIREBASE_PROJECT_ID          = "your-project-id"
+  #   _FIREBASE_STORAGE_BUCKET      = "your-project.appspot.com"
+  #   _FIREBASE_MESSAGING_SENDER_ID = "123456789"
+  #   _FIREBASE_APP_ID              = "1:123456789:web:abc123"
+  #   _FIREBASE_MEASUREMENT_ID      = "G-XXXXXXXXXX"
   # }
 }
 
