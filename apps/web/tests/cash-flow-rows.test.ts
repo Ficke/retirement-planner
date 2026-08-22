@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import * as React from 'react';
+import { render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CashFlowChart } from '@/components/ui/charts/cash-flow-chart';
 import { toCashFlowRows } from '@/components/ui/charts/cash-flow-data';
 import type { OutcomeCashFlowRow } from '@/domain/types';
 
@@ -21,6 +24,8 @@ function row(overrides: Partial<OutcomeCashFlowRow>): OutcomeCashFlowRow {
 }
 
 const moneyOut = (r: Record<string, number>) => r.living + r.healthcare + r.tax;
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('cash-flow chart rows', () => {
   it('leaves exactly the year’s saving between the two stacks in a working year', () => {
@@ -82,5 +87,26 @@ describe('cash-flow chart rows', () => {
     expect(r.healthcare).toBe(0);
     expect(r.living).toBe(40_000);
     expect(moneyOut(r)).toBe(r.moneyIn);
+  });
+
+  it('renders visible stacks and an income marker for a one-year phase', () => {
+    // Vitest compiles this client component with the classic JSX runtime.
+    vi.stubGlobal('React', React);
+    const projection = row({
+      age: 64,
+      isRetired: false,
+      income: 100_000,
+      spending: 50_000,
+      taxes: 20_000,
+      savings: 30_000,
+    });
+
+    const { container } = render(React.createElement(CashFlowChart, {
+      projections: [projection],
+      height: 400,
+    }));
+
+    expect(container.querySelector('.recharts-bar-rectangle')).not.toBeNull();
+    expect(container.querySelector('.recharts-line-dot')).not.toBeNull();
   });
 });

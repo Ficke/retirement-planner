@@ -782,7 +782,10 @@ fn project_scenario_internal(
                 deposit_traditional,
                 deposit_roth,
                 deposit_hsa,
-                healthcare_cost,
+                // Outcome cohorts average this field, so cap it on the
+                // individual path before aggregation. Capping cohort means
+                // later would distort mixed funded/underfunded cohorts.
+                healthcare_cost: healthcare_cost.min(spending.max(0.0)),
                 insufficient_funds,
             });
         }
@@ -1237,6 +1240,39 @@ mod tests {
         legacy.schema_version = HEALTHCARE_MODEL_SCHEMA_VERSION - 1;
         let old = healthcare_in_first_retired_year(&legacy);
         assert!((old - 18_900.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn healthcare_is_capped_on_each_underfunded_path_before_aggregation() {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1955-01-01".to_string();
+        plan.profile.retirement_age = 65;
+        plan.profile.life_expectancy = 70;
+        plan.profile.retirement_spending = 40_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.profile.retirement_healthcare = RetirementHealthcare {
+            pre_medicare_premium: 20_000.0,
+            medicare_premium: 10_000.0,
+            out_of_pocket: 5_000.0,
+            real_growth_rate: 0.0,
+        };
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.accounts.clear();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        let year = &result.projections[0];
+        assert!(year.insufficient_funds);
+        assert_eq!(year.spending, 0.0);
+        assert_eq!(year.healthcare_cost, 0.0);
     }
 
     #[test]

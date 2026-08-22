@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import {
   Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Line,
@@ -121,6 +122,11 @@ function Panel({
   showIncomeLine?: boolean;
   label: string;
 }) {
+  const singleYear = data.length === 1;
+  const xDomain: [number, number] | ["dataMin", "dataMax"] = singleYear
+    ? [data[0].age - 0.5, data[0].age + 0.5]
+    : ["dataMin", "dataMax"];
+
   return (
     <div className="flex">
       <span className="text-muted-foreground flex w-4 flex-none items-center justify-center font-mono text-[10px] tracking-widest uppercase [writing-mode:vertical-rl] rotate-180">
@@ -146,7 +152,7 @@ function Panel({
             {...chartXAxisProps}
             dataKey="age"
             type="number"
-            domain={["dataMin", "dataMax"]}
+            domain={xDomain}
             ticks={xTicks}
             hide={!showAxis}
           />
@@ -157,7 +163,16 @@ function Panel({
             reversed={reversed}
             tickFormatter={fmtAxisCurrency}
           />
-          {series.map((s) => (
+          {series.map((s) => singleYear ? (
+            <Bar
+              key={s.key}
+              dataKey={s.key}
+              stackId="1"
+              barSize={48}
+              fill={s.color}
+              isAnimationActive={false}
+            />
+          ) : (
             <Area
               key={s.key}
               type="monotone"
@@ -178,7 +193,12 @@ function Panel({
               stroke="var(--color-foreground)"
               strokeOpacity={0.55}
               strokeWidth={1.5}
-              dot={false}
+              dot={singleYear ? {
+                r: 3,
+                fill: "var(--color-card)",
+                stroke: "var(--color-foreground)",
+                strokeWidth: 1.5,
+              } : false}
               isAnimationActive={false}
             />
           )}

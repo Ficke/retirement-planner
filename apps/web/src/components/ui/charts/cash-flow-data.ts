@@ -41,11 +41,9 @@ export function toCashFlowRows(projections: OutcomeCashFlowRow[]): CashFlowRow[]
   return projections.map((row) => {
     const drawn = netWithdrawals(row);
     const salary = row.isRetired ? 0 : row.income;
-    // A year the portfolio cannot fund pays what it can: `spending` falls to
-    // the funded amount while the modeled healthcare cost does not, so the band
-    // has to be capped at what was actually paid. Uncapped it draws money out
-    // above money in, which the plan never did. The nullish guard covers a
-    // cloud engine deployed before the field.
+    // New engines report funded healthcare, capped on each path before cohort
+    // averaging. Keep this cap for a partially rolled-out cloud engine and the
+    // nullish guard for an engine deployed before the field existed.
     const healthcare = Math.min(row.healthcareCost ?? 0, row.spending);
     return {
       age: row.age,

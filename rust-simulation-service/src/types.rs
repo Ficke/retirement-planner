@@ -206,10 +206,9 @@ pub struct PathProjection {
     pub deposit_hsa: f64,
     #[serde(rename = "withdrawalHSA")]
     pub withdrawal_hsa: f64,
-    /// Retirement healthcare for the year, part of the same `spending` total.
-    /// Zero while working, where healthcare sits inside `current_spending`. In
-    /// a year the portfolio cannot fund, `spending` drops to what was actually
-    /// paid while this stays the modeled cost, so it can exceed `spending`.
+    /// Funded retirement healthcare for the year, part of the same `spending`
+    /// total. Zero while working, where healthcare sits inside
+    /// `current_spending`.
     #[serde(rename = "healthcareCost")]
     pub healthcare_cost: f64,
     #[serde(rename = "insufficientFunds")]
