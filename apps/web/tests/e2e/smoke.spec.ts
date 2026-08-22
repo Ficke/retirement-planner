@@ -54,9 +54,8 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
-  // Exercises the worker response directly: a separately deployed cloud engine
-  // may still be on the previous additive response shape during rollout. Signed
-  // out there is nothing to switch — cloud compute needs an account.
+  // The E2E server runs only the Vite client, so the default cloud request falls
+  // back to the Worker. This directly verifies the current local response shape.
 
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });

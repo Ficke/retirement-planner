@@ -5,19 +5,17 @@ This directory contains detailed architecture documentation for the Retirement P
 ## Documents
 
 ### [Simulation Architecture](./simulation-architecture.md)
-Comprehensive analysis of the Monte Carlo simulation architecture, including:
-- Parallelization strategy with Rayon
-- Thread-safety and isolation properties
-- Horizontal scaling readiness
-- Performance analysis and benchmarks
-- Distribution options (vertical, horizontal, serverless)
+Reference for the Monte Carlo simulation architecture, including:
+- Cloud and local execution models
+- Seed and path identity
+- Parallelization and cancellation
+- Rolling-deployment compatibility
+- Correctness invariants
 
-## Quick Links
+## Runtime properties
 
-- **Performance**: 107ms for 5000 paths (3x faster than TypeScript)
-- **Parallelization**: Rayon thread pool across all CPU cores
+- **Parallelization**: Rayon thread pool sized to the service's CPU allocation
 - **Isolation**: Each path is a pure function with no shared state
-- **Distribution-Ready**: Can scale horizontally with ~50 lines of code
 
 ## Implementation Status
 
@@ -27,7 +25,8 @@ Comprehensive analysis of the Monte Carlo simulation architecture, including:
 - RMD calculations
 - Social Security benefits (AIME/PIA)
 - Complete projection engine with tax-efficient withdrawals
-- Results verified identical to TypeScript implementation
+- Cross-engine contract tests compare financial semantics within the suite's
+  numerical tolerances
 
 ✅ **Phase 2: Vite/Hono Integration** - COMPLETED
 - User preference for server-side vs client-side

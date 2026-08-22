@@ -224,7 +224,7 @@ describe('edge proxy', () => {
     expect(response.status).toBe(401);
   });
 
-  it('caches only successful immutable Next static GET responses', async () => {
+  it('caches only successful immutable Vite asset GET responses', async () => {
     let originCalls = 0;
     const deps = dependencies(async () => {
       originCalls += 1;

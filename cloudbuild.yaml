@@ -104,8 +104,8 @@ steps:
       # startup CPU boost — is owned by Terraform (terraform/variables.tf).
       # `gcloud run deploy` preserves any setting it is not told about, so this
       # step ships the new image and leaves the shape alone.
-      # Do NOT re-add --cpu/--memory here: passing them overwrote the
-      # Terraform-applied 4 vCPU / 2Gi on every push to main.
+      # Do not add --cpu or --memory here; either flag would override
+      # Terraform-owned resource sizing on every deployment.
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'promote-rust'

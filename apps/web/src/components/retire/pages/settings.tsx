@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { LogIn, RefreshCw } from "lucide-react";

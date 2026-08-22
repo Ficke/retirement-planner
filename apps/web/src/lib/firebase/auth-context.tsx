@@ -3,8 +3,6 @@
  * Provides authentication state and user information throughout the app
  */
 
-'use client';
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from './config';

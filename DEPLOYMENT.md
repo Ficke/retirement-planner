@@ -95,10 +95,10 @@ values remain in Secret Manager.
 ### 3. Apply
 
 ```bash
-terraform init
-terraform plan -var-file=production.tfvars -out=production.tfplan
-terraform show production.tfplan
-terraform apply production.tfplan
+terraform -chdir=terraform init
+terraform -chdir=terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform -chdir=terraform show production.tfplan
+terraform -chdir=terraform apply production.tfplan
 ```
 
 This creates both Cloud Run services, both service accounts, the Artifact
@@ -108,9 +108,13 @@ call the Rust service, and the Cloud Build trigger.
 ### 4. Verify
 
 ```bash
-scripts/smoke-check.sh "$(gcloud run services describe retire-plan \
+export ORIGIN_SECRET="$(gcloud secrets versions access latest --secret ORIGIN_SECRET)"
+./scripts/smoke-check.sh "$(gcloud run services describe retire-plan \
   --region us-central1 --format 'value(status.url)')"
 ```
+
+During an origin-secret rotation, read the version referenced by
+`terraform/production.tfvars` instead of `latest`.
 
 This is the same check Cloud Build runs. It posts a real simulation, so a pass
 means ingress, the Hono server, the API route, the web service's IAM token,
@@ -239,7 +243,7 @@ there is no charge between sessions.
 - `/api/simulation/*` is deliberately unauthenticated (anonymous users may opt
   into cloud compute) and therefore rate-limited per IP and clamped on path
   count, batch size, and horizon — see `lib/simulation-request.ts`
-- Security headers are set in `apps/web/next.config.ts`
+- Security headers are set in `apps/web/src/server/app.ts`
 - All SQL uses parameterized queries
 
 See `SECURITY.md` for the audit history and open items.
