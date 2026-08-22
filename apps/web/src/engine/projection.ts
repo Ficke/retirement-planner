@@ -241,6 +241,8 @@ function projectScenarioInternal(
     let insufficientFundsYear = false;
     let healthcareCostYear = 0;
     let rothConversionYear = 0;
+    let conversionTaxFromTaxable = 0;
+    let conversionTaxWithheld = 0;
     
     if (!isRetired) {
       // Working phase saves the residual: gross income less taxes and spending.
@@ -488,14 +490,19 @@ function projectScenarioInternal(
           drawFromBucket(accountBalances, 'Traditional', conversion.converted);
           drawFromBucket(accountBalances, 'Taxable', conversion.fromTaxable);
           depositToBucket(accountBalances, 'Roth', conversion.converted - conversion.withheld);
-          rothConversionYear = conversion.converted;
+          // What reached the Roth. Tax withheld out of a conversion never gets
+          // there, so it is reported as the ordinary distribution it is —
+          // which also keeps the two figures from double-counting a dollar.
+          rothConversionYear = conversion.converted - conversion.withheld;
+          conversionTaxFromTaxable = conversion.fromTaxable;
+          conversionTaxWithheld = conversion.withheld;
           taxes += conversion.tax;
         }
       }
 
       hsaQualifiedAllowance -= hsaQualifiedUsed;
-      withdrawalTaxableYear = withdrawalTaxable;
-      withdrawalTraditionalYear = withdrawalTraditional;
+      withdrawalTaxableYear = withdrawalTaxable + conversionTaxFromTaxable;
+      withdrawalTraditionalYear = withdrawalTraditional + conversionTaxWithheld;
       withdrawalRothYear = withdrawalRoth;
       withdrawalHSAYear = withdrawalHSA;
       insufficientFundsYear = insufficientFunds;
@@ -505,7 +512,8 @@ function projectScenarioInternal(
         : targetSpending;
 
       income = socialSecurityBenefit;
-      savings = depositTaxable - totalWithdrawn;
+      savings = depositTaxable - totalWithdrawn - conversionTaxFromTaxable
+        - conversionTaxWithheld;
 
       currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
     }

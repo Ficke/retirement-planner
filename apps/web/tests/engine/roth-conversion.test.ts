@@ -5,6 +5,7 @@ import { FEDERAL_TAX_BRACKETS_2025 } from '@/data/tax-brackets-2025';
 import { irmaaFreeMagiCeiling } from '@/data/healthcare-premiums';
 import type { RothConversionCeiling, SimulationPlan } from '@/domain/types';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { toCashFlowRows } from '@/components/ui/charts/cash-flow-data';
 import { createTestProjectionSettings } from '../test-helpers';
 
 const RETIREMENT_AGE = 65;
@@ -109,6 +110,24 @@ describe('Roth conversions', () => {
 
     expect(total('bracket24')).toBeGreaterThan(total('bracket12'));
     expect(total('bracket32')).toBeGreaterThan(total('bracket24'));
+  });
+
+  it('still reconciles the cash-flow chart in a conversion year', () => {
+    const { projections } = projectScenario(planWith({ enabled: true, ceiling: 'bracket24' }), config);
+    const rows = toCashFlowRows(projections.map((year) => ({ ...year, isRetired: year.isRetired })));
+
+    const converting = rows.filter((_, index) => projections[index].rothConversion > 0);
+    expect(converting.length).toBeGreaterThan(0);
+
+    // Selling taxable to pay the conversion tax has to show up on the money-in
+    // side, or the year reports tax it never raised the cash for. The dollar of
+    // slack is the withdrawal solver's own convergence tolerance, which these
+    // years inherit and which is there whether or not anything converts.
+    for (const row of converting) {
+      const moneyIn = row.salary + row.socialSecurity + row.portfolio;
+      const moneyOut = row.living + row.healthcare + row.tax;
+      expect(Math.abs(moneyOut - moneyIn)).toBeLessThan(1);
+    }
   });
 
   it('reports terminal wealth after the tax the pre-tax balance still owes', () => {

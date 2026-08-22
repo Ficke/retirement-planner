@@ -416,6 +416,8 @@ fn project_scenario_internal(
         let mut taxes;
         let savings;
         let mut roth_conversion = 0.0;
+        let mut conversion_tax_from_taxable = 0.0;
+        let mut conversion_tax_withheld = 0.0;
         let mut social_security_benefit = 0.0;
         let mut withdrawal_taxable = 0.0;
         let mut withdrawal_traditional = 0.0;
@@ -716,6 +718,7 @@ fn project_scenario_internal(
 
             withdrawal_taxable = withdrawal_result.withdrawal_taxable;
             withdrawal_traditional = withdrawal_result.withdrawal_traditional;
+
             withdrawal_roth = withdrawal_result.withdrawal_roth;
             withdrawal_hsa = withdrawal_result.withdrawal_hsa;
             deposit_taxable = withdrawal_result.deposit_taxable;
@@ -759,7 +762,13 @@ fn project_scenario_internal(
                         AccountType::Roth,
                         conversion.converted - conversion.withheld,
                     );
-                    roth_conversion = conversion.converted;
+                    // What reached the Roth. Tax withheld out of a conversion
+                    // never gets there, so it is reported as the ordinary
+                    // distribution it is -- which also keeps the two figures
+                    // from double-counting a dollar.
+                    roth_conversion = conversion.converted - conversion.withheld;
+                    conversion_tax_from_taxable = conversion.from_taxable;
+                    conversion_tax_withheld = conversion.withheld;
                     taxes += conversion.tax;
                 }
             }
@@ -775,8 +784,14 @@ fn project_scenario_internal(
                 target_spending
             };
 
+            withdrawal_taxable += conversion_tax_from_taxable;
+            withdrawal_traditional += conversion_tax_withheld;
+
             income = social_security_benefit;
-            savings = deposit_taxable - withdrawal_result.total_withdrawn;
+            savings = deposit_taxable
+                - withdrawal_result.total_withdrawn
+                - conversion_tax_from_taxable
+                - conversion_tax_withheld;
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
         }
 

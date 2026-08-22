@@ -60,86 +60,144 @@ export interface RothConversionResult {
 const NONE: RothConversionResult = { converted: 0, tax: 0, fromTaxable: 0, withheld: 0 };
 
 /**
+ * The loop shrinks its error by roughly a gain share times a marginal rate each
+ * pass, so four settle any balance this model can hold to a few dollars — well
+ * inside the resolution of the ceilings being aimed at.
+ */
+const SETTLING_PASSES = 4;
+
+/** Halvings, over a bracket tightened below, to resolve well under a dollar. */
+const SOLVE_STEPS = 20;
+
+/**
+ * A conversion and everything that follows from its size: what it costs, which
+ * dollars pay for it, and the capital gain those dollars realize on the way out.
+ *
+ * Paying the bill from taxable is what makes the trade worth doing — every
+ * converted dollar then compounds tax-free — so taxable funds it while it
+ * lasts, and only the remainder is withheld from the conversion itself.
+ *
+ * Selling to pay is a taxable event of its own, and the gain it realizes feeds
+ * back into the tax that prompted the sale. Each pass closes more of that loop.
+ */
+function outcomeOf(conversion: number, input: RothConversionInput, baseTax: number) {
+  const taxableBalance = Math.max(0, input.taxableBalance);
+  let qualifiedIncome = input.qualifiedIncome;
+  let tax = 0;
+  let fromTaxable = 0;
+
+  for (let pass = 0; pass < SETTLING_PASSES; pass++) {
+    tax = Math.max(0, taxOf(conversion, qualifiedIncome, input) - baseTax);
+    fromTaxable = Math.min(tax, taxableBalance);
+    qualifiedIncome = input.qualifiedIncome + fromTaxable * input.taxableGainRatio;
+  }
+
+  return {
+    tax,
+    fromTaxable,
+    withheld: Math.min(conversion, tax - fromTaxable),
+    /** Gain realized selling to pay, which counts toward MAGI like any other. */
+    fundingGain: fromTaxable * input.taxableGainRatio,
+  };
+}
+
+/**
  * The largest conversion a year can absorb without breaching its ceiling, and
  * what that conversion costs.
  *
  * Headroom is solved rather than subtracted because a converted dollar does not
- * raise the measured quantity by a dollar: against a bracket top it also drags
- * more of the Social Security benefit into taxable income, so the ceiling binds
- * before a naive subtraction says it should. Bisection handles both ceilings
- * with one code path, since each measure rises monotonically with the amount
- * converted.
+ * raise the measured quantity by a dollar. Against a bracket top it drags more
+ * of the Social Security benefit into taxable income; against either ceiling it
+ * also forces the sale that pays its own tax, and the gain on that sale counts
+ * too. Each candidate is measured against the sale it would itself require, so
+ * the amount that gets reported is one the ceiling has already been checked
+ * against — which matters most for the IRMAA ceiling, where a dollar over buys
+ * a whole tier and there is no partial credit for being close.
+ *
+ * Bisection suits both ceilings: each measure rises monotonically with the
+ * amount converted.
  */
 export function rothConversionFor(input: RothConversionInput): RothConversionResult {
   const { policy, traditionalBalance } = input;
   if (!policy.enabled || traditionalBalance <= 0) return NONE;
 
-  const { limit, measure } = ceilingOf(input);
-  if (measure(0) >= limit) return NONE;
-  if (measure(traditionalBalance) <= limit) {
-    return settle(traditionalBalance, input);
-  }
+  const baseTax = taxOf(0, input.qualifiedIncome, input);
+  const limit = ceilingOf(input);
+  const fits = (conversion: number) => measureOf(
+    conversion,
+    outcomeOf(conversion, input, baseTax).fundingGain,
+    input,
+  ) <= limit;
 
+  if (!fits(0)) return NONE;
+  if (fits(traditionalBalance)) return settle(traditionalBalance, input, baseTax);
+
+  // Ordinary income cannot outrun the ceiling by more than the untaxed benefit
+  // and the deductions sitting under it, so the search never needs a wider
+  // bracket — and a tighter bracket is fewer halvings to the same resolution.
   let low = 0;
-  let high = traditionalBalance;
-  for (let i = 0; i < 32; i++) {
+  let high = Math.min(traditionalBalance, 2 * limit + input.socialSecurityBenefit);
+  for (let step = 0; step < SOLVE_STEPS; step++) {
     const mid = (low + high) / 2;
-    if (measure(mid) <= limit) low = mid;
+    if (fits(mid)) low = mid;
     else high = mid;
   }
+
   // Whole dollars, rounded down. Nobody converts a fraction of a cent, and
   // pinning the result to an integer is what lets the two engines agree
   // exactly: bisection alone lands them a hair apart on the same root.
-  return settle(Math.floor(low), input);
+  return settle(Math.floor(low), input, baseTax);
 }
 
-function ceilingOf(input: RothConversionInput): {
-  limit: number;
-  measure: (conversion: number) => number;
-} {
-  const { policy, household, taxableWithdrawals, taxableGainRatio } = input;
+function ceilingOf(input: RothConversionInput): number {
+  const { policy, household } = input;
+  return policy.ceiling === 'irmaaTier'
+    ? irmaaFreeMagiCeiling(household.filingStatus)
+    : bracketTopFor(CEILING_BRACKET_RATE[policy.ceiling], household.filingStatus);
+}
 
-  if (policy.ceiling === 'irmaaTier') {
+function measureOf(
+  conversion: number,
+  fundingGain: number,
+  input: RothConversionInput,
+): number {
+  if (input.policy.ceiling === 'irmaaTier') {
     // Mirrors how the projection reports MAGI: the whole benefit, every
     // ordinary withdrawal, and the gain portion of what taxable paid out.
-    const base = input.socialSecurityBenefit
+    return input.socialSecurityBenefit
       + input.traditionalWithdrawals
-      + taxableWithdrawals * taxableGainRatio;
-    return {
-      limit: irmaaFreeMagiCeiling(household.filingStatus),
-      measure: (conversion) => base + conversion,
-    };
+      + conversion
+      + input.taxableWithdrawals * input.taxableGainRatio
+      + fundingGain;
   }
 
-  return {
-    limit: bracketTopFor(CEILING_BRACKET_RATE[policy.ceiling], household.filingStatus),
-    measure: (conversion) => taxOf(conversion, input).taxableIncome,
-  };
-}
-
-function taxOf(conversion: number, input: RothConversionInput) {
   return calculateRetirementTax({
     traditionalWithdrawals: input.traditionalWithdrawals + conversion,
     socialSecurityBenefit: input.socialSecurityBenefit,
-    qualifiedIncome: input.qualifiedIncome,
+    qualifiedIncome: input.qualifiedIncome + fundingGain,
     household: input.household,
     state: input.state,
     taxYear: input.taxYear,
-  });
+  }).taxableIncome;
 }
 
-/**
- * Prices a conversion and decides which dollars pay for it. Paying from taxable
- * is what makes the trade worth doing — every converted dollar then compounds
- * tax-free — so taxable funds the bill while it lasts, and only the remainder
- * is withheld from the conversion itself.
- */
-function settle(converted: number, input: RothConversionInput): RothConversionResult {
+function taxOf(conversion: number, qualifiedIncome: number, input: RothConversionInput): number {
+  return calculateRetirementTax({
+    traditionalWithdrawals: input.traditionalWithdrawals + conversion,
+    socialSecurityBenefit: input.socialSecurityBenefit,
+    qualifiedIncome,
+    household: input.household,
+    state: input.state,
+    taxYear: input.taxYear,
+  }).totalTax;
+}
+
+function settle(
+  converted: number,
+  input: RothConversionInput,
+  baseTax: number,
+): RothConversionResult {
   if (converted <= 0) return NONE;
-
-  const tax = Math.max(0, taxOf(converted, input).totalTax - taxOf(0, input).totalTax);
-  const fromTaxable = Math.min(tax, Math.max(0, input.taxableBalance));
-  const withheld = Math.min(converted, tax - fromTaxable);
-
+  const { tax, fromTaxable, withheld } = outcomeOf(converted, input, baseTax);
   return { converted, tax, fromTaxable, withheld };
 }

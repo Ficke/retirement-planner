@@ -248,9 +248,10 @@ export interface PathProjection {
   withdrawalRoth: number;
   rmdAmount: number;
   /**
-   * Pre-tax dollars moved Traditional → Roth this year. An internal transfer,
-   * so it is no part of `spending` or the withdrawal totals; only the tax it
-   * adds reaches `taxes`.
+   * Dollars that reached the Roth this year. An internal transfer, so it is no
+   * part of `spending`; only the tax it adds reaches `taxes`. Tax withheld out
+   * of a conversion is counted in `withdrawalTraditional` instead, since those
+   * dollars left the pre-tax account without arriving anywhere else.
    */
   rothConversion: number;
   depositTaxable: number;
