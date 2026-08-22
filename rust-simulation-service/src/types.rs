@@ -206,6 +206,11 @@ pub struct PathProjection {
     pub deposit_hsa: f64,
     #[serde(rename = "withdrawalHSA")]
     pub withdrawal_hsa: f64,
+    /// Funded retirement healthcare for the year, part of the same `spending`
+    /// total. Zero while working, where healthcare sits inside
+    /// `current_spending`.
+    #[serde(rename = "healthcareCost")]
+    pub healthcare_cost: f64,
     #[serde(rename = "insufficientFunds")]
     pub insufficient_funds: bool,
 }
@@ -250,6 +255,8 @@ pub struct OutcomeCashFlowRow {
     pub withdrawal_roth: f64,
     #[serde(rename = "withdrawalHSA")]
     pub withdrawal_hsa: f64,
+    #[serde(rename = "healthcareCost")]
+    pub healthcare_cost: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

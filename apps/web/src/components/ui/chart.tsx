@@ -228,7 +228,13 @@ function ChartTooltipContent({
     nameKey?: string
     labelKey?: string
     hideZeroValues?: boolean
-    footer?: (payload: readonly { value?: TooltipValueType }[]) => React.ReactNode
+    footer?: (
+      payload: readonly {
+        value?: TooltipValueType
+        dataKey?: unknown
+        payload?: Record<string, number>
+      }[],
+    ) => React.ReactNode
   } & Omit<
     RechartsPrimitive.DefaultTooltipContentProps<
       TooltipValueType,

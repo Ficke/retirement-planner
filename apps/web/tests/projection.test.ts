@@ -348,6 +348,34 @@ describe('Projection Engine', () => {
       .toBeCloseTo(66_000, 0);
   });
 
+  it('caps reported healthcare on each underfunded path before cohort averaging', () => {
+    const plan: SimulationPlan = {
+      ...testPlan,
+      profile: {
+        ...testPlan.profile,
+        birthDate: '1955-01-01',
+        retirementAge: 65,
+        lifeExpectancy: 70,
+        retirementSpending: 40_000,
+        retirementSpendingGrowthRate: 0,
+        retirementHealthcare: {
+          preMedicarePremium: 20_000,
+          medicarePremium: 10_000,
+          outOfPocket: 5_000,
+          realGrowthRate: 0,
+        },
+        asOfDate: '2025-01-01',
+      },
+      accounts: [],
+      socialSecurity: { enabled: false, claimAge: 67, manualOverride: false },
+    };
+
+    const year = projectScenario(plan, { paths: 1, seed: 42 }).projections[0];
+    expect(year.insufficientFunds).toBe(true);
+    expect(year.spending).toBe(0);
+    expect(year.healthcareCost).toBe(0);
+  });
+
   it('reinvests only after-tax RMD excess and reconciles spendable cash', () => {
     const plan: SimulationPlan = {
       ...testPlan,

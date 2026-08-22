@@ -213,6 +213,11 @@ export interface PathProjection {
   depositRoth: number;
   depositHSA: number;
   withdrawalHSA: number;
+  /**
+   * Funded retirement healthcare for the year, part of the same `spending`
+   * total. Zero while working, where healthcare sits inside `currentSpending`.
+   */
+  healthcareCost: number;
   insufficientFunds: boolean;
 }
 
@@ -223,7 +228,7 @@ export interface PathResult {
   success: boolean; // Whether every modeled year was fully funded
 }
 
-/** One year of a cohort's mean cash flows. */
+/** One year of a cohort's mean cash flows, including mean funded healthcare. */
 export interface OutcomeCashFlowRow {
   age: number;
   isRetired: boolean;
@@ -236,6 +241,7 @@ export interface OutcomeCashFlowRow {
   withdrawalTraditional: number;
   withdrawalRoth: number;
   withdrawalHSA: number;
+  healthcareCost: number;
 }
 
 export interface OutcomeBucket {

@@ -423,6 +423,7 @@ fn project_scenario_internal(
         let mut deposit_traditional = 0.0;
         let mut deposit_roth = 0.0;
         let mut deposit_hsa = 0.0;
+        let mut healthcare_cost = 0.0;
         let insufficient_funds;
 
         if !is_retired {
@@ -641,11 +642,12 @@ fn project_scenario_internal(
             // and this bucket is drained last, so by the time it is touched the
             // allowance is large.
             hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
+            healthcare_cost = healthcare.total * retirement_period_fraction;
             let target_spending = profile.retirement_spending
                 * (1.0 + profile.retirement_spending_growth_rate)
                     .powi(spending_growth_exponent as i32)
                 * retirement_period_fraction
-                + healthcare.total * retirement_period_fraction;
+                + healthcare_cost;
 
             // Calculate Social Security
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
@@ -780,6 +782,10 @@ fn project_scenario_internal(
                 deposit_traditional,
                 deposit_roth,
                 deposit_hsa,
+                // Outcome cohorts average this field, so cap it on the
+                // individual path before aggregation. Capping cohort means
+                // later would distort mixed funded/underfunded cohorts.
+                healthcare_cost: healthcare_cost.min(spending.max(0.0)),
                 insufficient_funds,
             });
         }
@@ -1234,6 +1240,39 @@ mod tests {
         legacy.schema_version = HEALTHCARE_MODEL_SCHEMA_VERSION - 1;
         let old = healthcare_in_first_retired_year(&legacy);
         assert!((old - 18_900.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn healthcare_is_capped_on_each_underfunded_path_before_aggregation() {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1955-01-01".to_string();
+        plan.profile.retirement_age = 65;
+        plan.profile.life_expectancy = 70;
+        plan.profile.retirement_spending = 40_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.profile.retirement_healthcare = RetirementHealthcare {
+            pre_medicare_premium: 20_000.0,
+            medicare_premium: 10_000.0,
+            out_of_pocket: 5_000.0,
+            real_growth_rate: 0.0,
+        };
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.accounts.clear();
+        plan.social_security.enabled = false;
+
+        let result = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .unwrap();
+        let year = &result.projections[0];
+        assert!(year.insufficient_funds);
+        assert_eq!(year.spending, 0.0);
+        assert_eq!(year.healthcare_cost, 0.0);
     }
 
     #[test]

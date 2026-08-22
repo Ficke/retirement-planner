@@ -518,6 +518,10 @@ function projectScenarioInternal(
         depositTraditional: depositTraditionalYear,
         depositRoth: depositRothYear,
         depositHSA: depositHSAYear,
+        // Outcome cohorts average this field, so cap it on the individual path
+        // before aggregation. Capping cohort means later would misclassify the
+        // living/healthcare split when only some paths are underfunded.
+        healthcareCost: Math.min(healthcareCostYear, Math.max(0, spending)),
         insufficientFunds: insufficientFundsYear,
       });
     }

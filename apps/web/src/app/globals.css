@@ -36,8 +36,12 @@
   --color-account-traditional: var(--account-traditional);
   --color-account-roth: var(--account-roth);
   --color-account-hsa: var(--account-hsa);
-  --color-account-ss: var(--account-ss);
-  --color-account-salary: var(--account-salary);
+  --color-flow-salary: var(--flow-salary);
+  --color-flow-social: var(--flow-social);
+  --color-flow-portfolio: var(--flow-portfolio);
+  --color-flow-living: var(--flow-living);
+  --color-flow-healthcare: var(--flow-healthcare);
+  --color-flow-tax: var(--flow-tax);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -121,8 +125,18 @@ details[open] summary ~ * {
   --account-traditional: oklch(58% 0.09 280);
   --account-roth: oklch(58% 0.10 320);
   --account-hsa: oklch(58% 0.09 190);
-  --account-ss: oklch(58% 0.09 70);
-  --account-salary: oklch(58% 0.10 160);
+  /*
+   * Cash-flow series, six categorical slots in a fixed order. Validated for
+   * lightness band, chroma floor, protan/deutan separation, and contrast
+   * against the card, in this mode and in dark. Re-run the check before
+   * re-stepping any slot; the order is what makes the adjacent pairs safe.
+   */
+  --flow-salary: oklch(60% 0.11 162);
+  --flow-social: oklch(63% 0.13 80);
+  --flow-portfolio: oklch(56% 0.11 250);
+  --flow-living: oklch(65% 0.12 45);
+  --flow-healthcare: oklch(58% 0.13 320);
+  --flow-tax: oklch(46% 0.12 20);
 }
 
 .dark {
@@ -172,8 +186,14 @@ details[open] summary ~ * {
   --account-traditional: oklch(70% 0.11 280);
   --account-roth: oklch(70% 0.12 320);
   --account-hsa: oklch(70% 0.11 190);
-  --account-ss: oklch(72% 0.12 70);
-  --account-salary: oklch(70% 0.12 160);
+  /* Its own steps, not a flip of the light ones: the dark band is narrower at
+   * both ends, so every slot is re-validated against the dark card. */
+  --flow-salary: oklch(66% 0.12 162);
+  --flow-social: oklch(66% 0.13 80);
+  --flow-portfolio: oklch(62% 0.12 250);
+  --flow-living: oklch(67% 0.12 45);
+  --flow-healthcare: oklch(63% 0.13 320);
+  --flow-tax: oklch(52% 0.13 20);
 }
 
 @layer base {

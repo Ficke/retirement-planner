@@ -502,6 +502,11 @@ describe('TypeScript/Rust engine contract', () => {
     );
     expect(beforeMedicare.taxes).toBeGreaterThan(afterMedicare.taxes);
 
+    // Healthcare is reported separately from the spending it is part of, so
+    // the chart can break it out without the two ever disagreeing.
+    expect(beforeMedicare.healthcareCost).toBeCloseTo(30_000, 5);
+    expect(afterMedicare.healthcareCost).toBeCloseTo(13_000 * Math.pow(1.02, 8), 5);
+
     expect(rust.successProbability).toBe(typescript.success ? 1 : 0);
     for (const index of [0, 6, 7, 8, 12]) {
       expectCashFlowParity(typescript.projections[index], rust.yearlyProjections[index], [
@@ -509,11 +514,22 @@ describe('TypeScript/Rust engine contract', () => {
         'age',
         'spending',
         'taxes',
+        'healthcareCost',
         'withdrawalHSA',
         'withdrawalTraditional',
         'insufficientFunds',
       ]);
     }
+  });
+
+  it('reports no healthcare cost for a working year', async () => {
+    const typescript = projectScenario(workingRmdPlan, { paths: 1, seed: 42 });
+    const rust = await runRust(workingRmdPlan);
+
+    const workingYear = typescript.projections[1];
+    expect(workingYear.isRetired).toBe(false);
+    expect(workingYear.healthcareCost).toBe(0);
+    expectCashFlowParity(workingYear, rust.yearlyProjections[1], ['age', 'healthcareCost']);
   });
 
   it('keeps the production 5,000-path request within a broad CI budget', async () => {
