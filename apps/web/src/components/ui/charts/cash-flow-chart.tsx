@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/chart";
 import { fmtAxisCurrency, fmtCurrency } from "@/components/retire/format";
 import type { OutcomeCashFlowRow } from "@/domain/types";
+import { toCashFlowRows, type CashFlowRow } from "./cash-flow-data";
 
 type Series = { key: string; label: string; color: string };
 
@@ -57,36 +58,7 @@ const config = Object.fromEntries([
   ["moneyIn", { label: "Money in" }],
 ]);
 
-type Row = Record<string, number> & { age: number };
-
-/**
- * A required distribution the year did not need is withdrawn and paid straight
- * back into the taxable bucket. It never reaches the household, and at the ages
- * where RMDs are large it is most of the gross draw, so leaving it in would let
- * an account transfer bury the spending the chart exists to show. Its tax
- * still lands on the outflow side, which is the part the plan actually feels.
- *
- * Draining Traditional first is where a required distribution comes from.
- */
-function netWithdrawals(row: OutcomeCashFlowRow) {
-  const drawn = {
-    fromTraditional: row.withdrawalTraditional,
-    fromTaxable: row.withdrawalTaxable,
-    fromRoth: row.withdrawalRoth,
-    fromHSA: row.withdrawalHSA,
-  };
-  const gross = Object.values(drawn).reduce((sum, value) => sum + value, 0);
-  let reinvested = Math.max(0, gross - Math.max(0, -row.savings));
-  for (const key of Object.keys(drawn) as (keyof typeof drawn)[]) {
-    const applied = Math.min(reinvested, drawn[key]);
-    drawn[key] -= applied;
-    reinvested -= applied;
-  }
-  const portfolio = Object.values(drawn).reduce((sum, value) => sum + value, 0);
-  return { ...drawn, portfolio };
-}
-
-function total(row: Row, series: Series[]) {
+function total(row: CashFlowRow, series: Series[]) {
   return series.reduce((sum, s) => sum + row[s.key], 0);
 }
 
@@ -137,7 +109,7 @@ function Panel({
   label,
 }: {
   caption: string;
-  data: Row[];
+  data: CashFlowRow[];
   series: Series[];
   height: number;
   yScale: { domain: [number, number]; ticks: number[] };
@@ -236,7 +208,7 @@ function Panel({
                   return age != null ? `Age ${age}` : "";
                 }}
                 formatter={(value, name, item) => {
-                  const row = item?.payload as Row | undefined;
+                  const row = item?.payload as CashFlowRow | undefined;
                   const split = name === "portfolio" && row
                     ? buckets.filter((b) => row[b.key] > 0)
                     : [];
@@ -305,27 +277,7 @@ export function CashFlowChart({
   projections: OutcomeCashFlowRow[];
   height?: number;
 }) {
-  const data = useMemo<Row[]>(
-    () => projections.map((row) => {
-      const drawn = netWithdrawals(row);
-      const salary = row.isRetired ? 0 : row.income;
-      return {
-        age: row.age,
-        salary,
-        socialSecurity: row.socialSecurityBenefit,
-        ...drawn,
-        living: Math.max(0, row.spending - row.healthcareCost),
-        healthcare: row.healthcareCost,
-        tax: row.taxes,
-        // Every dollar in is spent, taxed, or kept, so what the outflow stack
-        // leaves under this line is exactly the year's saving. Drawing it as a
-        // band instead would file saving under money spent.
-        moneyIn: salary + row.socialSecurityBenefit + drawn.portfolio,
-        saved: Math.max(0, row.savings),
-      };
-    }),
-    [projections],
-  );
+  const data = useMemo(() => toCashFlowRows(projections), [projections]);
 
   // One scale for both panels. Separate scales would make the gap between them
   // — the part that carries the saving — unreadable.
@@ -366,7 +318,11 @@ export function CashFlowChart({
     );
   }
 
-  const panelHeight = (height - 28) / 2;
+  // Both plots must span the same pixels or the shared scale lies. Recharts
+  // drops a hidden axis from the offset, so only the lower panel pays for the
+  // 30px axis band, and its extra allowance is that band less its zero bottom
+  // margin.
+  const panelHeight = (height - 20) / 2;
 
   return (
     <div className="flex flex-col gap-2">
@@ -391,7 +347,7 @@ export function CashFlowChart({
         caption="Money out"
         data={data}
         series={outSeries}
-        height={panelHeight + 28}
+        height={panelHeight + 20}
         yScale={yScale}
         xTicks={xTicks}
         retirementAge={retirementAge}

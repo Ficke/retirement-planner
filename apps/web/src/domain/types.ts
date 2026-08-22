@@ -214,8 +214,10 @@ export interface PathProjection {
   depositHSA: number;
   withdrawalHSA: number;
   /**
-   * Retirement healthcare for the year, already counted inside `spending`.
-   * Zero while working, where healthcare is part of `currentSpending`.
+   * Retirement healthcare for the year, part of the same `spending` total.
+   * Zero while working, where healthcare sits inside `currentSpending`. In a
+   * year the portfolio cannot fund, `spending` drops to what was actually paid
+   * while this stays the modeled cost, so it can exceed `spending`.
    */
   healthcareCost: number;
   insufficientFunds: boolean;
