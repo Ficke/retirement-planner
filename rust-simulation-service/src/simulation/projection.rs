@@ -689,6 +689,7 @@ fn project_scenario_internal(
         let mut deposit_roth = 0.0;
         let mut deposit_hsa = 0.0;
         let mut healthcare_cost = 0.0;
+        let mut long_term_care_cost = 0.0;
         let insufficient_funds;
 
         if !is_retired {
@@ -919,17 +920,17 @@ fn project_scenario_internal(
             // whole in the last modeled year and never prorated. Care services
             // are deductible medical expenses under IRC 213(d), so the HSA
             // allowance grows with it.
-            let long_term_care_cost = match &long_term_care {
+            long_term_care_cost = match &long_term_care {
                 Some(draw) if year + 1 == total_years => draw.cost(),
                 _ => 0.0,
             };
             hsa_qualified_allowance += long_term_care_cost;
-            healthcare_cost += long_term_care_cost;
             let target_spending = profile.retirement_spending
                 * (1.0 + profile.retirement_spending_growth_rate)
                     .powi(spending_growth_exponent as i32)
                 * retirement_period_fraction
-                + healthcare_cost;
+                + healthcare_cost
+                + long_term_care_cost;
 
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
                 let annual_social_security_benefit = if plan.social_security.manual_override {
@@ -1109,6 +1110,17 @@ fn project_scenario_internal(
             success = false;
         }
         if record_projections {
+            // Preserve the old combined-care cap while splitting its funded
+            // amount proportionally between recurring healthcare and LTC. This
+            // keeps the two reported fields from exceeding actual spending on
+            // an underfunded path without inventing a payment priority.
+            let requested_care = healthcare_cost + long_term_care_cost;
+            let funded_care = requested_care.min(spending.max(0.0));
+            let funded_share = if requested_care > 0.0 {
+                funded_care / requested_care
+            } else {
+                0.0
+            };
             projections.push(PathProjection {
                 year: (current_year + year as i32) as u32,
                 age: current_age,
@@ -1129,10 +1141,8 @@ fn project_scenario_internal(
                 deposit_traditional,
                 deposit_roth,
                 deposit_hsa,
-                // Outcome cohorts average this field, so cap it on the
-                // individual path before aggregation. Capping cohort means
-                // later would distort mixed funded/underfunded cohorts.
-                healthcare_cost: healthcare_cost.min(spending.max(0.0)),
+                healthcare_cost: healthcare_cost * funded_share,
+                long_term_care_cost: long_term_care_cost * funded_share,
                 insufficient_funds,
             });
         }
@@ -2748,7 +2758,7 @@ mod tests {
         result.projections.last().expect("a modeled year")
     }
 
-    fn yearly_fingerprint(result: &PathResult) -> Vec<(f64, f64, f64, f64)> {
+    fn yearly_fingerprint(result: &PathResult) -> Vec<(f64, f64, f64, f64, f64)> {
         result
             .projections
             .iter()
@@ -2758,6 +2768,7 @@ mod tests {
                     year.spending,
                     year.taxes,
                     year.healthcare_cost,
+                    year.long_term_care_cost,
                 )
             })
             .collect()
@@ -2779,8 +2790,8 @@ mod tests {
         let without_care_years = yearly_fingerprint(&without_care);
         let last = with_care_years.len() - 1;
         assert_eq!(with_care_years[..last], without_care_years[..last]);
-        assert!(final_year(&with_care).healthcare_cost > 0.0);
-        assert_eq!(final_year(&without_care).healthcare_cost, 0.0);
+        assert!(final_year(&with_care).long_term_care_cost > 0.0);
+        assert_eq!(final_year(&without_care).long_term_care_cost, 0.0);
     }
 
     /// The gate is the version that introduced the model, so a bundle built
@@ -2794,7 +2805,7 @@ mod tests {
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
         assert!(plan.profile.long_term_care.enabled);
-        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+        assert_eq!(final_year(&result).long_term_care_cost, 0.0);
     }
 
     /// The episode is one lifetime bill, charged whole in the last modeled year
@@ -2805,7 +2816,9 @@ mod tests {
             project_scenario(&long_term_care_plan(), long_term_care_config(EPISODE_SEED)).unwrap();
 
         let (last, earlier) = result.projections.split_last().expect("a modeled year");
-        assert!(last.healthcare_cost > 100_000.0);
+        assert!(last.long_term_care_cost > 100_000.0);
+        assert_eq!(last.healthcare_cost, 0.0);
+        assert!(earlier.iter().all(|year| year.long_term_care_cost == 0.0));
         assert!(earlier.iter().all(|year| year.healthcare_cost == 0.0));
     }
 
@@ -2819,7 +2832,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+        assert_eq!(final_year(&result).long_term_care_cost, 0.0);
     }
 
     /// The reported field is capped at the year's spending, because outcome
@@ -2836,9 +2849,9 @@ mod tests {
         let single = project_scenario(&single_multiplier, config.clone()).unwrap();
         let double = project_scenario(&doubled, config).unwrap();
 
-        let charged = final_year(&single).healthcare_cost;
+        let charged = final_year(&single).long_term_care_cost;
         assert!(charged > 0.0);
-        assert!((final_year(&double).healthcare_cost - 2.0 * charged).abs() < 1e-6);
+        assert!((final_year(&double).long_term_care_cost - 2.0 * charged).abs() < 1e-6);
     }
 
     /// The bill is spending as well as a healthcare line, so the year has to
@@ -2852,7 +2865,7 @@ mod tests {
         let with_care = project_scenario(&long_term_care_plan(), config.clone()).unwrap();
         let without_care = project_scenario(&disabled, config).unwrap();
 
-        let charged = final_year(&with_care).healthcare_cost;
+        let charged = final_year(&with_care).long_term_care_cost;
         let extra_spending = final_year(&with_care).spending - final_year(&without_care).spending;
         assert!((extra_spending - charged).abs() < 1e-6);
         assert!(with_care.terminal_wealth < without_care.terminal_wealth);
@@ -2918,9 +2931,9 @@ mod tests {
         age_75.profile.birth_date = "1951-01-01".to_string();
 
         let full_cost =
-            final_year(&project_scenario(&age_65, config.clone()).unwrap()).healthcare_cost;
+            final_year(&project_scenario(&age_65, config.clone()).unwrap()).long_term_care_cost;
         let remaining_cost =
-            final_year(&project_scenario(&age_75, config).unwrap()).healthcare_cost;
+            final_year(&project_scenario(&age_75, config).unwrap()).long_term_care_cost;
 
         assert!(full_cost > 0.0);
         assert!((remaining_cost - full_cost * 0.6).abs() < 1e-6);
@@ -2938,7 +2951,7 @@ mod tests {
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
         assert_eq!(result.projections[0].age, 76);
-        assert!(final_year(&result).healthcare_cost > 0.0);
+        assert!(final_year(&result).long_term_care_cost > 0.0);
     }
 
     /// The quintile is resolved from the path's own income at 65, so the same
@@ -2964,8 +2977,9 @@ mod tests {
             .projections
             .last()
             .unwrap()
-            .healthcare_cost;
-        let wealthy_cost = final_year(&project_scenario(&wealthy, config).unwrap()).healthcare_cost;
+            .long_term_care_cost;
+        let wealthy_cost =
+            final_year(&project_scenario(&wealthy, config).unwrap()).long_term_care_cost;
 
         assert!(modest_cost > 0.0);
         assert!(wealthy_cost > modest_cost);
@@ -2983,7 +2997,7 @@ mod tests {
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
         assert_eq!(final_year(&result).age, 65);
-        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+        assert_eq!(final_year(&result).long_term_care_cost, 0.0);
     }
 
     /// Paths are seeded `base_seed + path_index`, so the share of them with no
@@ -3007,7 +3021,7 @@ mod tests {
             .filter(|path_index| {
                 let result =
                     project_scenario(&plan, long_term_care_config(42 + path_index)).unwrap();
-                final_year(&result).healthcare_cost == 0.0
+                final_year(&result).long_term_care_cost == 0.0
             })
             .count();
 
@@ -3049,8 +3063,9 @@ mod tests {
         growing.profile.retirement_healthcare.real_growth_rate = 0.02;
 
         let flat_cost =
-            final_year(&project_scenario(&flat, config.clone()).unwrap()).healthcare_cost;
-        let growing_cost = final_year(&project_scenario(&growing, config).unwrap()).healthcare_cost;
+            final_year(&project_scenario(&flat, config.clone()).unwrap()).long_term_care_cost;
+        let growing_cost =
+            final_year(&project_scenario(&growing, config).unwrap()).long_term_care_cost;
 
         // Born 1962, so 65 arrives in 2027, four years past the 2023 anchor.
         assert!((growing_cost - flat_cost * 1.02_f64.powi(4)).abs() < 1e-6);

@@ -42,13 +42,14 @@
   --color-account-roth: var(--account-roth);
   --color-account-hsa: var(--account-hsa);
   --color-money-in: var(--money-in-3);
-  --color-money-out: var(--money-out-3);
+  --color-money-out: var(--money-out-4);
   --color-money-in-1: var(--money-in-1);
   --color-money-in-2: var(--money-in-2);
   --color-money-in-3: var(--money-in-3);
   --color-money-out-1: var(--money-out-1);
   --color-money-out-2: var(--money-out-2);
   --color-money-out-3: var(--money-out-3);
+  --color-money-out-4: var(--money-out-4);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -142,7 +143,8 @@ details[open] summary ~ * {
   --money-in-3: oklch(53% 0.095 250);
   --money-out-1: oklch(61% 0.09 70);
   --money-out-2: oklch(55% 0.095 350);
-  --money-out-3: oklch(49% 0.105 25);
+  --money-out-3: oklch(52% 0.10 315);
+  --money-out-4: oklch(49% 0.105 25);
 }
 
 .dark {
@@ -198,7 +200,8 @@ details[open] summary ~ * {
   --money-in-3: oklch(66% 0.12 250);
   --money-out-1: oklch(72% 0.11 70);
   --money-out-2: oklch(67% 0.12 350);
-  --money-out-3: oklch(61% 0.13 25);
+  --money-out-3: oklch(64% 0.12 315);
+  --money-out-4: oklch(61% 0.13 25);
 }
 
 @layer base {
