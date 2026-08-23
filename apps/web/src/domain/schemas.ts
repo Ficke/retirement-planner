@@ -265,7 +265,7 @@ const pathProjectionSchema = z.object({
   depositHSA: z.number(),
   withdrawalHSA: z.number(),
   healthcareCost: z.number(),
-  // Additive result field: default while cloud and browser engines roll out.
+  // Preserve results produced before long-term care was reported separately.
   longTermCareCost: z.number().default(0),
   insufficientFunds: z.boolean(),
 }).strict();

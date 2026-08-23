@@ -91,11 +91,11 @@ const LTC_COHORT_ANCHOR_YEAR: i32 = 2023;
 /// sits from the anchor, and this compounds.
 const LTC_MAX_COHORT_GROWTH_YEARS: i32 = 40;
 
-/// One path's long-term care episode, held from the draw to the charge.
+/// One path's long-term care episode, held from the draw to its modeled years.
 ///
 /// The uniform is drawn at path start so the market generator's draw order is
 /// untouched, but it cannot be inverted until the loop reaches 65 and the
-/// quintile is known, and the cost is not spent until the final modeled year.
+/// quintile is known.
 struct LongTermCareDraw {
     uniform: f64,
     /// Turns one draw from the 2020-dollar table into this plan's money: CPI
@@ -104,6 +104,9 @@ struct LongTermCareDraw {
     price_scale: f64,
     poverty_level: f64,
     annuity_factor: f64,
+    /// The income quintile is observed before care begins, so a short horizon
+    /// clips the sampled duration to the years after that observation.
+    maximum_duration_years: f64,
     quintile: Option<IncomeQuintile>,
 }
 
@@ -121,8 +124,8 @@ impl LongTermCareDraw {
         }
         // The distribution is lifetime spending from 65 to death, so a plan
         // that ends at 65 has nothing for it to price. Requiring the horizon to
-        // pass 65 is also what guarantees the income observation lands in a
-        // year strictly before the one the episode is charged in.
+        // pass 65 is also what guarantees the income observation lands before
+        // any episode that ends at life expectancy.
         if profile.life_expectancy <= LTC_OBSERVATION_AGE {
             return None;
         }
@@ -155,6 +158,10 @@ impl LongTermCareDraw {
                 * remaining_ltc_exposure(start_age, profile.life_expectancy),
             poverty_level: federal_poverty_level(household_size),
             annuity_factor: annuity_factor(term),
+            maximum_duration_years: profile
+                .life_expectancy
+                .saturating_sub(start_age.max(LTC_OBSERVATION_AGE))
+                as f64,
             quintile: None,
         })
     }
@@ -170,16 +177,31 @@ impl LongTermCareDraw {
         self.quintile = Some(quintile_for(income / self.poverty_level));
     }
 
-    /// The episode in the plan's base-year dollars, zero for a path that drew
-    /// no episode at all.
-    fn cost(&self) -> f64 {
+    /// Cost in one modeled year when the sampled episode is placed contiguously
+    /// at the end of the horizon. A fractional duration produces a fractional
+    /// first year, and the installments sum to the sampled lifetime total.
+    fn cost_for_year(&self, year: u32, total_years: u32) -> f64 {
         let Some(quintile) = self.quintile else {
-            // Unreachable: `start` rejects a horizon that ends at 65, so the
-            // observation always fires before the year this is charged in.
             return 0.0;
         };
-        draw_episode(quintile, self.uniform)
-            .map_or(0.0, |episode| episode.lifetime_cost_2020 * self.price_scale)
+        let Some(episode) = draw_episode(quintile, self.uniform) else {
+            return 0.0;
+        };
+        let duration = episode
+            .years
+            .min(total_years as f64)
+            .min(self.maximum_duration_years);
+        if duration <= 0.0 {
+            return 0.0;
+        }
+
+        let horizon_end = total_years as f64;
+        let episode_start = horizon_end - duration;
+        let modeled_year_start = year as f64;
+        let modeled_year_end = modeled_year_start + 1.0;
+        let overlap = (modeled_year_end.min(horizon_end) - modeled_year_start.max(episode_start))
+            .clamp(0.0, 1.0);
+        episode.lifetime_cost_2020 * self.price_scale * overlap / duration
     }
 }
 
@@ -916,12 +938,11 @@ fn project_scenario_internal(
             // allowance is large.
             hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
             healthcare_cost = healthcare.total * retirement_period_fraction;
-            // A lifetime episode total, not an annual rate, so it is charged
-            // whole in the last modeled year and never prorated. Care services
-            // are deductible medical expenses under IRC 213(d), so the HSA
-            // allowance grows with it.
+            // Spread the lifetime total across the sampled duration ending at
+            // life expectancy. Care services are deductible medical expenses
+            // under IRC 213(d), so the HSA allowance grows with each installment.
             long_term_care_cost = match &long_term_care {
-                Some(draw) if year + 1 == total_years => draw.cost(),
+                Some(draw) => draw.cost_for_year(year, total_years),
                 _ => 0.0,
             };
             hsa_qualified_allowance += long_term_care_cost;
@@ -1197,13 +1218,6 @@ struct WithdrawalContext<'a> {
     hsa_qualified_allowance: f64,
 }
 
-/// Deposit into a type's bucket, opening it when the household holds no account
-/// of that kind — funding must never depend on which accounts happen to exist.
-/// A new bucket inherits the portfolio's blend so the money is invested the way
-/// the rest of it is; with nothing to blend it stays in cash, which is also what
-/// keeps that balance out of the taxable-gain calculation.
-///
-/// Returns the amount deposited, for the caller's cash-flow row.
 fn balance_of_bucket(accounts: &[Account], account_type: AccountType) -> f64 {
     accounts
         .iter()
@@ -1249,6 +1263,13 @@ fn after_tax_wealth_of(accounts: &[Account], terminal_tax_rate: f64) -> f64 {
         .sum()
 }
 
+/// Deposit into a type's bucket, opening it when the household holds no account
+/// of that kind — funding must never depend on which accounts happen to exist.
+/// A new bucket inherits the portfolio's blend so the money is invested the way
+/// the rest of it is; with nothing to blend it stays in cash, which is also what
+/// keeps that balance out of the taxable-gain calculation.
+///
+/// Returns the amount deposited, for the caller's cash-flow row.
 fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amount: f64) -> f64 {
     if amount <= 0.0 {
         return 0.0;
@@ -1572,9 +1593,9 @@ mod tests {
                 retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
                 retirement_healthcare: Default::default(),
-                // Off, unlike the product default, so that a test about
-                // anything else is not reading a lifetime care bill in its
-                // final year. The long-term care tests turn it back on.
+                // Off, unlike the product default, so path-specific care
+                // episodes do not affect unrelated tests. The long-term care
+                // tests turn it back on.
                 long_term_care: LongTermCare {
                     enabled: false,
                     cost_multiplier: 1.0,
@@ -2758,6 +2779,14 @@ mod tests {
         result.projections.last().expect("a modeled year")
     }
 
+    fn total_long_term_care_cost(result: &PathResult) -> f64 {
+        result
+            .projections
+            .iter()
+            .map(|year| year.long_term_care_cost)
+            .sum()
+    }
+
     fn yearly_fingerprint(result: &PathResult) -> Vec<(f64, f64, f64, f64, f64)> {
         result
             .projections
@@ -2775,8 +2804,7 @@ mod tests {
     }
 
     /// The care draw runs on its own stream, so turning the model on must not
-    /// move a single market return. Every year but the charged one is identical
-    /// down to the bit.
+    /// move a single market return before care spending changes the portfolio.
     #[test]
     fn long_term_care_does_not_disturb_the_market_draw() {
         let config = long_term_care_config(EPISODE_SEED);
@@ -2788,10 +2816,17 @@ mod tests {
 
         let with_care_years = yearly_fingerprint(&with_care);
         let without_care_years = yearly_fingerprint(&without_care);
-        let last = with_care_years.len() - 1;
-        assert_eq!(with_care_years[..last], without_care_years[..last]);
+        let first_care_year = with_care
+            .projections
+            .iter()
+            .position(|year| year.long_term_care_cost > 0.0)
+            .expect("the pinned seed has an episode");
+        assert_eq!(
+            with_care_years[..first_care_year],
+            without_care_years[..first_care_year],
+        );
         assert!(final_year(&with_care).long_term_care_cost > 0.0);
-        assert_eq!(final_year(&without_care).long_term_care_cost, 0.0);
+        assert_eq!(total_long_term_care_cost(&without_care), 0.0);
     }
 
     /// The gate is the version that introduced the model, so a bundle built
@@ -2805,21 +2840,53 @@ mod tests {
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
         assert!(plan.profile.long_term_care.enabled);
-        assert_eq!(final_year(&result).long_term_care_cost, 0.0);
+        assert_eq!(total_long_term_care_cost(&result), 0.0);
     }
 
-    /// The episode is one lifetime bill, charged whole in the last modeled year
-    /// and in no other.
+    /// The sampled service-day duration becomes a contiguous episode ending at
+    /// life expectancy. A fractional duration leaves a smaller first installment.
     #[test]
-    fn the_episode_is_charged_only_in_the_final_year() {
-        let result =
-            project_scenario(&long_term_care_plan(), long_term_care_config(EPISODE_SEED)).unwrap();
+    fn the_episode_spans_its_sampled_duration_at_the_end_of_the_horizon() {
+        let mut plan = long_term_care_plan();
+        plan.accounts[0].balance = 10_000_000.0;
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
-        let (last, earlier) = result.projections.split_last().expect("a modeled year");
-        assert!(last.long_term_care_cost > 100_000.0);
-        assert_eq!(last.healthcare_cost, 0.0);
-        assert!(earlier.iter().all(|year| year.long_term_care_cost == 0.0));
-        assert!(earlier.iter().all(|year| year.healthcare_cost == 0.0));
+        let charged: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|year| year.long_term_care_cost > 0.0)
+            .collect();
+        assert!(charged.len() > 1);
+        assert!(charged.len() <= 10);
+        assert_eq!(charged.last().unwrap().age, plan.profile.life_expectancy);
+        assert!(charged[0].long_term_care_cost < charged[1].long_term_care_cost);
+        assert!(total_long_term_care_cost(&result) > 100_000.0);
+        assert!(result
+            .projections
+            .iter()
+            .all(|year| year.healthcare_cost == 0.0));
+    }
+
+    #[test]
+    fn a_short_horizon_starts_care_after_the_income_observation() {
+        let mut plan = long_term_care_plan();
+        plan.profile.birth_date = "1961-01-01".to_string();
+        plan.profile.life_expectancy = 70;
+        plan.profile.retirement_spending = 0.0;
+        plan.social_security.enabled = false;
+        plan.accounts[0].balance = 10_000_000.0;
+
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
+        let charged: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|year| year.long_term_care_cost > 0.0)
+            .collect();
+
+        assert_eq!(result.projections[0].age, LTC_OBSERVATION_AGE);
+        assert_eq!(result.projections[0].long_term_care_cost, 0.0);
+        assert!(charged.iter().all(|year| year.age > LTC_OBSERVATION_AGE));
+        assert_eq!(charged.last().unwrap().age, plan.profile.life_expectancy);
     }
 
     /// A uniform under the quintile's no-spending mass is no episode at all,
@@ -2832,7 +2899,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(final_year(&result).long_term_care_cost, 0.0);
+        assert_eq!(total_long_term_care_cost(&result), 0.0);
     }
 
     /// The reported field is capped at the year's spending, because outcome
@@ -2849,25 +2916,30 @@ mod tests {
         let single = project_scenario(&single_multiplier, config.clone()).unwrap();
         let double = project_scenario(&doubled, config).unwrap();
 
-        let charged = final_year(&single).long_term_care_cost;
+        let charged = total_long_term_care_cost(&single);
         assert!(charged > 0.0);
-        assert!((final_year(&double).long_term_care_cost - 2.0 * charged).abs() < 1e-6);
+        assert!((total_long_term_care_cost(&double) - 2.0 * charged).abs() < 1e-6);
     }
 
-    /// The bill is spending as well as a healthcare line, so the year has to
-    /// fund it out of the portfolio like any other dollar.
+    /// Each installment is spending as well as an LTC line, so every year in
+    /// the episode has to fund it out of the portfolio like any other dollar.
     #[test]
-    fn the_episode_raises_the_final_year_spending_target() {
+    fn the_episode_raises_each_affected_years_spending_target() {
         let config = long_term_care_config(EPISODE_SEED);
-        let mut disabled = long_term_care_plan();
+        let mut enabled = long_term_care_plan();
+        enabled.accounts[0].balance = 10_000_000.0;
+        let mut disabled = enabled.clone();
         disabled.profile.long_term_care.enabled = false;
 
-        let with_care = project_scenario(&long_term_care_plan(), config.clone()).unwrap();
+        let with_care = project_scenario(&enabled, config.clone()).unwrap();
         let without_care = project_scenario(&disabled, config).unwrap();
 
-        let charged = final_year(&with_care).long_term_care_cost;
-        let extra_spending = final_year(&with_care).spending - final_year(&without_care).spending;
-        assert!((extra_spending - charged).abs() < 1e-6);
+        for (with_care_year, without_care_year) in
+            with_care.projections.iter().zip(&without_care.projections)
+        {
+            let extra_spending = with_care_year.spending - without_care_year.spending;
+            assert!((extra_spending - with_care_year.long_term_care_cost).abs() < 1e-6);
+        }
         assert!(with_care.terminal_wealth < without_care.terminal_wealth);
     }
 
@@ -2893,10 +2965,20 @@ mod tests {
 
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
-        let last = final_year(&result);
-        assert!(last.withdrawal_hsa > 100_000.0);
-        assert_eq!(last.taxes, 0.0);
-        assert!(!last.insufficient_funds);
+        let charged_years: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|year| year.long_term_care_cost > 0.0)
+            .collect();
+        assert!(
+            charged_years
+                .iter()
+                .map(|year| year.withdrawal_hsa)
+                .sum::<f64>()
+                > 100_000.0
+        );
+        assert!(charged_years.iter().all(|year| year.taxes == 0.0));
+        assert!(charged_years.iter().all(|year| !year.insufficient_funds));
     }
 
     #[test]
@@ -2931,9 +3013,8 @@ mod tests {
         age_75.profile.birth_date = "1951-01-01".to_string();
 
         let full_cost =
-            final_year(&project_scenario(&age_65, config.clone()).unwrap()).long_term_care_cost;
-        let remaining_cost =
-            final_year(&project_scenario(&age_75, config).unwrap()).long_term_care_cost;
+            total_long_term_care_cost(&project_scenario(&age_65, config.clone()).unwrap());
+        let remaining_cost = total_long_term_care_cost(&project_scenario(&age_75, config).unwrap());
 
         assert!(full_cost > 0.0);
         assert!((remaining_cost - full_cost * 0.6).abs() < 1e-6);
@@ -2951,7 +3032,7 @@ mod tests {
         let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
 
         assert_eq!(result.projections[0].age, 76);
-        assert!(final_year(&result).long_term_care_cost > 0.0);
+        assert!(total_long_term_care_cost(&result) > 0.0);
     }
 
     /// The quintile is resolved from the path's own income at 65, so the same
@@ -2960,9 +3041,11 @@ mod tests {
     fn a_richer_path_draws_from_a_higher_quintile() {
         let config = long_term_care_config(EPISODE_SEED);
         let mut modest = long_term_care_plan();
+        modest.profile.retirement_spending = 0.0;
+        modest.social_security.enabled = false;
         modest.accounts = vec![Account {
             account_type: AccountType::Taxable,
-            balance: 120_000.0,
+            balance: 750_000.0,
             asset_weights: AssetWeights {
                 stocks: 0.6,
                 bonds: 0.4,
@@ -2972,14 +3055,9 @@ mod tests {
         let mut wealthy = modest.clone();
         wealthy.accounts[0].balance = 6_000_000.0;
 
-        let modest_cost = project_scenario(&modest, config.clone())
-            .unwrap()
-            .projections
-            .last()
-            .unwrap()
-            .long_term_care_cost;
-        let wealthy_cost =
-            final_year(&project_scenario(&wealthy, config).unwrap()).long_term_care_cost;
+        let modest_cost =
+            total_long_term_care_cost(&project_scenario(&modest, config.clone()).unwrap());
+        let wealthy_cost = total_long_term_care_cost(&project_scenario(&wealthy, config).unwrap());
 
         assert!(modest_cost > 0.0);
         assert!(wealthy_cost > modest_cost);
@@ -3021,7 +3099,7 @@ mod tests {
             .filter(|path_index| {
                 let result =
                     project_scenario(&plan, long_term_care_config(42 + path_index)).unwrap();
-                final_year(&result).long_term_care_cost == 0.0
+                total_long_term_care_cost(&result) == 0.0
             })
             .count();
 
@@ -3055,17 +3133,18 @@ mod tests {
     /// it compounds between that cohort's 65th birthday and this one's, and not
     /// again over the horizon.
     #[test]
-    fn healthcare_real_growth_compounds_only_between_cohorts() {
+    fn long_term_care_real_growth_compounds_only_between_cohorts() {
         let config = long_term_care_config(EPISODE_SEED);
         let mut flat = long_term_care_plan();
         flat.profile.retirement_healthcare.real_growth_rate = 0.0;
         let mut growing = flat.clone();
         growing.profile.retirement_healthcare.real_growth_rate = 0.02;
 
+        flat.accounts[0].balance = 10_000_000.0;
+        growing.accounts[0].balance = 10_000_000.0;
         let flat_cost =
-            final_year(&project_scenario(&flat, config.clone()).unwrap()).long_term_care_cost;
-        let growing_cost =
-            final_year(&project_scenario(&growing, config).unwrap()).long_term_care_cost;
+            total_long_term_care_cost(&project_scenario(&flat, config.clone()).unwrap());
+        let growing_cost = total_long_term_care_cost(&project_scenario(&growing, config).unwrap());
 
         // Born 1962, so 65 arrives in 2027, four years past the 2023 anchor.
         assert!((growing_cost - flat_cost * 1.02_f64.powi(4)).abs() < 1e-6);
