@@ -12,6 +12,7 @@ import type {
   SSAnalysisResult,
   SpendingAnalysisResult,
   RetirementAgeAnalysisResult,
+  RothConversionAnalysisResult,
   CreateAccountData,
   UpdateAccountData,
 } from '@/domain/types';
@@ -185,6 +186,8 @@ const defaultPlan: RetirementPlan = {
     taxableGainRatio: 0.5,
     hsaEligible: false,
     useBackdoorRoth: true,
+    rothConversion: { enabled: false, ceiling: 'bracket24' },
+    terminalTaxRate: 0.30,
   },
 };
 
@@ -315,6 +318,7 @@ interface PlanState {
   ssAnalysisResult: SSAnalysisResult[] | null;
   spendingAnalysisResult: SpendingAnalysisResult[] | null;
   retirementAgeAnalysisResult: RetirementAgeAnalysisResult[] | null;
+  rothConversionAnalysisResult: RothConversionAnalysisResult[] | null;
   isSimulatingMain: boolean;
   isSimulatingSensitivities: boolean;
   /** The headline result is stale or its replacement is running. */
@@ -428,6 +432,7 @@ export const usePlan = create<PlanState>((set, get) => ({
   ssAnalysisResult: null,
   spendingAnalysisResult: null,
   retirementAgeAnalysisResult: null,
+  rothConversionAnalysisResult: null,
   isSimulatingMain: false,
   isSimulatingSensitivities: false,
   simulationPending: false,
@@ -762,6 +767,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         ssAnalysisResult: results.socialSecurity,
         spendingAnalysisResult: results.spending,
         retirementAgeAnalysisResult: results.retirementAge,
+        rothConversionAnalysisResult: results.rothConversion,
         isSimulatingSensitivities: false,
         sensitivityPending: false,
       });
@@ -775,6 +781,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
+  rothConversionAnalysisResult: null,
       });
     }
   },

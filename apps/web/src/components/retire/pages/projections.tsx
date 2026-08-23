@@ -285,6 +285,7 @@ export function ProjectionSummary({
   const successProb = result?.successProbability;
   const retirementWealth = retirementProjection?.p50;
   const finalWealth = result?.medianTerminalWealth;
+  const finalWealthAfterTax = result?.medianAfterTaxTerminalWealth;
 
   return (
     <KPIGrid cols={4}>
@@ -311,7 +312,9 @@ export function ProjectionSummary({
       <Stat
         label={`Projected wealth at age ${(resultPlan ?? plan).profile.lifeExpectancy}`}
         value={finalWealth == null ? "—" : fmtCurrency(finalWealth, true)}
-        trend="Median projection"
+        trend={finalWealthAfterTax == null
+          ? "Median projection"
+          : `${fmtCurrency(finalWealthAfterTax, true)} after tax on pre-tax balances`}
         pending={isCalculating}
       />
     </KPIGrid>

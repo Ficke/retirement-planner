@@ -43,6 +43,9 @@ import {
   PageShell,
 } from "@/components/retire/ui";
 import { fmtCurrency } from "../format";
+import { getRmdStartAge } from "@/data/rmd-tables";
+import { conversionLabelOf, conversionStepOf } from "@/domain/levers";
+import { birthYearOf } from "@/domain/age";
 
 export function PageSettings() {
   const {
@@ -69,6 +72,11 @@ export function PageSettings() {
   const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
   const DATA_RANGE = `${DATA_FIRST_YEAR}–${DATA_LAST_YEAR}`;
   const stateTax = stateTaxProfileOf(plan.profile.state);
+  // Both ends of the conversion window are derived, so the plan stores neither.
+  const conversionWindow = {
+    from: plan.profile.retirementAge,
+    to: getRmdStartAge(birthYearOf(plan.profile.birthDate)) - 1,
+  };
 
   return (
     <PageShell>
@@ -258,6 +266,13 @@ export function PageSettings() {
                 source="IRC 36B, Rev. Proc. 2025-25"
               />
               <ReferenceRow
+                label="Roth conversion window"
+                value={a.rothConversion.enabled
+                  ? `Ages ${conversionWindow.from}–${conversionWindow.to}, up to ${conversionLabelOf(conversionStepOf(plan))}`
+                  : "Off"}
+                source="Plan page"
+              />
+              <ReferenceRow
                 label="Medicare IRMAA"
                 value="2026 tiers, 2-year lookback"
                 source="CMS"
@@ -301,6 +316,31 @@ export function PageSettings() {
               <span className="text-muted-foreground text-sm">%</span>
             </div>
           </Setting>
+          <div className="border-border mt-4 border-t pt-4">
+            <Setting
+              label="Tax rate on pre-tax money left at the end"
+              helper="Prices the bill still owed on whatever sits in Traditional and HSA at the end, so a Roth dollar and a pre-tax dollar can be compared. Around 30% if heirs will draw it down, lower if you will."
+            >
+              <div className="flex max-w-40 items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Number((a.terminalTaxRate * 100).toFixed(1))}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (Number.isFinite(value)) {
+                      updateAssumptions({
+                        terminalTaxRate: Math.max(0, Math.min(100, value)) / 100,
+                      });
+                    }
+                  }}
+                />
+                <span className="text-muted-foreground text-sm">%</span>
+              </div>
+            </Setting>
+          </div>
         </DashboardCard>
 
         <h2 className="text-foreground text-sm font-semibold tracking-wide uppercase">

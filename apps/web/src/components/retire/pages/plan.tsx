@@ -6,7 +6,13 @@ import {
   sensitivityAnalysisReady,
   usePlan,
 } from "@/state/usePlan";
-import { leverRange, type LeverKey } from "@/domain/levers";
+import {
+  CONVERSION_STEPS,
+  conversionLabelOf,
+  conversionStepOf,
+  leverRange,
+  type LeverKey,
+} from "@/domain/levers";
 import type { SimulationSummary } from "@/domain/types";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -128,6 +134,7 @@ export function PagePlan() {
   const ssAnalysisResult = usePlan((s) => s.ssAnalysisResult);
   const spendingAnalysisResult = usePlan((s) => s.spendingAnalysisResult);
   const retirementAgeAnalysisResult = usePlan((s) => s.retirementAgeAnalysisResult);
+  const rothConversionAnalysisResult = usePlan((s) => s.rothConversionAnalysisResult);
   const sensitivityPending = usePlan((s) => s.sensitivityPending);
   const sensitivityReady = usePlan(sensitivityAnalysisReady);
   const runSensitivityAnalyses = usePlan((s) => s.runSensitivityAnalyses);
@@ -154,6 +161,8 @@ export function PagePlan() {
   const agePts = toPoints(retirementAgeAnalysisResult, "retirementAge");
   const spendPts = toPoints(spendingAnalysisResult, "annualSpending");
   const ssPts = toPoints(ssAnalysisResult, "claimAge");
+  const conversionPts = toPoints(rothConversionAnalysisResult, "step");
+  const conversionStep = conversionStepOf(plan);
 
   return (
     <PageShell>
@@ -181,7 +190,7 @@ export function PagePlan() {
 
       <ProjectionSummary result={result} resultPlan={resultPlan} isCalculating={isCalculating} />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <LeverCard
           lever="retirementAge"
           label="Retirement age"
@@ -217,6 +226,24 @@ export function PagePlan() {
           note={plan.socialSecurity.manualOverride
             ? "The entered benefit applies at the selected claim age, so this curve remains flat."
             : undefined}
+        />
+        <LeverCard
+          lever="rothConversion"
+          label="Roth conversion bracket"
+          value={conversionStep}
+          display={conversionStep === 0
+            ? "Off"
+            : `Up to ${conversionLabelOf(conversionStep)}`}
+          onChange={(v) => updatePlan({
+            assumptions: { rothConversion: CONVERSION_STEPS[v].policy },
+          })}
+          points={conversionPts}
+          isCalculating={sensitivityPending}
+          xFormat={conversionLabelOf}
+          xTooltipFormat={(v) => v === 0
+            ? "No conversions"
+            : `Convert up to ${conversionLabelOf(v)}`}
+          note="Converting trades a little success probability for wealth that is already taxed, so this curve alone understates it. Watch the after-tax figure above."
         />
       </div>
 

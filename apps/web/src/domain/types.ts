@@ -114,6 +114,30 @@ export interface AnnualContributions {
   taxable: number;
 }
 
+/**
+ * How much ordinary income a conversion year is allowed to reach. Bracket
+ * ceilings cap taxable income at the named bracket's top; `irmaaTier` caps
+ * MAGI below the first Medicare surcharge tier instead, which binds earlier
+ * than any of the bracket tops a conversion would otherwise aim for.
+ */
+export type RothConversionCeiling =
+  | 'bracket12'
+  | 'bracket22'
+  | 'bracket24'
+  | 'bracket32'
+  | 'irmaaTier';
+
+/**
+ * Conversions run from retirement through the year before RMDs begin — the
+ * window where ordinary income is at its lowest and the pre-tax balance can
+ * still be moved before it is forced out. Both ends are derived, so the plan
+ * stores only whether to convert and how far to fill.
+ */
+export interface RothConversionPolicy {
+  enabled: boolean;
+  ceiling: RothConversionCeiling;
+}
+
 export interface ProjectionSettings {
   simulationModel: SimulationModel;
   /** The main simulation and every sensitivity scenario share this root seed. */
@@ -124,6 +148,14 @@ export interface ProjectionSettings {
   hsaEligible: boolean;
   /** Without a backdoor conversion, a Roth IRA contribution is not modeled. */
   useBackdoorRoth: boolean;
+  rothConversion: RothConversionPolicy;
+  /**
+   * Rate applied to the Traditional and HSA balances left at the horizon, to
+   * report terminal wealth after the tax nobody has paid yet. Taxable and Roth
+   * pass through whole: a bequeathed taxable account steps up its basis, and a
+   * Roth is already settled.
+   */
+  terminalTaxRate: number;
 }
 
 /** @deprecated Use ProjectionSettings instead */
@@ -160,6 +192,13 @@ export interface SimulationResult {
   /** Fraction of paths that fully fund every modeled working and retirement year. */
   successProbability: number;
   medianTerminalWealth: number;
+  /**
+   * The median path's terminal wealth net of the tax owed on its Traditional
+   * and HSA balances, at the plan's `terminalTaxRate`. Reported beside the
+   * gross figure rather than in place of it: the gross number is what every
+   * other chart plots, and this one is what those balances would settle for.
+   */
+  medianAfterTaxTerminalWealth: number;
   percentile5TerminalWealth: number;
   percentile10TerminalWealth: number;
   percentile90TerminalWealth: number;
@@ -193,6 +232,12 @@ export interface RetirementAgeAnalysisResult {
   result: SimulationSummary;
 }
 
+export interface RothConversionAnalysisResult {
+  /** Position in `CONVERSION_STEPS`, where zero converts nothing. */
+  step: number;
+  result: SimulationSummary;
+}
+
 /** One modeled year on one path: every cash flow, in real dollars. */
 export interface PathProjection {
   year: number;
@@ -208,6 +253,13 @@ export interface PathProjection {
   withdrawalTraditional: number;
   withdrawalRoth: number;
   rmdAmount: number;
+  /**
+   * Dollars that reached the Roth this year. An internal transfer, so it is no
+   * part of `spending`; only the tax it adds reaches `taxes`. Tax withheld out
+   * of a conversion is counted in `withdrawalTraditional` instead, since those
+   * dollars left the pre-tax account without arriving anywhere else.
+   */
+  rothConversion: number;
   depositTaxable: number;
   depositTraditional: number;
   depositRoth: number;
@@ -224,6 +276,8 @@ export interface PathProjection {
 /** One complete path. Monte Carlo aggregates many of these into percentiles. */
 export interface PathResult {
   terminalWealth: number;
+  /** Terminal wealth net of the tax still owed on Traditional and HSA. */
+  afterTaxTerminalWealth: number;
   projections: PathProjection[];
   success: boolean; // Whether every modeled year was fully funded
 }

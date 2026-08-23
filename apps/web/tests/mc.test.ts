@@ -55,6 +55,8 @@ const testPlan: SimulationPlan = {
     randomSeed: 42,
     taxableGainRatio: 0.5,
     hsaEligible: false, useBackdoorRoth: false,
+    rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+    terminalTaxRate: 0.30,
   },
 };
 

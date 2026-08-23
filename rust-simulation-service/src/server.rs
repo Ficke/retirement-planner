@@ -437,6 +437,11 @@ fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     {
         return Err("taxableGainRatio must be between 0 and 1".into());
     }
+    if !plan.assumptions.terminal_tax_rate.is_finite()
+        || !(0.0..=1.0).contains(&plan.assumptions.terminal_tax_rate)
+    {
+        return Err("terminalTaxRate must be between 0 and 1".into());
+    }
     for (index, account) in plan.accounts.iter().enumerate() {
         let weights = &account.asset_weights;
         if !account.balance.is_finite()

@@ -198,6 +198,8 @@ describe('cloud API authorization boundaries', () => {
           simulationModel: 'historical',
           taxableGainRatio: 0.5,
           hsaEligible: false, useBackdoorRoth: false,
+          rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+          terminalTaxRate: 0.30,
         },
         revision: 3,
       }),
@@ -227,6 +229,8 @@ describe('cloud API authorization boundaries', () => {
           simulationModel: 'historical',
           taxableGainRatio: 0.5,
           hsaEligible: false, useBackdoorRoth: false,
+          rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+          terminalTaxRate: 0.30,
         },
         revision: 2,
       }),
@@ -253,6 +257,8 @@ describe('simulation proxy response streaming', () => {
       taxableGainRatio: 0.5,
       hsaEligible: false,
       useBackdoorRoth: false,
+      rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+      terminalTaxRate: 0.30,
     },
   };
 

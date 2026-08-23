@@ -184,6 +184,11 @@ export const socialSecuritySettingsSchema = z.object({
   manualOverride: z.boolean(),
 });
 
+export const rothConversionPolicySchema = z.object({
+  enabled: z.boolean(),
+  ceiling: z.enum(['bracket12', 'bracket22', 'bracket24', 'bracket32', 'irmaaTier'] as const),
+});
+
 export const projectionSettingsSchema = z.object({
   // Accept plans saved by older app revisions, then normalize them to the
   // single app-wide root seed.
@@ -192,6 +197,13 @@ export const projectionSettingsSchema = z.object({
   taxableGainRatio: z.number().min(0).max(1),
   hsaEligible: z.boolean(),
   useBackdoorRoth: z.boolean(),
+  // Defaulted so a plan saved before conversions existed still parses, and so
+  // a browser bundle built against the older schema keeps validating.
+  rothConversion: rothConversionPolicySchema.default({
+    enabled: false,
+    ceiling: 'bracket24',
+  }),
+  terminalTaxRate: z.number().min(0).max(1).default(0.30),
 });
 
 /** @deprecated Use projectionSettingsSchema instead */

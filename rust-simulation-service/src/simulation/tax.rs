@@ -577,6 +577,37 @@ pub fn calculate_working_cash_flow(
     }
 }
 
+/// Taxable income a retirement year reports, which is what a bracket ceiling is
+/// measured against. Split out from `calculate_retirement_tax` because the tax
+/// itself is not what a conversion is aiming at.
+pub fn retirement_taxable_income(
+    traditional_withdrawals: f64,
+    social_security_benefit: f64,
+    qualified_income: f64,
+    household: &Household,
+    tax_year: i32,
+) -> f64 {
+    let taxable_ss = calculate_taxable_social_security(
+        traditional_withdrawals,
+        social_security_benefit,
+        qualified_income,
+        &household.filing_status,
+        tax_year,
+    );
+    let ordinary = traditional_withdrawals + taxable_ss;
+    let deduction = deduction_for(household, tax_year, ordinary + qualified_income);
+    (ordinary - deduction).max(0.0)
+}
+
+/// Top of the bounded federal bracket at `rate`. Brackets are inflation-indexed,
+/// so the 2025 table stands unadjusted in the real dollars the projection uses.
+pub fn federal_bracket_top(rate: f64, filing_status: &FilingStatus) -> Option<f64> {
+    get_federal_brackets(filing_status)
+        .into_iter()
+        .find(|bracket| (bracket.rate - rate).abs() < 1e-9)
+        .and_then(|bracket| bracket.max)
+}
+
 /// Tax on a retirement year. Wages have stopped, so there is no FICA and no
 /// contribution to deduct; Social Security is taxed under its own rules.
 pub fn calculate_retirement_tax(
