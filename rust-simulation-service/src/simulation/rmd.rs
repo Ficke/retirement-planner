@@ -1,6 +1,6 @@
+//! Required Minimum Distribution calculations shared by native and Wasm builds.
+
 use once_cell::sync::Lazy;
-/// Required Minimum Distribution (RMD) calculations
-/// Ports TypeScript rmd.ts logic to Rust
 use std::collections::HashMap;
 
 /// SECURE/SECURE 2.0 applicable age by birth cohort.
@@ -17,7 +17,7 @@ pub fn get_rmd_start_age(birth_year: i32) -> u32 {
     }
 }
 
-/// IRS Uniform Lifetime Table (for account owners with spouses not more than 10 years younger)
+/// IRS Uniform Lifetime Table for owners whose spouse is not more than 10 years younger.
 static RMD_UNIFORM_LIFETIME_TABLE: Lazy<HashMap<u32, f64>> = Lazy::new(|| {
     let mut m = HashMap::new();
     m.insert(72, 27.4);
@@ -72,11 +72,8 @@ static RMD_UNIFORM_LIFETIME_TABLE: Lazy<HashMap<u32, f64>> = Lazy::new(|| {
     m
 });
 
-/// Calculate Required Minimum Distribution for a given account balance and age
-///
-/// @param previous_year_end_balance - Account balance at end of previous year
-/// @param age - Current age of account owner
-/// @returns Required minimum distribution amount (0 if under RMD age)
+/// Returns the required distribution from a prior year-end balance, or zero
+/// before the applicable starting age.
 pub fn calculate_rmd(previous_year_end_balance: f64, age: u32, applicable_age: u32) -> f64 {
     if age < applicable_age {
         return 0.0;
@@ -98,39 +95,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rmd_before_start_age() {
+    fn returns_zero_before_start_age() {
         assert_eq!(calculate_rmd(100000.0, 72, 73), 0.0);
         assert_eq!(calculate_rmd(100000.0, 50, 73), 0.0);
     }
 
     #[test]
-    fn test_rmd_at_start_age() {
-        // At age 73, distribution factor is 26.5
+    fn uses_the_factor_at_start_age() {
         let rmd = calculate_rmd(100000.0, 73, 73);
         let expected = 100000.0 / 26.5;
         assert!((rmd - expected).abs() < 0.01);
     }
 
     #[test]
-    fn test_rmd_at_various_ages() {
-        // Age 75: factor 24.6
+    fn uses_uniform_lifetime_factors_at_later_ages() {
         let rmd75 = calculate_rmd(100000.0, 75, 73);
         assert!((rmd75 - 100000.0 / 24.6).abs() < 0.01);
 
-        // Age 85: factor 16.0
+        let rmd80 = calculate_rmd(500000.0, 80, 73);
+        assert!((rmd80 - 500000.0 / 20.2).abs() < 0.01);
+
         let rmd85 = calculate_rmd(100000.0, 85, 73);
         assert!((rmd85 - 100000.0 / 16.0).abs() < 0.01);
 
-        // Age 95: factor 8.9
         let rmd95 = calculate_rmd(100000.0, 95, 73);
         assert!((rmd95 - 100000.0 / 8.9).abs() < 0.01);
     }
 
     #[test]
     fn ages_past_the_table_keep_its_final_factor() {
-        // 121 clamps to 120, whose factor is 2.0.
         let rmd = calculate_rmd(100000.0, 121, 73);
         assert_eq!(rmd, 50000.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "No RMD distribution factor for age 70")]
+    fn applicable_age_below_the_table_is_rejected() {
+        calculate_rmd(100000.0, 70, 70);
     }
 
     #[test]

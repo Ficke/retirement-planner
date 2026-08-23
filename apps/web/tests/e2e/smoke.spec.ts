@@ -54,8 +54,8 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
-  // The E2E server runs only the Vite client, so the default cloud request falls
-  // back to the Worker. This directly verifies the current local response shape.
+  // The E2E server runs only Vite, so the default native request fails at the
+  // proxy and falls back to local Wasm. This verifies the local result shape.
 
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });
@@ -70,6 +70,31 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await expect(cashFlowChart.locator('.recharts-wrapper')).toHaveCount(1);
   await expect(cashFlowChart.getByText('RMD', { exact: true })).toBeVisible();
   await expect(page.getByText('Money in — what it clears is saved')).toHaveCount(0);
+});
+
+test('local simulation loads the Rust Wasm module without runtime errors', async ({ page }) => {
+  const runtimeErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') runtimeErrors.push(message.text());
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'retirement-planner:preferences',
+      JSON.stringify({ useServerSideCalculations: false, cloudSyncEnabled: true }),
+    );
+  });
+
+  const wasmResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('.wasm'),
+  );
+  await gotoApp(page);
+
+  const wasmResponse = await wasmResponsePromise;
+  expect(wasmResponse.ok()).toBe(true);
+  expect(wasmResponse.headers()['content-type']).toContain('application/wasm');
+  await expect(page.getByText('Local engine', { exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(runtimeErrors).toEqual([]);
 });
 
 test('Plan labels sensitivity axes without repeating age in every tick', async ({ page }) => {

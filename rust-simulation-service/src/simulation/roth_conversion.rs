@@ -1,7 +1,7 @@
 //! Roth conversions during the gap years between retirement and RMDs.
 //!
-//! Mirrors `engine/roth-conversion.ts`. The two engines share one set of
-//! semantics, so any change here belongs there as well.
+//! Used by both native and WebAssembly adapters, so all targets share these
+//! semantics.
 
 use crate::simulation::healthcare_premiums::irmaa_free_magi_ceiling;
 use crate::simulation::tax::{
@@ -169,8 +169,8 @@ pub fn roth_conversion_for(input: &RothConversionInput) -> RothConversion {
     }
 
     // Whole dollars, rounded down. Nobody converts a fraction of a cent, and
-    // pinning the result to an integer is what lets the two engines agree
-    // exactly: bisection alone lands them a hair apart on the same root.
+    // pinning the result to an integer preserves exact results across native
+    // and WebAssembly targets: bisection alone can land a hair apart.
     settle(low.floor(), input, base_tax)
 }
 
@@ -226,5 +226,71 @@ fn settle(converted: f64, input: &RothConversionInput, base_tax: f64) -> RothCon
         tax: outcome.tax,
         from_taxable: outcome.from_taxable,
         withheld: outcome.withheld,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::FilingStatus;
+
+    fn input_for<'a>(
+        ceiling: RothConversionCeiling,
+        household: &'a Household,
+        state: &'a State,
+    ) -> RothConversionInput<'a> {
+        RothConversionInput {
+            policy: RothConversionPolicy {
+                enabled: true,
+                ceiling,
+            },
+            traditional_withdrawals: 8_000.0,
+            social_security_benefit: 0.0,
+            qualified_income: 2_000.0,
+            taxable_withdrawals: 4_000.0,
+            taxable_gain_ratio: 0.5,
+            household,
+            state,
+            tax_year: 2025,
+            traditional_balance: 2_000_000.0,
+            taxable_balance: 1_000_000.0,
+        }
+    }
+
+    #[test]
+    fn conversion_fills_the_selected_bracket_without_crossing_it() {
+        let household = Household::single(FilingStatus::Single, 65);
+        let state = State::CA;
+        let input = input_for(RothConversionCeiling::Bracket22, &household, &state);
+        let conversion = roth_conversion_for(&input);
+        let bracket_top = federal_bracket_top(0.22, &household.filing_status).unwrap();
+        let taxable_income = measure(
+            conversion.converted,
+            conversion.from_taxable * input.taxable_gain_ratio,
+            &input,
+        );
+
+        assert!(conversion.converted > 0.0);
+        assert!(taxable_income <= bracket_top);
+        assert!(bracket_top - taxable_income < 2.0);
+    }
+
+    #[test]
+    fn conversion_keeps_magi_below_the_first_irmaa_surcharge_tier() {
+        let household = Household::single(FilingStatus::Single, 65);
+        let state = State::CA;
+        let mut input = input_for(RothConversionCeiling::IrmaaTier, &household, &state);
+        input.social_security_benefit = 24_000.0;
+        let conversion = roth_conversion_for(&input);
+        let ceiling = irmaa_free_magi_ceiling(FilingStatus::Single);
+        let magi = measure(
+            conversion.converted,
+            conversion.from_taxable * input.taxable_gain_ratio,
+            &input,
+        );
+
+        assert!(conversion.converted > 0.0);
+        assert!(magi <= ceiling);
+        assert!(ceiling - magi < 2.0);
     }
 }

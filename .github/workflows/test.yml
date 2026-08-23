@@ -102,6 +102,9 @@ jobs:
       - name: Run typecheck
         run: pnpm typecheck
 
+      - name: Check committed Wasm provenance
+        run: pnpm wasm:check
+
       - name: Run lint
         run: pnpm lint
 
@@ -192,8 +195,9 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
-          toolchain: stable
+          toolchain: '1.91.0'
           components: rustfmt, clippy
+          target: wasm32-unknown-unknown
 
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -216,6 +220,10 @@ jobs:
       - name: Run cargo check
         working-directory: rust-simulation-service
         run: cargo check --release
+
+      - name: Check browser target
+        working-directory: rust-simulation-service
+        run: cargo clippy --release --target wasm32-unknown-unknown --lib -- -D warnings
 
       - name: Check formatting
         working-directory: rust-simulation-service
@@ -247,7 +255,7 @@ jobs:
           fi
 
   engine-contract:
-    name: TypeScript ↔ Rust Contract
+    name: Native Rust ↔ Wasm Contract
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -266,7 +274,8 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
-          toolchain: stable
+          toolchain: '1.91.0'
+          target: wasm32-unknown-unknown
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -276,6 +285,11 @@ jobs:
 
       - name: Check generated state tax table
         run: node scripts/gen-rust-state-tax.mjs --check
+
+      - name: Rebuild and verify committed Wasm package
+        run: |
+          pnpm wasm:build
+          git diff --exit-code -- apps/web/src/wasm
 
       - name: Build Rust service
         working-directory: rust-simulation-service
@@ -295,7 +309,7 @@ jobs:
           cat "$RUNNER_TEMP/rust-service.log"
           exit 1
 
-      - name: Run cross-engine contract and performance smoke tests
+      - name: Run native and Wasm contract tests
         run: pnpm -C apps/web test:contract
         env:
           RUST_SERVICE_URL: http://127.0.0.1:18081
@@ -417,6 +431,19 @@ jobs:
           test "$missing_asset_status" = 404
           ! grep --ignore-case --quiet '^cache-control:.*immutable' \
             "$RUNNER_TEMP/missing-asset-headers"
+
+          wasm_file=$(docker compose exec --no-TTY web \
+            find /app/dist/assets -name '*.wasm' -print -quit | tr -d '\r')
+          test -n "$wasm_file"
+          wasm_status=$(curl --silent --output /dev/null \
+            --dump-header "$RUNNER_TEMP/wasm-asset-headers" --write-out '%{http_code}' \
+            --header "$origin_header" \
+            "http://localhost:3000/assets/$(basename "$wasm_file")")
+          test "$wasm_status" = 200
+          grep --ignore-case --quiet '^content-type:.*application/wasm' \
+            "$RUNNER_TEMP/wasm-asset-headers"
+          grep --ignore-case --quiet '^cache-control:.*immutable' \
+            "$RUNNER_TEMP/wasm-asset-headers"
 
       - name: Dump container logs
         if: failure()

@@ -2,16 +2,16 @@
  * Simulation orchestration.
  *
  * Scenario construction (which seeds to use, how many paths, which plan fields
- * each sweep varies) lives HERE and only here, so the server (Rust) and client
- * (Web Worker) engines always compute the same scenarios. The values swept come
- * from domain/levers.ts, which the Plan page's sliders and curves share. The
- * engines differ only in where the math runs.
+ * each sweep varies) lives here so native and WebAssembly adapters receive the
+ * same work. The values swept come from domain/levers.ts, which the Plan page's
+ * sliders and curves share.
  */
 
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { retirementSpendingOf } from '@/domain/age';
-import { MONTE_CARLO_DEFAULTS } from '@/data/market-history';
+import { MONTE_CARLO_BLOCK_SIZE } from '@/data/market-history';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { simulationResultSchema } from '@/domain/schemas';
 import { CONVERSION_STEPS, leverRange } from '@/domain/levers';
 import type {
   RetirementPlan,
@@ -61,7 +61,7 @@ interface BatchSimulationResponse {
   result?: Pick<SimulationResult, 'successProbability'>;
 }
 
-/** Build the minimal transient plan shared by both compute engines. */
+/** Build the minimal transient plan accepted by the Rust engine. */
 function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
   const profile = { ...plan.profile, retirementSpending: retirementSpendingOf(plan.profile) };
   delete (profile as Partial<typeof plan.profile>).retirementSpendingMultiplier;
@@ -171,7 +171,7 @@ async function runOnServer(
         paths: s.paths,
         seed: s.seed,
         useHistoricalBootstrap: historicalBootstrapFor(plan),
-        blockSize: MONTE_CARLO_DEFAULTS.block_size,
+        blockSize: MONTE_CARLO_BLOCK_SIZE,
       },
     })),
   };
@@ -211,7 +211,12 @@ async function runOnClient(
   }
   const summaries = await runMonteCarloSummaries(
     scenarios.map((scenario) => ({ id: scenario.id, plan: toSimulationPlan(scenario.plan) })),
-    { paths, seed },
+    {
+      paths,
+      seed,
+      useHistoricalBootstrap: historicalBootstrapFor(scenarios[0].plan),
+      blockSize: MONTE_CARLO_BLOCK_SIZE,
+    },
     signal,
   );
   const map = new Map<string, SimulationSummary>();
@@ -222,8 +227,8 @@ async function runOnClient(
 }
 
 /**
- * Run a scenario set on the requested engine, falling back to the client
- * engine when the server is unavailable.
+ * Run scenarios through the requested adapter, falling back to local Wasm when
+ * the native service is unavailable.
  */
 async function runScenarios(
   scenarios: Scenario[],
@@ -236,7 +241,7 @@ async function runScenarios(
       return await runOnServer(scenarios, plan, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
-      console.warn('Server-side simulation failed, falling back to client engine:', error);
+      console.warn('Native simulation failed, falling back to local Wasm:', error);
     }
   }
   return runOnClient(scenarios, signal);
@@ -262,7 +267,7 @@ class SimulationServiceImpl implements SimulationService {
               paths: MAIN_PATHS,
               seed,
               useHistoricalBootstrap: historicalBootstrapFor(plan),
-              blockSize: MONTE_CARLO_DEFAULTS.block_size,
+              blockSize: MONTE_CARLO_BLOCK_SIZE,
             },
           }),
         });
@@ -270,7 +275,7 @@ class SimulationServiceImpl implements SimulationService {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || `Server-side simulation failed: ${response.status}`);
         }
-        const result: SimulationResult = await response.json();
+        const result = simulationResultSchema.parse(await response.json());
         // An engine deployed behind this build answers without cohorts. Reject
         // it so the fallback below produces a complete result, rather than
         // rendering a cash flow chart with no cohort to average.
@@ -280,13 +285,18 @@ class SimulationServiceImpl implements SimulationService {
         return { ...result, source: 'server' };
       } catch (error) {
         if (signal?.aborted) throw error;
-        console.warn('Server-side simulation failed, falling back to client engine:', error);
+        console.warn('Native simulation failed, falling back to local Wasm:', error);
       }
     }
 
     const result = await runMonteCarloSimulation(
       toSimulationPlan(plan),
-      { paths: MAIN_PATHS, seed },
+      {
+        paths: MAIN_PATHS,
+        seed,
+        useHistoricalBootstrap: historicalBootstrapFor(plan),
+        blockSize: MONTE_CARLO_BLOCK_SIZE,
+      },
       signal,
     );
     return { ...result, source: 'client' };

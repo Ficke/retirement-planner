@@ -1,5 +1,5 @@
 /**
- * Market model statistics and parametric return generation.
+ * Market model statistics and Monte Carlo orchestration defaults.
  *
  * All statistics are DERIVED from the canonical historical dataset
  * (market-history-annual.ts, 1928–2025) — real (inflation-adjusted) annual
@@ -7,7 +7,6 @@
  * and every consumer (parametric model, Assumptions page) follows.
  */
 
-import type { SeededRNG } from '@/engine/projection';
 import { HISTORICAL_RETURNS } from '@/data/market-history-annual';
 
 function mean(xs: number[]): number {
@@ -58,62 +57,7 @@ export const US_INFLATION = {
   volatility: stdDev(inflation),
 } as const;
 
-export const MONTE_CARLO_DEFAULTS = {
-  paths: 5000,
-  // Block bootstrap preserves multi-year sequences such as 2008 → 2009.
-  use_historical_bootstrap: true,
-  // Long enough to carry a multi-year regime rather than a single crash year.
-  // Longer blocks trade sampling diversity for that, so this sits near the
-  // n^(1/3) heuristic for a 98-year dataset.
-  block_size: 5,
-} as const;
-
-/**
- * All-in annual portfolio cost, subtracted from the realized return before it
- * reaches a balance. The historical series are gross index returns, so without
- * this every projection quietly assumes a free portfolio.
- *
- * Mirrored in rust-simulation-service/src/simulation/projection.rs.
- */
-export const ANNUAL_PORTFOLIO_FEE = 0.001;
-
-/**
- * Convert arithmetic mean/vol to log-space parameters so that:
- *   exp(mu_log + sigma_log * Z) - 1
- * has the given arithmetic mean and volatility (Z ~ N(0,1)).
- */
-function toLogParams(m: number, vol: number): { muLog: number; sigmaLog: number } {
-  const sigmaLog = Math.sqrt(Math.log(1 + (vol / (1 + m)) ** 2));
-  const muLog = Math.log(1 + m) - 0.5 * sigmaLog * sigmaLog;
-  return { muLog, sigmaLog };
-}
-
-const STOCK_LOG = toLogParams(US_STOCK_REAL_RETURNS.mean, US_STOCK_REAL_RETURNS.volatility);
-const BOND_LOG = toLogParams(US_BOND_REAL_RETURNS.mean, US_BOND_REAL_RETURNS.volatility);
-
-/**
- * Generate correlated annual real returns for stocks and bonds.
- *
- * Sampling is done in log-return space — equities use Student-t (df=6) shocks
- * for fat tails; bonds use Normal shocks. A 2x2 Cholesky transform preserves
- * the dataset's stock/bond correlation. The final simple return
- *   R = exp(mu_log + sigma_log * Z) - 1
- * is bounded below by -1 (total loss) by construction; no artificial clamps.
- */
-export function generateCorrelatedReturns(rng: SeededRNG): { stockReturn: number; bondReturn: number } {
-  const degreesOfFreedom = 6;
-  // Student-t(df) has variance df/(df-2); standardize it before applying
-  // volatility calibrated from historical unit-variance shocks.
-  const stockShock = rng.studentT(degreesOfFreedom) / Math.sqrt(degreesOfFreedom / (degreesOfFreedom - 2));
-  const bondShock = rng.normal();
-
-  // This is the Cholesky factor for [[1, r], [r, 1]].
-  const r = STOCK_BOND_CORRELATION;
-  const correlatedStock = stockShock;
-  const correlatedBond = r * stockShock + Math.sqrt(1 - r * r) * bondShock;
-
-  return {
-    stockReturn: Math.exp(STOCK_LOG.muLog + correlatedStock * STOCK_LOG.sigmaLog) - 1,
-    bondReturn: Math.exp(BOND_LOG.muLog + correlatedBond * BOND_LOG.sigmaLog) - 1,
-  };
-}
+// Long enough to carry a multi-year regime rather than a single crash year.
+// Longer blocks trade sampling diversity for that, so this sits near the
+// n^(1/3) heuristic for a 98-year dataset.
+export const MONTE_CARLO_BLOCK_SIZE = 5;

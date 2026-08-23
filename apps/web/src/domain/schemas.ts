@@ -225,6 +225,72 @@ export const simulationPlanSchema = z.object({
   assumptions: projectionSettingsSchema,
 });
 
+const pathProjectionSchema = z.object({
+  year: z.number(),
+  age: z.number(),
+  portfolioValue: z.number(),
+  income: z.number(),
+  spending: z.number(),
+  taxes: z.number(),
+  savings: z.number(),
+  socialSecurityBenefit: z.number(),
+  isRetired: z.boolean(),
+  withdrawalTaxable: z.number(),
+  withdrawalTraditional: z.number(),
+  withdrawalRoth: z.number(),
+  rmdAmount: z.number(),
+  rothConversion: z.number(),
+  depositTaxable: z.number(),
+  depositTraditional: z.number(),
+  depositRoth: z.number(),
+  depositHSA: z.number(),
+  withdrawalHSA: z.number(),
+  healthcareCost: z.number(),
+  insufficientFunds: z.boolean(),
+}).strict();
+
+const outcomeCashFlowRowSchema = z.object({
+  age: z.number(),
+  isRetired: z.boolean(),
+  income: z.number(),
+  spending: z.number(),
+  taxes: z.number(),
+  savings: z.number(),
+  socialSecurityBenefit: z.number(),
+  withdrawalTaxable: z.number(),
+  withdrawalTraditional: z.number(),
+  withdrawalRoth: z.number(),
+  withdrawalHSA: z.number(),
+  healthcareCost: z.number(),
+}).strict();
+
+/** Runtime contract enforced for results from both Rust execution adapters. */
+export const simulationResultSchema = z.object({
+  successProbability: z.number(),
+  medianTerminalWealth: z.number(),
+  medianAfterTaxTerminalWealth: z.number(),
+  percentile5TerminalWealth: z.number(),
+  percentile10TerminalWealth: z.number(),
+  percentile90TerminalWealth: z.number(),
+  yearlyProjections: z.array(pathProjectionSchema.extend({
+    p5: z.number(),
+    p10: z.number(),
+    p15: z.number(),
+    p25: z.number(),
+    p50: z.number(),
+    p75: z.number(),
+    p90: z.number(),
+  }).strict()),
+  outcomeBuckets: z.array(z.object({
+    centerPercentile: z.number(),
+    lowerPercentile: z.number(),
+    upperPercentile: z.number(),
+    successProbability: z.number(),
+    projections: z.array(outcomeCashFlowRowSchema),
+  }).strict()),
+  riskOfRuin: z.number(),
+}).strict();
+
 export type InferredAccount = z.infer<typeof accountSchema>;
 export type InferredUserProfile = z.infer<typeof userProfileSchema>;
 export type InferredSocialSecuritySettings = z.infer<typeof socialSecuritySettingsSchema>;

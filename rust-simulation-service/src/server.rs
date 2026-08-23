@@ -3,16 +3,12 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info};
 use warp::{Filter, Reply};
 
-use crate::simulation::age::age_on;
 use crate::simulation::monte_carlo;
 use crate::types::{
     BatchRequest, BatchResponse, BatchResponseMode, BatchSimulationResponse, BatchSummaryResponse,
-    MCConfig, RetirementPlan, SimulationRequest, SimulationResult, PLAN_SCHEMA_VERSION,
+    MCConfig, RetirementPlan, SimulationRequest, SimulationResult,
 };
-
-const MAX_PATHS: u32 = 5_000;
-const MAX_BATCH_SIMULATIONS: usize = 40;
-const MAX_BATCH_PATHS: u32 = 40_000;
+use crate::validation::{validate_batch_simulations, validate_simulation_request};
 
 struct CancelOnDrop {
     cancellation: monte_carlo::CancellationToken,
@@ -139,29 +135,11 @@ async fn handle_batch(
     request: BatchRequest,
     simulation_slots: Arc<Semaphore>,
 ) -> Result<Box<dyn Reply>, warp::Rejection> {
-    if request.simulations.is_empty() || request.simulations.len() > MAX_BATCH_SIMULATIONS {
-        return Ok(bad_request(format!(
-            "Batch must contain 1 to {MAX_BATCH_SIMULATIONS} simulations"
-        )));
-    }
-    for simulation in &request.simulations {
-        if let Err(message) = validate_simulation_request(&SimulationRequest {
-            plan: simulation.plan.clone(),
-            config: simulation.config.clone(),
-        }) {
-            return Ok(bad_request(format!(
-                "Simulation '{}': {message}",
-                simulation.id
-            )));
-        }
-    }
+    let total_paths = match validate_batch_simulations(&request.simulations) {
+        Ok(total_paths) => total_paths,
+        Err(message) => return Ok(bad_request(message)),
+    };
     let num_sims = request.simulations.len();
-    let total_paths: u32 = request.simulations.iter().map(|s| s.config.paths).sum();
-    if total_paths > MAX_BATCH_PATHS {
-        return Ok(bad_request(format!(
-            "Batch may not exceed {MAX_BATCH_PATHS} total paths"
-        )));
-    }
 
     info!(
         "Received batch request: {} simulations, {} total paths",
@@ -349,122 +327,11 @@ fn bad_request(message: String) -> Box<dyn Reply> {
     ))
 }
 
-fn validate_simulation_request(request: &SimulationRequest) -> Result<(), String> {
-    if request.config.paths == 0 || request.config.paths > MAX_PATHS {
-        return Err(format!("paths must be between 1 and {MAX_PATHS}"));
-    }
-    if request.config.seed > u32::MAX as u64 {
-        return Err("seed must be a 32-bit unsigned integer".into());
-    }
-    if !(1..=10).contains(&request.config.block_size) {
-        return Err("blockSize must be between 1 and 10".into());
-    }
-    validate_plan(&request.plan)
-}
-
-fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
-    if plan.schema_version > PLAN_SCHEMA_VERSION {
-        return Err(format!(
-            "schemaVersion {} is newer than supported version {PLAN_SCHEMA_VERSION}",
-            plan.schema_version
-        ));
-    }
-    let profile = &plan.profile;
-    if profile.retirement_age < 45 || profile.retirement_age > 100 {
-        return Err("retirementAge must be between 45 and 100".into());
-    }
-    let Ok(as_of_date) = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d") else {
-        return Err("asOfDate must use YYYY-MM-DD".into());
-    };
-    if !(1900..=2200).contains(&chrono::Datelike::year(&as_of_date)) {
-        return Err("asOfDate year must be between 1900 and 2200".into());
-    }
-    // Age derives from birthDate, so it cannot contradict another stored field.
-    let Ok(age) = age_on(&profile.birth_date, &profile.as_of_date) else {
-        return Err("birthDate must use YYYY-MM-DD and precede asOfDate".into());
-    };
-    if !(18..=100).contains(&age) {
-        return Err("age at asOfDate must be between 18 and 100".into());
-    }
-    if profile.life_expectancy <= profile.retirement_age
-        || profile.life_expectancy <= age
-        || profile.life_expectancy > 120
-    {
-        return Err(
-            "lifeExpectancy must be after current and retirement ages and no greater than 120"
-                .into(),
-        );
-    }
-    let finite_profile_values = [
-        profile.current_salary,
-        profile.salary_growth_rate,
-        profile.current_spending,
-        profile.working_spending_growth_rate,
-        profile.retirement_spending,
-        profile.retirement_spending_growth_rate,
-    ];
-    if !finite_profile_values.iter().all(|value| value.is_finite())
-        || profile.current_salary < 0.0
-        || profile.current_salary > 1_000_000_000.0
-        || profile.current_spending < 0.0
-        || profile.current_spending > 1_000_000_000.0
-        || profile.retirement_spending < 0.0
-        || profile.retirement_spending > 1_000_000_000.0
-        || !(-0.1..=0.2).contains(&profile.salary_growth_rate)
-        || !(-0.1..=0.1).contains(&profile.working_spending_growth_rate)
-        || !(-0.1..=0.1).contains(&profile.retirement_spending_growth_rate)
-    {
-        return Err(
-            "profile amounts and rates must be finite and nonnegative where applicable".into(),
-        );
-    }
-    if !(62..=70).contains(&plan.social_security.claim_age) {
-        return Err("claimAge must be between 62 and 70".into());
-    }
-    if let Some(benefit) = plan.social_security.estimated_benefit {
-        if !benefit.is_finite() || !(0.0..=10_000_000.0).contains(&benefit) {
-            return Err("estimatedBenefit must be finite and between 0 and 10000000".into());
-        }
-    }
-    if plan.accounts.len() > 20 {
-        return Err("plan may contain at most 20 accounts".into());
-    }
-    if plan.assumptions.random_seed > u32::MAX as u64 {
-        return Err("randomSeed must be a 32-bit unsigned integer".into());
-    }
-    if !plan.assumptions.taxable_gain_ratio.is_finite()
-        || !(0.0..=1.0).contains(&plan.assumptions.taxable_gain_ratio)
-    {
-        return Err("taxableGainRatio must be between 0 and 1".into());
-    }
-    if !plan.assumptions.terminal_tax_rate.is_finite()
-        || !(0.0..=1.0).contains(&plan.assumptions.terminal_tax_rate)
-    {
-        return Err("terminalTaxRate must be between 0 and 1".into());
-    }
-    for (index, account) in plan.accounts.iter().enumerate() {
-        let weights = &account.asset_weights;
-        if !account.balance.is_finite()
-            || account.balance < 0.0
-            || account.balance > 1_000_000_000_000_000.0
-            || !weights.stocks.is_finite()
-            || !weights.bonds.is_finite()
-            || !(0.0..=1.0).contains(&weights.stocks)
-            || !(0.0..=1.0).contains(&weights.bonds)
-            || (weights.stocks + weights.bonds - 1.0).abs() > 0.001
-        {
-            return Err(format!(
-                "account {} has invalid balance or allocation",
-                index + 1
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PLAN_SCHEMA_VERSION;
+    use crate::validation::validate_plan;
 
     #[test]
     fn validates_plan_without_accounts() {
@@ -515,26 +382,16 @@ mod tests {
             .unwrap_err()
             .contains("newer than supported"));
 
-        let mut oversized_plan_seed = plan.clone();
-        oversized_plan_seed.assumptions.random_seed = u32::MAX as u64 + 1;
-        assert_eq!(
-            validate_plan(&oversized_plan_seed),
-            Err("randomSeed must be a 32-bit unsigned integer".into())
-        );
-
         let request = SimulationRequest {
             plan,
             config: MCConfig {
                 paths: 1,
-                seed: u32::MAX as u64 + 1,
+                seed: u32::MAX,
                 use_historical_bootstrap: true,
                 block_size: 3,
             },
         };
-        assert_eq!(
-            validate_simulation_request(&request),
-            Err("seed must be a 32-bit unsigned integer".into())
-        );
+        assert_eq!(validate_simulation_request(&request), Ok(()));
     }
 
     #[test]

@@ -11,6 +11,14 @@ afterEach(() => {
 });
 
 describe('origin authentication middleware', () => {
+  it('permits WebAssembly compilation without permitting general eval', async () => {
+    const response = await requestFor('/healthz');
+    const contentSecurityPolicy = response.headers.get('Content-Security-Policy');
+
+    expect(contentSecurityPolicy).toContain("'wasm-unsafe-eval'");
+    expect(contentSecurityPolicy).not.toContain("'unsafe-eval'");
+  });
+
   it('rejects a missing or incorrect secret when enforcement is configured', async () => {
     vi.stubEnv('ORIGIN_SECRET', 'expected-secret');
 
