@@ -42,8 +42,8 @@ pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The bootstrap command writes
-`apps/web/.env.local` from available Google Cloud and Firebase configuration,
-then prompts for missing values.
+`apps/web/.env.local` from available Google Cloud, Firebase, or Terraform
+configuration and falls back to guided manual setup when none is available.
 
 ## Checks
 
@@ -53,6 +53,12 @@ pnpm lint
 pnpm test
 pnpm e2e
 pnpm build
+```
+
+Before the first end-to-end run, install Chromium:
+
+```bash
+pnpm -C apps/web exec playwright install chromium
 ```
 
 ## Architecture

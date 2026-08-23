@@ -1218,13 +1218,6 @@ struct WithdrawalContext<'a> {
     hsa_qualified_allowance: f64,
 }
 
-/// Deposit into a type's bucket, opening it when the household holds no account
-/// of that kind — funding must never depend on which accounts happen to exist.
-/// A new bucket inherits the portfolio's blend so the money is invested the way
-/// the rest of it is; with nothing to blend it stays in cash, which is also what
-/// keeps that balance out of the taxable-gain calculation.
-///
-/// Returns the amount deposited, for the caller's cash-flow row.
 fn balance_of_bucket(accounts: &[Account], account_type: AccountType) -> f64 {
     accounts
         .iter()
@@ -1270,6 +1263,13 @@ fn after_tax_wealth_of(accounts: &[Account], terminal_tax_rate: f64) -> f64 {
         .sum()
 }
 
+/// Deposit into a type's bucket, opening it when the household holds no account
+/// of that kind — funding must never depend on which accounts happen to exist.
+/// A new bucket inherits the portfolio's blend so the money is invested the way
+/// the rest of it is; with nothing to blend it stays in cash, which is also what
+/// keeps that balance out of the taxable-gain calculation.
+///
+/// Returns the amount deposited, for the caller's cash-flow row.
 fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amount: f64) -> f64 {
     if amount <= 0.0 {
         return 0.0;
@@ -1593,9 +1593,9 @@ mod tests {
                 retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
                 retirement_healthcare: Default::default(),
-                // Off, unlike the product default, so that a test about
-                // anything else is not reading a lifetime care bill in its
-                // final year. The long-term care tests turn it back on.
+                // Off, unlike the product default, so path-specific care
+                // episodes do not affect unrelated tests. The long-term care
+                // tests turn it back on.
                 long_term_care: LongTermCare {
                     enabled: false,
                     cost_multiplier: 1.0,
@@ -3133,7 +3133,7 @@ mod tests {
     /// it compounds between that cohort's 65th birthday and this one's, and not
     /// again over the horizon.
     #[test]
-    fn healthcare_real_growth_compounds_only_between_cohorts() {
+    fn long_term_care_real_growth_compounds_only_between_cohorts() {
         let config = long_term_care_config(EPISODE_SEED);
         let mut flat = long_term_care_plan();
         flat.profile.retirement_healthcare.real_growth_rate = 0.0;

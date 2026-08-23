@@ -406,26 +406,28 @@ mod tests {
     }
 
     #[test]
-    fn normalized_rows_sum_to_one() {
-        for row in &SPENDING_ROWS {
-            let sum =
-                row.no_spending_percent + row.closed_percent.iter().sum::<f64>() + row.top_percent;
-            let normalized = (row.no_spending_percent
-                + row.closed_percent.iter().sum::<f64>()
-                + row.top_percent)
-                / sum;
-            assert!((normalized - 1.0).abs() < 1e-12);
-        }
-
-        let duration_sum = DURATION_ROW.no_care_percent
-            + DURATION_ROW.closed_percent.iter().sum::<f64>()
-            + DURATION_ROW.top_percent;
-        assert!((duration_sum / duration_sum - 1.0).abs() < 1e-12);
-
+    fn normalized_models_are_valid_cdfs() {
         for quintile in QUINTILES {
             let model = &SPENDING_MODELS[quintile.index()];
-            let tail = 1.0 - model.cumulative[SPENDING_BUCKETS.len() - 1];
-            assert!(tail > 0.0, "{quintile:?} has no tail mass");
+            assert!((0.0..1.0).contains(&model.no_spending_probability));
+
+            let mut previous = 0.0;
+            for upper in model.cumulative {
+                assert!(
+                    upper > previous && upper < 1.0,
+                    "{quintile:?} has an invalid CDF step {previous}..{upper}"
+                );
+                previous = upper;
+            }
+        }
+
+        let mut previous = 0.0;
+        for upper in DURATION.cumulative {
+            assert!(
+                upper > previous && upper < 1.0,
+                "duration has an invalid CDF step {previous}..{upper}"
+            );
+            previous = upper;
         }
     }
 
