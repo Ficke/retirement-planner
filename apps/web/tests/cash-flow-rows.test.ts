@@ -20,11 +20,13 @@ function row(overrides: Partial<OutcomeCashFlowRow>): OutcomeCashFlowRow {
     withdrawalRoth: 0,
     withdrawalHSA: 0,
     healthcareCost: 0,
+    longTermCareCost: 0,
     ...overrides,
   };
 }
 
-const moneyOut = (r: Record<string, number>) => r.living + r.healthcare + r.tax;
+const moneyOut = (r: Record<string, number>) =>
+  r.living + r.healthcare + r.longTermCare + r.tax;
 const moneyIn = (r: Record<string, number>) => r.salary + r.socialSecurity + r.portfolio;
 
 afterEach(() => vi.unstubAllGlobals());
@@ -45,13 +47,14 @@ describe('cash-flow chart rows', () => {
     const [r] = toCashFlowRows([row({
       age: 70, spending: 30_000, taxes: 2_500, savings: -22_500,
       socialSecurityBenefit: 10_000, withdrawalTaxable: 22_500,
-      healthcareCost: 7_000,
+      healthcareCost: 7_000, longTermCareCost: 5_000,
     })], { age: 70, fraction: 0.5 });
 
     expect(moneyIn(r)).toBe(65_000);
     expect(moneyOut(r)).toBe(65_000);
     expect(r.portfolio).toBe(45_000);
     expect(r.healthcare).toBe(14_000);
+    expect(r.longTermCare).toBe(10_000);
   });
 
   it('does not annualize the first visible row when the true partial year was filtered out', () => {
@@ -74,12 +77,14 @@ describe('cash-flow chart rows', () => {
     const [r] = toCashFlowRows([row({
       spending: 60_000, taxes: 5_000, socialSecurityBenefit: 20_000,
       income: 20_000, withdrawalTaxable: 45_000, savings: -45_000,
-      healthcareCost: 14_000,
+      healthcareCost: 14_000, longTermCareCost: 6_000,
     })]);
 
     expect(moneyIn(r)).toBe(65_000);
     expect(moneyOut(r)).toBe(65_000);
-    expect(r.living + r.healthcare).toBe(60_000);
+    expect(r.living).toBe(40_000);
+    expect(r.healthcare).toBe(14_000);
+    expect(r.longTermCare).toBe(6_000);
   });
 
   it('nets a required distribution the household never received', () => {
@@ -101,20 +106,24 @@ describe('cash-flow chart rows', () => {
     const [r] = toCashFlowRows([row({
       age: 88, spending: 4_000, taxes: 0, socialSecurityBenefit: 0,
       income: 0, withdrawalTaxable: 4_000, savings: -4_000,
-      healthcareCost: 15_000,
+      healthcareCost: 15_000, longTermCareCost: 15_000,
     })]);
 
     expect(moneyOut(r)).toBeLessThanOrEqual(moneyIn(r));
     expect(r.living).toBeGreaterThanOrEqual(0);
-    expect(r.living + r.healthcare).toBe(4_000);
+    expect(r.healthcare).toBe(2_000);
+    expect(r.longTermCare).toBe(2_000);
+    expect(r.living + r.healthcare + r.longTermCare).toBe(4_000);
   });
 
   it('treats a cloud engine with no healthcare field as no healthcare', () => {
     const bare = row({ spending: 40_000, taxes: 0, withdrawalTaxable: 40_000, savings: -40_000 });
     delete (bare as Partial<OutcomeCashFlowRow>).healthcareCost;
+    delete (bare as Partial<OutcomeCashFlowRow>).longTermCareCost;
     const [r] = toCashFlowRows([bare]);
 
     expect(r.healthcare).toBe(0);
+    expect(r.longTermCare).toBe(0);
     expect(r.living).toBe(40_000);
     expect(moneyOut(r)).toBe(moneyIn(r));
   });

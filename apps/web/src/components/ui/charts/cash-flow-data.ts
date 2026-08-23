@@ -17,6 +17,9 @@ function annualize(row: OutcomeCashFlowRow, multiplier: number): OutcomeCashFlow
     healthcareCost: row.healthcareCost == null
       ? row.healthcareCost
       : row.healthcareCost * multiplier,
+    longTermCareCost: row.longTermCareCost == null
+      ? row.longTermCareCost
+      : row.longTermCareCost * multiplier,
   };
 }
 
@@ -66,17 +69,24 @@ export function toCashFlowRows(
     const row = multiplier === 1 ? projection : annualize(projection, multiplier);
     const drawn = netWithdrawals(row);
     const salary = row.isRetired ? 0 : row.income;
-    // New engines report funded healthcare, capped on each path before cohort
-    // averaging. Keep this cap for a partially rolled-out cloud engine and the
-    // nullish guard for an engine deployed before the field existed.
-    const healthcare = Math.min(row.healthcareCost ?? 0, row.spending);
+    // New engines split funded care before cohort averaging. Preserve their
+    // proportions if a partially rolled-out response exceeds funded spending,
+    // and keep nullish guards for engines deployed before either result field.
+    const reportedHealthcare = Math.max(0, row.healthcareCost ?? 0);
+    const reportedLongTermCare = Math.max(0, row.longTermCareCost ?? 0);
+    const reportedCare = reportedHealthcare + reportedLongTermCare;
+    const fundedCare = Math.min(reportedCare, Math.max(0, row.spending));
+    const fundedShare = reportedCare > 0 ? fundedCare / reportedCare : 0;
+    const healthcare = reportedHealthcare * fundedShare;
+    const longTermCare = reportedLongTermCare * fundedShare;
     return {
       age: row.age,
       salary,
       socialSecurity: row.socialSecurityBenefit,
       ...drawn,
-      living: row.spending - healthcare,
+      living: row.spending - healthcare - longTermCare,
       healthcare,
+      longTermCare,
       tax: row.taxes,
     };
   });

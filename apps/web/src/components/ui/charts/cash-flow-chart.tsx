@@ -38,14 +38,13 @@ const inflow: Series[] = [
 const outflow: Series[] = [
   { key: "living", label: "Living", color: "var(--color-money-out-1)" },
   { key: "healthcare", label: "Healthcare", color: "var(--color-money-out-2)" },
-  { key: "tax", label: "Tax", color: "var(--color-money-out-3)" },
+  { key: "longTermCare", label: "Long-term care", color: "var(--color-money-out-3)" },
+  { key: "tax", label: "Tax", color: "var(--color-money-out-4)" },
 ];
 
 /**
- * Which account the year was funded from. A fourth stacked hue per side is
- * past the count a stack can carry, so this rides the tooltip instead of the
- * plot — the chart answers "how much came out of the portfolio", and the
- * tooltip answers "out of which bucket".
+ * Which account funded the year. Account source is orthogonal to expense type,
+ * so it rides the tooltip instead of adding four more stacked hues to the plot.
  */
 const buckets: { key: string; label: string }[] = [
   { key: "fromTaxable", label: "Taxable" },
@@ -70,6 +69,7 @@ function toDivergingRows(data: CashFlowRow[], transitionAges: number[]) {
       ...row,
       living: -row.living,
       healthcare: -row.healthcare,
+      longTermCare: -row.longTermCare,
       tax: -row.tax,
     };
     const previous = data[index - 1];
@@ -83,6 +83,7 @@ function toDivergingRows(data: CashFlowRow[], transitionAges: number[]) {
       displayAge: previous.age,
       living: -previous.living,
       healthcare: -previous.healthcare,
+      longTermCare: -previous.longTermCare,
       tax: -previous.tax,
     }, signedRow];
   });

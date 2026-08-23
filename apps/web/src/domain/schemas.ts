@@ -265,6 +265,8 @@ const pathProjectionSchema = z.object({
   depositHSA: z.number(),
   withdrawalHSA: z.number(),
   healthcareCost: z.number(),
+  // Additive result field: default while cloud and browser engines roll out.
+  longTermCareCost: z.number().default(0),
   insufficientFunds: z.boolean(),
 }).strict();
 
@@ -281,6 +283,7 @@ const outcomeCashFlowRowSchema = z.object({
   withdrawalRoth: z.number(),
   withdrawalHSA: z.number(),
   healthcareCost: z.number(),
+  longTermCareCost: z.number().default(0),
 }).strict();
 
 /** Runtime contract enforced for results from both Rust execution adapters. */

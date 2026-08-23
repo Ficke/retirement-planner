@@ -134,6 +134,7 @@ fn summarize_path(
             withdrawal_roth: projection.withdrawal_roth,
             withdrawal_hsa: projection.withdrawal_hsa,
             healthcare_cost: projection.healthcare_cost,
+            long_term_care_cost: projection.long_term_care_cost,
         });
     }
     Ok(PathSummary {
@@ -397,6 +398,7 @@ fn aggregate_results(
                         withdrawal_roth: 0.0,
                         withdrawal_hsa: 0.0,
                         healthcare_cost: 0.0,
+                        long_term_care_cost: 0.0,
                     };
                     for (_, path_index, _) in cohort {
                         let row = &path_summaries[*path_index].cash_flows[year_index];
@@ -410,6 +412,7 @@ fn aggregate_results(
                         mean.withdrawal_roth += row.withdrawal_roth;
                         mean.withdrawal_hsa += row.withdrawal_hsa;
                         mean.healthcare_cost += row.healthcare_cost;
+                        mean.long_term_care_cost += row.long_term_care_cost;
                     }
                     mean.income /= count;
                     mean.spending /= count;
@@ -421,6 +424,7 @@ fn aggregate_results(
                     mean.withdrawal_roth /= count;
                     mean.withdrawal_hsa /= count;
                     mean.healthcare_cost /= count;
+                    mean.long_term_care_cost /= count;
                     mean
                 })
                 .collect();
