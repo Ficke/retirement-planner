@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ageOn, birthDateFromLegacyAge } from '@/domain/age';
+import { DEFAULT_LONG_TERM_CARE } from '@/data/tax-brackets-2025';
 import type { UserProfile } from '@/domain/types';
 
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
@@ -56,6 +57,12 @@ const profileBaseShape = {
     realGrowthRate: z.number()
       .min(-0.1, "Healthcare growth rate must be reasonable")
       .max(0.1, "Healthcare growth rate must be reasonable"),
+  }),
+  longTermCare: z.object({
+    enabled: z.boolean(),
+    costMultiplier: z.number()
+      .min(0.5, "Care cost multiplier must be at least 0.5")
+      .max(3, "Care cost multiplier must be at most 3"),
   }),
   asOfDate: isoDateSchema,
 };
@@ -135,6 +142,14 @@ export const legacyStoredProfileSchema = z
       retirementHealthcare:
         (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
         ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+      // Long-term care deliberately does the opposite of the healthcare
+      // fallback above: an older bundle gets the model turned ON, so an
+      // existing plan's success rate moves. Care risk applies to every
+      // household whether or not its plan was written before the model, and
+      // an opt-in default would leave that exposure silently unpriced.
+      longTermCare:
+        (rest as { longTermCare?: UserProfile['longTermCare'] }).longTermCare
+        ?? { ...DEFAULT_LONG_TERM_CARE },
       // A plan with no working-year spending has no ratio to recover.
       retirementSpendingMultiplier: currentSpending > 0 ? target / currentSpending : 1,
     };
@@ -174,6 +189,10 @@ export const legacySimulationProfileSchema = z
     retirementHealthcare:
       (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
       ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    // On, for the reason given at the stored-profile fallback above.
+    longTermCare:
+      (rest as { longTermCare?: UserProfile['longTermCare'] }).longTermCare
+      ?? { ...DEFAULT_LONG_TERM_CARE },
   }))
   .pipe(simulationProfileSchema);
 

@@ -119,6 +119,12 @@ pub fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
     {
         return Err("retirementHealthcare contains invalid amounts or growth".into());
     }
+    let long_term_care = &profile.long_term_care;
+    if !long_term_care.cost_multiplier.is_finite()
+        || !(0.5..=3.0).contains(&long_term_care.cost_multiplier)
+    {
+        return Err("longTermCare.costMultiplier must be between 0.5 and 3".into());
+    }
     if !(62..=70).contains(&plan.social_security.claim_age) {
         return Err("claimAge must be between 62 and 70".into());
     }
@@ -158,4 +164,73 @@ pub fn validate_plan(plan: &RetirementPlan) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_plan;
+    use crate::types::RetirementPlan;
+
+    fn plan_with_long_term_care(long_term_care: Option<serde_json::Value>) -> RetirementPlan {
+        let mut profile = serde_json::json!({
+            "birthDate": "1986-01-01",
+            "state": "CA",
+            "filingStatus": "Single",
+            "retirementAge": 65,
+            "currentSalary": 100000.0,
+            "salaryGrowthRate": 0.01,
+            "currentSpending": 60000.0,
+            "retirementSpending": 60000.0,
+            "retirementSpendingGrowthRate": 0.0,
+            "lifeExpectancy": 90,
+            "asOfDate": "2026-01-01"
+        });
+        if let Some(long_term_care) = long_term_care {
+            profile["longTermCare"] = long_term_care;
+        }
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 7,
+            "profile": profile,
+            "accounts": [],
+            "socialSecurity": {
+                "enabled": true,
+                "estimatedBenefit": null,
+                "claimAge": 67,
+                "manualOverride": false
+            },
+            "assumptions": {
+                "simulationModel": "historical",
+                "taxableGainRatio": 0.5,
+                "hsaEligible": false,
+                "useBackdoorRoth": false
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn plan_without_long_term_care_validates_with_the_model_on() {
+        let plan = plan_with_long_term_care(None);
+
+        assert!(plan.profile.long_term_care.enabled);
+        assert_eq!(plan.profile.long_term_care.cost_multiplier, 1.0);
+        assert!(validate_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn long_term_care_multiplier_outside_the_range_is_rejected() {
+        for multiplier in [0.4, 3.1] {
+            let plan = plan_with_long_term_care(Some(serde_json::json!({
+                "enabled": true,
+                "costMultiplier": multiplier
+            })));
+
+            assert!(validate_plan(&plan).is_err());
+        }
+
+        let mut not_a_number = plan_with_long_term_care(None);
+        not_a_number.profile.long_term_care.cost_multiplier = f64::NAN;
+
+        assert!(validate_plan(&not_a_number).is_err());
+    }
 }

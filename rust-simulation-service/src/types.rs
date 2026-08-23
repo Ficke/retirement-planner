@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 6;
+pub const PLAN_SCHEMA_VERSION: u32 = 7;
 pub const WASM_ABI_VERSION: u32 = 1;
 
 /// Medicare eligibility, which is where retirement premiums step down.
@@ -17,6 +17,11 @@ pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
 /// the entered premium whatever the household's income, with no marketplace
 /// credit before Medicare and no IRMAA surcharge after it.
 pub const HEALTHCARE_MODEL_SCHEMA_VERSION: u32 = 5;
+
+/// Version that introduced the long-term-care episode. Older requests priced no
+/// care at all, so gating on this keeps a bundle built before the model from
+/// having a cost it never asked for charged against its plan.
+pub const LTC_MODEL_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -95,6 +100,10 @@ pub struct UserProfile {
     /// because it steps down at Medicare and grows faster than everything else.
     #[serde(rename = "retirementHealthcare", default)]
     pub retirement_healthcare: RetirementHealthcare,
+    /// Long-term care, drawn per path rather than budgeted, so it is a
+    /// distribution rather than an annual amount.
+    #[serde(rename = "longTermCare", default)]
+    pub long_term_care: LongTermCare,
     #[serde(rename = "asOfDate")]
     pub as_of_date: String,
 }
@@ -115,6 +124,37 @@ pub struct RetirementHealthcare {
     pub out_of_pocket: f64,
     #[serde(rename = "realGrowthRate", default)]
     pub real_growth_rate: f64,
+}
+
+/// Long-term care, whose cost is a lifetime out-of-pocket draw rather than an
+/// annual budget line. `cost_multiplier` scales the drawn amount for location
+/// and care level; income is already carried by the distribution itself.
+///
+/// Unlike the healthcare fields, an absent value is not a no-op: the model is
+/// on for every plan, including requests that predate it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LongTermCare {
+    #[serde(rename = "enabled", default = "default_ltc_enabled")]
+    pub enabled: bool,
+    #[serde(rename = "costMultiplier", default = "default_ltc_cost_multiplier")]
+    pub cost_multiplier: f64,
+}
+
+impl Default for LongTermCare {
+    fn default() -> Self {
+        Self {
+            enabled: default_ltc_enabled(),
+            cost_multiplier: default_ltc_cost_multiplier(),
+        }
+    }
+}
+
+fn default_ltc_enabled() -> bool {
+    true
+}
+
+fn default_ltc_cost_multiplier() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -480,6 +520,43 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.assumptions.random_seed, 42);
+    }
+
+    #[test]
+    fn plan_without_long_term_care_defaults_to_the_model_being_on() {
+        let plan: RetirementPlan = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 6,
+            "profile": {
+                "birthDate": "1966-01-01",
+                "state": "TX",
+                "filingStatus": "Single",
+                "retirementAge": 65,
+                "currentSalary": 100000.0,
+                "salaryGrowthRate": 0.01,
+                "currentSpending": 60000.0,
+                "retirementSpending": 60000.0,
+                "retirementSpendingGrowthRate": 0.0,
+                "lifeExpectancy": 80,
+                "asOfDate": "2026-01-01"
+            },
+            "accounts": [],
+            "socialSecurity": {
+                "enabled": true,
+                "estimatedBenefit": null,
+                "claimAge": 67,
+                "manualOverride": false
+            },
+            "assumptions": {
+                "simulationModel": "historical",
+                "taxableGainRatio": 0.5,
+                "hsaEligible": false,
+                "useBackdoorRoth": false
+            }
+        }))
+        .unwrap();
+
+        assert!(plan.profile.long_term_care.enabled);
+        assert_eq!(plan.profile.long_term_care.cost_multiplier, 1.0);
     }
 
     #[test]

@@ -186,6 +186,23 @@ export const DEFAULT_RETIREMENT_HEALTHCARE = {
   realGrowthRate: 0.02,
 } as const;
 
+/**
+ * Long-term-care defaults.
+ *
+ * The model is on for every plan, including plans saved before it existed:
+ * 45.3% of people turning 65 use some paid long-term care (ASPE 2022, Table 2),
+ * so leaving it out prices a plan against a world that does not exist. A
+ * household that has decided otherwise turns it off.
+ *
+ * The multiplier is location and care level together, against the national
+ * blend the underlying distribution already assumes. California weighted at
+ * its own care mix runs about 1.2 (CareScout 2025).
+ */
+export const DEFAULT_LONG_TERM_CARE = {
+  enabled: true,
+  costMultiplier: 1.0,
+} as const;
+
 // 2025 FICA and Payroll Tax Limits
 export const PAYROLL_LIMITS_2025 = {
   // Social Security

@@ -23,6 +23,7 @@ const validPlan = {
     retirementSpendingGrowthRate: 0,
     lifeExpectancy: 90,
     retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    longTermCare: { enabled: true, costMultiplier: 1 },
     asOfDate: '2026-01-01',
   },
   accounts: [
@@ -52,6 +53,7 @@ const legacyPlan = {
     retirementSpendingGrowthRate: undefined,
     // A bundle this old predates the healthcare block entirely.
     retirementHealthcare: undefined,
+    longTermCare: undefined,
     desiredSpending: 55000,
     spendingGrowthRate: 0.02,
   },
@@ -90,6 +92,13 @@ describe('simulation request limits', () => {
       outOfPocket: 0,
       realGrowthRate: 0,
     });
+  });
+
+  it('turns long-term care on for a bundle that predates it', () => {
+    const result = monteCarloRequestSchema.safeParse({ plan: legacyPlan, config: validConfig });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.plan.profile.longTermCare).toEqual({ enabled: true, costMultiplier: 1 });
   });
 
   it('accepts and normalizes a legacy browser request without changing its semantics version', () => {

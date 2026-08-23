@@ -1,4 +1,4 @@
-import { DEFAULT_RETIREMENT_HEALTHCARE } from '@/data/tax-brackets-2025';
+import { DEFAULT_LONG_TERM_CARE, DEFAULT_RETIREMENT_HEALTHCARE } from '@/data/tax-brackets-2025';
 import { create } from 'zustand';
 import { birthDateFromLegacyAge } from '@/domain/age';
 import type {
@@ -172,6 +172,7 @@ const defaultPlan: RetirementPlan = {
     retirementSpendingGrowthRate: 0.0,
     lifeExpectancy: 90,
     retirementHealthcare: DEFAULT_RETIREMENT_HEALTHCARE,
+    longTermCare: DEFAULT_LONG_TERM_CARE,
     asOfDate: new Date().toISOString().split('T')[0],
   },
   accounts: starterAccounts,
@@ -265,6 +266,11 @@ export function hydratePlan(
       retirementHealthcare: {
         ...defaultPlan.profile.retirementHealthcare,
         ...(profileInput.retirementHealthcare ?? {}),
+      },
+      // On for a plan that predates the model; see DEFAULT_LONG_TERM_CARE.
+      longTermCare: {
+        ...defaultPlan.profile.longTermCare,
+        ...(profileInput.longTermCare ?? {}),
       },
       // Age and birth year were once stored separately. Rebuilding the date
       // that reproduces the stored age exactly keeps results from shifting.

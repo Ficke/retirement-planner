@@ -2,12 +2,15 @@
 //! the browser WebAssembly adapter.
 use anyhow::Result;
 use chrono::Datelike;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
 use super::age::{age_on, birth_year_of};
-use super::healthcare_premiums::{expected_premium_contribution, irmaa_annual_surcharge};
+use super::healthcare_premiums::{
+    expected_premium_contribution, federal_poverty_level, irmaa_annual_surcharge,
+};
 use super::historical_data;
+use super::ltc::{draw_episode, quintile_for, IncomeQuintile};
 use super::parametric_returns;
 use super::rmd::{calculate_rmd, get_rmd_start_age};
 use super::roth_conversion::{roth_conversion_for, RothConversionInput};
@@ -19,8 +22,8 @@ use super::tax::{
 
 use crate::types::{
     Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult,
-    RetirementHealthcare, RetirementPlan, State, HEALTHCARE_MODEL_SCHEMA_VERSION, MEDICARE_AGE,
-    PHASE_SPENDING_SCHEMA_VERSION,
+    RetirementHealthcare, RetirementPlan, State, HEALTHCARE_MODEL_SCHEMA_VERSION,
+    LTC_MODEL_SCHEMA_VERSION, MEDICARE_AGE, PHASE_SPENDING_SCHEMA_VERSION,
 };
 
 /// All-in annual portfolio cost, subtracted from the realized return before it
@@ -54,6 +57,171 @@ const TRADITIONAL_PENALTY_AGE: u32 = 60;
 
 /// An HSA distribution that is not for medical care, taken before 65.
 const NON_QUALIFIED_HSA_PENALTY_RATE: f64 = 0.20;
+
+/// Salt for the long-term care stream, the 64-bit golden ratio. Path seeds are
+/// `base_seed + path_index`, so an LTC stream at any small offset from the seed
+/// is some other path's market stream verbatim; XOR with a large odd constant
+/// keeps the care draw independent of every path's returns.
+const LTC_STREAM_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// ASPE's spending distribution is conditioned on income at 65, so that is the
+/// year a path reads its own state to pick a quintile from.
+const LTC_OBSERVATION_AGE: u32 = 65;
+
+/// Real rate the portfolio is annuitized at to reach ASPE's income measure,
+/// which counts the annuitized value of financial assets (endnote 11).
+/// Deliberately under the roughly 6% a market annuity quotes, because that
+/// quote is nominal and every figure in this engine is real.
+const LTC_ANNUITY_REAL_RATE: f64 = 0.025;
+
+/// Floor on the annuity term. Without it a household with two years left
+/// annuitizes its portfolio into an income no quintile boundary can contain.
+const LTC_ANNUITY_MIN_TERM: u32 = 5;
+
+/// ASPE publishes Table 9 in 2020 dollars and the tables are stored that way.
+/// The plan is in its own base year, so the conversion happens here.
+const LTC_TABLE_DOLLAR_YEAR: i32 = 2020;
+
+/// Midpoint of the cohort ASPE modeled, which turns 65 in 2021-2025. Its
+/// lifetime total is priced for that cohort, so real growth above inflation
+/// applies between its 65th birthday and this household's, once.
+const LTC_COHORT_ANCHOR_YEAR: i32 = 2023;
+
+/// Bound on the cohort exponent. Nothing else constrains how far a birth date
+/// sits from the anchor, and this compounds.
+const LTC_MAX_COHORT_GROWTH_YEARS: i32 = 40;
+
+/// One path's long-term care episode, held from the draw to the charge.
+///
+/// The uniform is drawn at path start so the market generator's draw order is
+/// untouched, but it cannot be inverted until the loop reaches 65 and the
+/// quintile is known, and the cost is not spent until the final modeled year.
+struct LongTermCareDraw {
+    uniform: f64,
+    /// Turns one draw from the 2020-dollar table into this plan's money: CPI
+    /// rebasing, cohort distance, location and care level, and the share of the
+    /// age-65 lifetime horizon that remains when the plan starts.
+    price_scale: f64,
+    poverty_level: f64,
+    annuity_factor: f64,
+    quintile: Option<IncomeQuintile>,
+}
+
+impl LongTermCareDraw {
+    fn start(
+        plan: &RetirementPlan,
+        config: &ProjectionConfig,
+        base_year: i32,
+        birth_year: i32,
+        start_age: u32,
+    ) -> Option<Self> {
+        let profile = &plan.profile;
+        if plan.schema_version < LTC_MODEL_SCHEMA_VERSION || !profile.long_term_care.enabled {
+            return None;
+        }
+        // The distribution is lifetime spending from 65 to death, so a plan
+        // that ends at 65 has nothing for it to price. Requiring the horizon to
+        // pass 65 is also what guarantees the income observation lands in a
+        // year strictly before the one the episode is charged in.
+        if profile.life_expectancy <= LTC_OBSERVATION_AGE {
+            return None;
+        }
+        // Household size for the poverty ratio only. There is no shared
+        // filing-status-to-household-size helper to reuse: the engine's one
+        // other household size is IRMAA's, hardcoded to 1 so a couple is not
+        // charged a surcharge years before the second person is eligible.
+        let household_size = match profile.filing_status {
+            FilingStatus::MarriedFilingJointly => 2,
+            _ => 1,
+        };
+        let term = (profile.life_expectancy - LTC_OBSERVATION_AGE).max(LTC_ANNUITY_MIN_TERM);
+        // Rebasing 2020 dollars is a change of unit; medical costs rising
+        // faster than everything else is a separate assumption, and the plan
+        // already carries one. It applies between the two cohorts' 65th
+        // birthdays and nowhere else: ASPE's figure is a whole life's spending
+        // at DYNASIM's own price path, so compounding it again across this
+        // household's horizon would charge the same decades twice.
+        let cohort_growth_years = ((birth_year + LTC_OBSERVATION_AGE as i32)
+            - LTC_COHORT_ANCHOR_YEAR)
+            .clamp(-LTC_MAX_COHORT_GROWTH_YEARS, LTC_MAX_COHORT_GROWTH_YEARS);
+        let cohort_growth =
+            (1.0 + profile.retirement_healthcare.real_growth_rate).powi(cohort_growth_years);
+        let mut rng = ChaCha12Rng::seed_from_u64(config.seed ^ LTC_STREAM_SALT);
+        Some(Self {
+            uniform: rng.gen(),
+            price_scale: price_level_ratio(LTC_TABLE_DOLLAR_YEAR, base_year)
+                * cohort_growth
+                * profile.long_term_care.cost_multiplier
+                * remaining_ltc_exposure(start_age, profile.life_expectancy),
+            poverty_level: federal_poverty_level(household_size),
+            annuity_factor: annuity_factor(term),
+            quintile: None,
+        })
+    }
+
+    /// Records the first modeled year at or past 65. A plan whose as-of date is
+    /// already past 65 has no age-65 year at all, which is a common shape for
+    /// this app, and its first modeled year deliberately stands in for one.
+    fn observe(&mut self, current_age: u32, portfolio_value: f64, annual_income: f64) {
+        if self.quintile.is_some() || current_age < LTC_OBSERVATION_AGE {
+            return;
+        }
+        let income = self.annuity_factor * portfolio_value.max(0.0) + annual_income.max(0.0);
+        self.quintile = Some(quintile_for(income / self.poverty_level));
+    }
+
+    /// The episode in the plan's base-year dollars, zero for a path that drew
+    /// no episode at all.
+    fn cost(&self) -> f64 {
+        let Some(quintile) = self.quintile else {
+            // Unreachable: `start` rejects a horizon that ends at 65, so the
+            // observation always fires before the year this is charged in.
+            return 0.0;
+        };
+        draw_episode(quintile, self.uniform)
+            .map_or(0.0, |episode| episode.lifetime_cost_2020 * self.price_scale)
+    }
+}
+
+fn annuity_factor(term_years: u32) -> f64 {
+    LTC_ANNUITY_REAL_RATE / (1.0 - (1.0 + LTC_ANNUITY_REAL_RATE).powi(-(term_years as i32)))
+}
+
+/// Share of the age-65 lifetime distribution that remains inside this plan's
+/// horizon. ASPE does not publish an age-conditioned cost distribution, so a
+/// linear exposure adjustment avoids charging pre-plan years without inventing
+/// another probability curve or disturbing the path's existing care draw.
+fn remaining_ltc_exposure(current_age: u32, life_expectancy: u32) -> f64 {
+    if current_age <= LTC_OBSERVATION_AGE {
+        return 1.0;
+    }
+
+    let lifetime_years = life_expectancy.saturating_sub(LTC_OBSERVATION_AGE);
+    if lifetime_years == 0 {
+        return 0.0;
+    }
+
+    let remaining_years = life_expectancy.saturating_sub(current_age);
+    (remaining_years as f64 / lifetime_years as f64).clamp(0.0, 1.0)
+}
+
+/// Price level between two calendar years, compounded from the CPI-U series the
+/// market history already carries so that no second inflation figure has to be
+/// kept in step with it. The series ends at its last published year; a plan
+/// dated past that deflates to that year rather than to an invented rate.
+fn price_level_ratio(from_year: i32, to_year: i32) -> f64 {
+    let (earlier, later) = (from_year.min(to_year), from_year.max(to_year));
+    let growth: f64 = historical_data::HISTORICAL_RETURNS
+        .iter()
+        .filter(|entry| (entry.year as i32) > earlier && (entry.year as i32) <= later)
+        .map(|entry| 1.0 + entry.inflation_rate)
+        .product();
+    if to_year >= from_year {
+        growth
+    } else {
+        1.0 / growth
+    }
+}
 
 #[derive(Clone)]
 struct RothConversionLot {
@@ -471,6 +639,7 @@ fn project_scenario_internal(
     let mut magi_by_year: Vec<f64> = Vec::with_capacity(total_years as usize);
 
     let mut returns_generator = create_market_returns_generator(plan, &config);
+    let mut long_term_care = LongTermCareDraw::start(plan, &config, current_year, birth_year, age);
 
     for year in 0..total_years {
         let current_age = age + year;
@@ -746,6 +915,16 @@ fn project_scenario_internal(
             // allowance is large.
             hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
             healthcare_cost = healthcare.total * retirement_period_fraction;
+            // A lifetime episode total, not an annual rate, so it is charged
+            // whole in the last modeled year and never prorated. Care services
+            // are deductible medical expenses under IRC 213(d), so the HSA
+            // allowance grows with it.
+            let long_term_care_cost = match &long_term_care {
+                Some(draw) if year + 1 == total_years => draw.cost(),
+                _ => 0.0,
+            };
+            hsa_qualified_allowance += long_term_care_cost;
+            healthcare_cost += long_term_care_cost;
             let target_spending = profile.retirement_spending
                 * (1.0 + profile.retirement_spending_growth_rate)
                     .powi(spending_growth_exponent as i32)
@@ -894,6 +1073,18 @@ fn project_scenario_internal(
                 - conversion_tax_from_taxable
                 - conversion_tax_withheld;
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
+        }
+
+        if let Some(draw) = long_term_care.as_mut() {
+            // ASPE's quintiles are cut on an annual income, while the first
+            // modeled year's flows are prorated to the remainder of the
+            // calendar year, so the proration is undone before the comparison.
+            let annual_income = if year == 0 {
+                income / remaining_year_fraction
+            } else {
+                income
+            };
+            draw.observe(current_age, portfolio_value, annual_income);
         }
 
         previous_year_traditional_balance = accounts
@@ -1334,7 +1525,7 @@ mod tests {
     use super::*;
     use crate::types::FilingStatus;
     use crate::types::{
-        AssetWeights, ProjectionSettings, RetirementHealthcare, SimulationModel,
+        AssetWeights, LongTermCare, ProjectionSettings, RetirementHealthcare, SimulationModel,
         SocialSecuritySettings, UserProfile,
     };
     use rand::RngCore;
@@ -1371,6 +1562,13 @@ mod tests {
                 retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
                 retirement_healthcare: Default::default(),
+                // Off, unlike the product default, so that a test about
+                // anything else is not reading a lifetime care bill in its
+                // final year. The long-term care tests turn it back on.
+                long_term_care: LongTermCare {
+                    enabled: false,
+                    cost_multiplier: 1.0,
+                },
                 as_of_date: "2026-01-01".to_string(),
             },
             accounts: vec![
@@ -2519,5 +2717,342 @@ mod tests {
         let spendable =
             first_year.withdrawal_traditional - first_year.taxes - first_year.deposit_taxable;
         assert!((spendable - first_year.spending).abs() <= 1.0);
+    }
+
+    /// The fixture with the care model on, which is the product default. Cost
+    /// figures below are the 2020 table rebased by the CPI series alone: the
+    /// fixture's healthcare growth rate is zero, so the cohort adjustment is 1.
+    fn long_term_care_plan() -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.long_term_care.enabled = true;
+        plan
+    }
+
+    fn long_term_care_config(seed: u64) -> ProjectionConfig {
+        ProjectionConfig {
+            seed,
+            use_historical_bootstrap: false,
+            block_size: 5,
+        }
+    }
+
+    /// A seed whose long-term care uniform, 0.976, lands in the tail of every
+    /// quintile, so a path built on it always has an expensive episode.
+    const EPISODE_SEED: u64 = 16;
+
+    /// A seed whose uniform, 0.170, sits under every quintile's no-spending
+    /// mass, so a path built on it never has an episode.
+    const NO_EPISODE_SEED: u64 = 3;
+
+    fn final_year(result: &PathResult) -> &PathProjection {
+        result.projections.last().expect("a modeled year")
+    }
+
+    fn yearly_fingerprint(result: &PathResult) -> Vec<(f64, f64, f64, f64)> {
+        result
+            .projections
+            .iter()
+            .map(|year| {
+                (
+                    year.portfolio_value,
+                    year.spending,
+                    year.taxes,
+                    year.healthcare_cost,
+                )
+            })
+            .collect()
+    }
+
+    /// The care draw runs on its own stream, so turning the model on must not
+    /// move a single market return. Every year but the charged one is identical
+    /// down to the bit.
+    #[test]
+    fn long_term_care_does_not_disturb_the_market_draw() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut disabled = long_term_care_plan();
+        disabled.profile.long_term_care.enabled = false;
+
+        let with_care = project_scenario(&long_term_care_plan(), config.clone()).unwrap();
+        let without_care = project_scenario(&disabled, config).unwrap();
+
+        let with_care_years = yearly_fingerprint(&with_care);
+        let without_care_years = yearly_fingerprint(&without_care);
+        let last = with_care_years.len() - 1;
+        assert_eq!(with_care_years[..last], without_care_years[..last]);
+        assert!(final_year(&with_care).healthcare_cost > 0.0);
+        assert_eq!(final_year(&without_care).healthcare_cost, 0.0);
+    }
+
+    /// The gate is the version that introduced the model, so a bundle built
+    /// before it keeps the projection it asked for even though the field it
+    /// deserializes into defaults to on.
+    #[test]
+    fn a_plan_older_than_the_model_version_is_charged_no_care() {
+        let mut plan = long_term_care_plan();
+        plan.schema_version = LTC_MODEL_SCHEMA_VERSION - 1;
+
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
+
+        assert!(plan.profile.long_term_care.enabled);
+        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+    }
+
+    /// The episode is one lifetime bill, charged whole in the last modeled year
+    /// and in no other.
+    #[test]
+    fn the_episode_is_charged_only_in_the_final_year() {
+        let result =
+            project_scenario(&long_term_care_plan(), long_term_care_config(EPISODE_SEED)).unwrap();
+
+        let (last, earlier) = result.projections.split_last().expect("a modeled year");
+        assert!(last.healthcare_cost > 100_000.0);
+        assert!(earlier.iter().all(|year| year.healthcare_cost == 0.0));
+    }
+
+    /// A uniform under the quintile's no-spending mass is no episode at all,
+    /// not a small one.
+    #[test]
+    fn a_path_below_the_no_spending_mass_is_charged_nothing() {
+        let result = project_scenario(
+            &long_term_care_plan(),
+            long_term_care_config(NO_EPISODE_SEED),
+        )
+        .unwrap();
+
+        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+    }
+
+    /// The reported field is capped at the year's spending, because outcome
+    /// cohorts average it, so linearity is only visible on a portfolio that can
+    /// fund the larger bill.
+    #[test]
+    fn the_cost_multiplier_scales_the_charge_linearly() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut single_multiplier = long_term_care_plan();
+        single_multiplier.accounts[0].balance = 10_000_000.0;
+        let mut doubled = single_multiplier.clone();
+        doubled.profile.long_term_care.cost_multiplier = 2.0;
+
+        let single = project_scenario(&single_multiplier, config.clone()).unwrap();
+        let double = project_scenario(&doubled, config).unwrap();
+
+        let charged = final_year(&single).healthcare_cost;
+        assert!(charged > 0.0);
+        assert!((final_year(&double).healthcare_cost - 2.0 * charged).abs() < 1e-6);
+    }
+
+    /// The bill is spending as well as a healthcare line, so the year has to
+    /// fund it out of the portfolio like any other dollar.
+    #[test]
+    fn the_episode_raises_the_final_year_spending_target() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut disabled = long_term_care_plan();
+        disabled.profile.long_term_care.enabled = false;
+
+        let with_care = project_scenario(&long_term_care_plan(), config.clone()).unwrap();
+        let without_care = project_scenario(&disabled, config).unwrap();
+
+        let charged = final_year(&with_care).healthcare_cost;
+        let extra_spending = final_year(&with_care).spending - final_year(&without_care).spending;
+        assert!((extra_spending - charged).abs() < 1e-6);
+        assert!(with_care.terminal_wealth < without_care.terminal_wealth);
+    }
+
+    /// Care services are deductible medical expenses under IRC 213(d), so the
+    /// HSA allowance grows by the bill and the draw that pays it is tax-free.
+    /// Without that credit the same distribution would be ordinary income.
+    #[test]
+    fn the_episode_is_a_qualified_hsa_expense() {
+        let mut plan = long_term_care_plan();
+        plan.profile.birth_date = "1954-01-01".to_string();
+        plan.profile.life_expectancy = 74;
+        plan.profile.retirement_spending = 0.0;
+        plan.social_security.enabled = false;
+        plan.accounts = vec![Account {
+            account_type: AccountType::Hsa,
+            balance: 3_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
+
+        let last = final_year(&result);
+        assert!(last.withdrawal_hsa > 100_000.0);
+        assert_eq!(last.taxes, 0.0);
+        assert!(!last.insufficient_funds);
+    }
+
+    #[test]
+    fn remaining_care_exposure_is_full_through_65_and_tapers_afterward() {
+        assert_eq!(remaining_ltc_exposure(55, 90), 1.0);
+        assert_eq!(remaining_ltc_exposure(65, 90), 1.0);
+        assert_eq!(remaining_ltc_exposure(75, 90), 0.6);
+        assert_eq!(remaining_ltc_exposure(85, 90), 0.2);
+        assert_eq!(remaining_ltc_exposure(90, 90), 0.0);
+    }
+
+    /// The same episode and income quintile should cost only the share of the
+    /// age-65 lifetime horizon that remains when a plan starts later.
+    #[test]
+    fn a_plan_that_starts_after_65_prices_only_remaining_care_exposure() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut age_65 = long_term_care_plan();
+        age_65.profile.birth_date = "1961-01-01".to_string();
+        age_65.profile.life_expectancy = 90;
+        age_65.profile.retirement_spending = 0.0;
+        age_65.social_security.enabled = false;
+        age_65.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: 10_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        let mut age_75 = age_65.clone();
+        age_75.profile.birth_date = "1951-01-01".to_string();
+
+        let full_cost =
+            final_year(&project_scenario(&age_65, config.clone()).unwrap()).healthcare_cost;
+        let remaining_cost =
+            final_year(&project_scenario(&age_75, config).unwrap()).healthcare_cost;
+
+        assert!(full_cost > 0.0);
+        assert!((remaining_cost - full_cost * 0.6).abs() < 1e-6);
+    }
+
+    /// A household already past 65 has no age-65 year to read, so the first
+    /// modeled year stands in for one. The fallback has to select a quintile
+    /// rather than panic or silently price no care.
+    #[test]
+    fn a_plan_that_starts_after_65_falls_back_to_its_first_year() {
+        let mut plan = long_term_care_plan();
+        plan.profile.birth_date = "1950-01-01".to_string();
+        plan.profile.life_expectancy = 88;
+
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
+
+        assert_eq!(result.projections[0].age, 76);
+        assert!(final_year(&result).healthcare_cost > 0.0);
+    }
+
+    /// The quintile is resolved from the path's own income at 65, so the same
+    /// uniform buys a bigger episode for a household with more of it.
+    #[test]
+    fn a_richer_path_draws_from_a_higher_quintile() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut modest = long_term_care_plan();
+        modest.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: 120_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        let mut wealthy = modest.clone();
+        wealthy.accounts[0].balance = 6_000_000.0;
+
+        let modest_cost = project_scenario(&modest, config.clone())
+            .unwrap()
+            .projections
+            .last()
+            .unwrap()
+            .healthcare_cost;
+        let wealthy_cost = final_year(&project_scenario(&wealthy, config).unwrap()).healthcare_cost;
+
+        assert!(modest_cost > 0.0);
+        assert!(wealthy_cost > modest_cost);
+    }
+
+    /// A horizon that ends at 65 has no post-65 exposure for a lifetime-from-65
+    /// distribution to price.
+    #[test]
+    fn a_plan_that_ends_at_65_is_charged_no_care() {
+        let mut plan = long_term_care_plan();
+        plan.profile.birth_date = "1964-01-01".to_string();
+        plan.profile.retirement_age = 62;
+        plan.profile.life_expectancy = 65;
+
+        let result = project_scenario(&plan, long_term_care_config(EPISODE_SEED)).unwrap();
+
+        assert_eq!(final_year(&result).age, 65);
+        assert_eq!(final_year(&result).healthcare_cost, 0.0);
+    }
+
+    /// Paths are seeded `base_seed + path_index`, so the share of them with no
+    /// episode is what the model's no-spending mass actually ships as. This
+    /// plan sits in the highest quintile, whose ASPE row puts it at 58.5%.
+    #[test]
+    fn the_share_of_paths_without_an_episode_matches_the_published_rate() {
+        let mut plan = long_term_care_plan();
+        plan.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: 6_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+
+        let paths = 2_000;
+        let without_episode = (0..paths)
+            .filter(|path_index| {
+                let result =
+                    project_scenario(&plan, long_term_care_config(42 + path_index)).unwrap();
+                final_year(&result).healthcare_cost == 0.0
+            })
+            .count();
+
+        let share = without_episode as f64 / paths as f64;
+        assert!(
+            (share - 0.585).abs() < 0.03,
+            "share without an episode was {share}, expected about 0.585"
+        );
+    }
+
+    /// The 2020 table is rebased through the CPI-U series the market history
+    /// already carries, not through a second inflation figure kept beside it.
+    #[test]
+    fn the_price_rebasing_compounds_the_published_cpi_series() {
+        let published: f64 = historical_data::HISTORICAL_RETURNS
+            .iter()
+            .filter(|entry| (2021..=2025).contains(&entry.year))
+            .map(|entry| 1.0 + entry.inflation_rate)
+            .product();
+
+        assert_eq!(price_level_ratio(2020, 2025), published);
+        // The series stops at its last published year, so a later base year
+        // rebases to that year instead of to an invented rate.
+        assert_eq!(price_level_ratio(2020, 2030), published);
+        assert!((price_level_ratio(2025, 2020) - 1.0 / published).abs() < 1e-12);
+        assert_eq!(price_level_ratio(2020, 2020), 1.0);
+    }
+
+    /// Real growth above inflation is a cohort adjustment: ASPE's total is a
+    /// whole life's spending priced for the cohort turning 65 in 2021-2025, so
+    /// it compounds between that cohort's 65th birthday and this one's, and not
+    /// again over the horizon.
+    #[test]
+    fn healthcare_real_growth_compounds_only_between_cohorts() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut flat = long_term_care_plan();
+        flat.profile.retirement_healthcare.real_growth_rate = 0.0;
+        let mut growing = flat.clone();
+        growing.profile.retirement_healthcare.real_growth_rate = 0.02;
+
+        let flat_cost =
+            final_year(&project_scenario(&flat, config.clone()).unwrap()).healthcare_cost;
+        let growing_cost = final_year(&project_scenario(&growing, config).unwrap()).healthcare_cost;
+
+        // Born 1962, so 65 arrives in 2027, four years past the 2023 anchor.
+        assert!((growing_cost - flat_cost * 1.02_f64.powi(4)).abs() < 1e-6);
     }
 }

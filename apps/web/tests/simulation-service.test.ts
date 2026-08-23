@@ -52,6 +52,7 @@ const mockPlan: RetirementPlan = {
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 90,
     retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    longTermCare: { enabled: false, costMultiplier: 1 },
     asOfDate: '2024-01-01',
   },
   accounts: [],
