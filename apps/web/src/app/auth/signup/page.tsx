@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import {
   SyncUserError,
   useAuth,
 } from '@/lib/firebase';
+import { setAnalyticsUserId, setAnalyticsUserStatus, trackEvent } from '@/lib/analytics';
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -24,6 +25,13 @@ export default function SignUpPage() {
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const signupStarted = useRef(false);
+
+  const trackSignupStart = () => {
+    if (signupStarted.current) return;
+    signupStarted.current = true;
+    trackEvent('sign_up_start', { method: 'email' });
+  };
 
   // Redirect to home if already logged in
   useEffect(() => {
@@ -83,6 +91,9 @@ export default function SignUpPage() {
       }
 
       clearInviteCode();
+      setAnalyticsUserStatus('signed_in');
+      setAnalyticsUserId(user.uid);
+      trackEvent('sign_up', { method: 'email' });
       window.location.href = '/';
     } catch (err) {
       console.error('Signup error:', err);
@@ -102,7 +113,7 @@ export default function SignUpPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} onChange={trackSignupStart} className="space-y-4">
             {error && (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>

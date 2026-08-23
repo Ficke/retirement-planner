@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { signIn, useAuth } from '@/lib/firebase';
+import { setAnalyticsUserId, setAnalyticsUserStatus, trackEvent } from '@/lib/analytics';
 
 export default function SignInPage() {
   const navigate = useNavigate();
@@ -34,6 +35,9 @@ export default function SignInPage() {
         setError(signInError.message);
         setIsLoading(false);
       } else if (user) {
+        setAnalyticsUserStatus('signed_in');
+        setAnalyticsUserId(user.uid);
+        trackEvent('login', { method: 'email' });
         // Wait a moment for auth state to propagate
         await new Promise(resolve => setTimeout(resolve, 500));
         // Use window.location for hard navigation to avoid race conditions
