@@ -267,9 +267,7 @@ export function hydratePlan(
         ...defaultPlan.profile.retirementHealthcare,
         ...(profileInput.retirementHealthcare ?? {}),
       },
-      // A stored plan that predates the model gets it on, not off. This is the
-      // opposite of how the healthcare fields migrated, and it is deliberate:
-      // care risk is not a setting an older plan declined.
+      // On for a plan that predates the model; see DEFAULT_LONG_TERM_CARE.
       longTermCare: {
         ...defaultPlan.profile.longTermCare,
         ...(profileInput.longTermCare ?? {}),

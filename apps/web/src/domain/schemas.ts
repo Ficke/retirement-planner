@@ -189,10 +189,7 @@ export const legacySimulationProfileSchema = z
     retirementHealthcare:
       (rest as { retirementHealthcare?: UserProfile['retirementHealthcare'] }).retirementHealthcare
       ?? { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
-    // On rather than off, unlike the healthcare fallback above: care risk is
-    // not something an older bundle opted out of, so a plan that predates the
-    // model is priced with it. Matches the Rust service, where an absent
-    // `longTermCare` deserializes to the enabled default.
+    // On, for the reason given at the stored-profile fallback above.
     longTermCare:
       (rest as { longTermCare?: UserProfile['longTermCare'] }).longTermCare
       ?? { ...DEFAULT_LONG_TERM_CARE },

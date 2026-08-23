@@ -443,16 +443,8 @@ function SpendingPreview({
   );
 }
 
-/**
- * A matrix row's name. It heads its own line until there is room for a label
- * column, because two dollar columns plus a label do not fit on a phone.
- */
 function RowLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-muted-foreground col-span-2 text-xs sm:col-span-1 sm:pb-2 sm:text-sm">
-      {children}
-    </div>
-  );
+  return <div className="text-muted-foreground text-sm sm:pb-2">{children}</div>;
 }
 
 function PhaseHeader({ label, detail }: { label: string; detail: string }) {
