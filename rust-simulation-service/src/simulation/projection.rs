@@ -58,6 +58,26 @@ const TRADITIONAL_PENALTY_AGE: u32 = 60;
 /// An HSA distribution that is not for medical care, taken before 65.
 const NON_QUALIFIED_HSA_PENALTY_RATE: f64 = 0.20;
 
+#[derive(Clone)]
+struct RothConversionLot {
+    conversion_year: i32,
+    remaining_principal: f64,
+}
+
+#[derive(Clone)]
+struct RothBasisState {
+    /// False when conversions are off or the household cannot owe this penalty.
+    enabled: bool,
+    /// Existing Roth money and direct contributions retain the model's
+    /// penalty-free assumption.
+    regular_principal: f64,
+    /// Conversion principal is consumed oldest-first under the statutory
+    /// ordering rules.
+    conversion_lots: Vec<RothConversionLot>,
+    /// Sum of the still-unseasoned lots, cached so candidate penalties are O(1).
+    unseasoned_principal: f64,
+}
+
 /// One year of retirement healthcare: what it costs, and the share of that cost
 /// an HSA can pay tax-free.
 struct HealthcareCost {
@@ -137,10 +157,14 @@ fn healthcare_cost_for(
 }
 
 /// Money taken out of a retirement wrapper too early owes a penalty on top of
-/// ordinary income tax. Taxable and Roth are left alone: taxable was never
-/// sheltered, and a Roth's contributions come out at any age — telling those
-/// apart needs basis the model does not track yet.
-fn penalties_on(traditional_withdrawal: f64, non_qualified_hsa_withdrawal: f64, age: u32) -> f64 {
+/// ordinary income tax. Taxable was never sheltered. Roth conversion principal
+/// has its own five-tax-year clock, tracked separately below.
+fn penalties_on(
+    traditional_withdrawal: f64,
+    non_qualified_hsa_withdrawal: f64,
+    roth_conversion_penalty: f64,
+    age: u32,
+) -> f64 {
     let traditional_penalty = if age < TRADITIONAL_PENALTY_AGE {
         traditional_withdrawal * EARLY_TRADITIONAL_PENALTY_RATE
     } else {
@@ -151,7 +175,62 @@ fn penalties_on(traditional_withdrawal: f64, non_qualified_hsa_withdrawal: f64, 
     } else {
         0.0
     };
-    traditional_penalty + hsa_penalty
+    traditional_penalty + hsa_penalty + roth_conversion_penalty
+}
+
+/// Apply Roth distribution ordering to the basis this model knows: regular
+/// contributions first, then conversions oldest-first. Each conversion has an
+/// exact amount and tax year, so a distribution inside its five-tax-year window
+/// and before age 60 incurs the modeled 10% early-distribution penalty.
+fn roth_conversion_penalty_for(withdrawal: f64, state: &RothBasisState, age: u32) -> f64 {
+    if !state.enabled || withdrawal <= 0.0 || age >= TRADITIONAL_PENALTY_AGE {
+        return 0.0;
+    }
+    let conversion_principal = (withdrawal - state.regular_principal)
+        .max(0.0)
+        .min(state.unseasoned_principal);
+    conversion_principal * EARLY_TRADITIONAL_PENALTY_RATE
+}
+
+/// Move five-year-old conversion principal into the penalty-free basis pool.
+fn season_roth_conversions(state: &mut RothBasisState, tax_year: i32) {
+    let seasoned_count = state
+        .conversion_lots
+        .iter()
+        .take_while(|lot| tax_year >= lot.conversion_year + 5)
+        .count();
+    if seasoned_count == 0 {
+        return;
+    }
+    let seasoned_principal: f64 = state.conversion_lots[..seasoned_count]
+        .iter()
+        .map(|lot| lot.remaining_principal)
+        .sum();
+    state.unseasoned_principal = (state.unseasoned_principal - seasoned_principal).max(0.0);
+    state.regular_principal += seasoned_principal;
+    state.conversion_lots.drain(..seasoned_count);
+}
+
+/// Commit the selected withdrawal to the basis ledger after bisection finishes.
+fn consume_roth_basis(withdrawal: f64, state: &mut RothBasisState) {
+    if !state.enabled || withdrawal <= 0.0 {
+        return;
+    }
+    let mut remaining = withdrawal;
+    let regular_used = remaining.min(state.regular_principal);
+    state.regular_principal -= regular_used;
+    remaining -= regular_used;
+    let conversion_principal_used = remaining.min(state.unseasoned_principal);
+    state.unseasoned_principal = (state.unseasoned_principal - conversion_principal_used).max(0.0);
+
+    for lot in &mut state.conversion_lots {
+        if remaining <= 0.0 {
+            break;
+        }
+        let used = remaining.min(lot.remaining_principal);
+        lot.remaining_principal -= used;
+        remaining -= used;
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -352,6 +431,13 @@ fn project_scenario_internal(
 ) -> Result<PathResult> {
     let profile = &plan.profile;
     let mut accounts = to_buckets(&plan.accounts);
+    let mut roth_basis = RothBasisState {
+        enabled: plan.assumptions.roth_conversion.enabled
+            && profile.retirement_age < TRADITIONAL_PENALTY_AGE,
+        regular_principal: balance_of_bucket(&accounts, AccountType::Roth),
+        conversion_lots: Vec::new(),
+        unseasoned_principal: 0.0,
+    };
 
     let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
     let current_year = as_of_date.year();
@@ -394,6 +480,15 @@ fn project_scenario_internal(
         let tax_year = current_year + year as i32;
         let household = Household::single(profile.filing_status, current_age);
         let is_retired = current_age >= profile.retirement_age;
+
+        if current_age >= TRADITIONAL_PENALTY_AGE && roth_basis.enabled {
+            roth_basis.enabled = false;
+            roth_basis.regular_principal = 0.0;
+            roth_basis.conversion_lots.clear();
+            roth_basis.unseasoned_principal = 0.0;
+        } else if roth_basis.enabled {
+            season_roth_conversions(&mut roth_basis, tax_year);
+        }
 
         let mut rmd_amount = 0.0;
         if current_age >= rmd_start_age {
@@ -540,7 +635,7 @@ fn project_scenario_internal(
                 // Traditional and HSA reach the cash-flow model as income; only
                 // the buckets it never sees are principal it has to be credited
                 // with.
-                working_penalties += penalties_on(drawn.traditional, drawn.hsa, current_age);
+                working_penalties += penalties_on(drawn.traditional, drawn.hsa, 0.0, current_age);
                 shortfall_principal += drawn.taxable + drawn.roth;
                 shortfall_gains += drawn.taxable * taxable_gain_ratio;
                 working_cash_flow = cash_flow_with(
@@ -563,6 +658,10 @@ fn project_scenario_internal(
             taxes = working_cash_flow.tax.total_tax * period_fraction + working_penalties;
             // Only true ruin counts as failure: the portfolio could not cover it.
             insufficient_funds = unfunded > SHORTFALL_TOLERANCE;
+            if roth_basis.enabled {
+                roth_basis.regular_principal =
+                    (roth_basis.regular_principal - withdrawal_roth).max(0.0);
+            }
 
             // The residual is fully invested, so the buckets receive all of it
             // and nothing is left unallocated. First year prorates like every
@@ -583,6 +682,9 @@ fn project_scenario_internal(
                 AccountType::Roth,
                 contributions.roth * period_fraction,
             );
+            if roth_basis.enabled {
+                roth_basis.regular_principal += deposit_roth;
+            }
             deposit_taxable = deposit_to_bucket(
                 &mut accounts,
                 AccountType::Taxable,
@@ -702,6 +804,7 @@ fn project_scenario_internal(
             let withdrawal_result = execute_ordered_withdrawals(
                 target_spending,
                 &mut accounts,
+                &mut roth_basis,
                 WithdrawalContext {
                     household: &household,
                     state: &profile.state,
@@ -767,6 +870,13 @@ fn project_scenario_internal(
                     // distribution it is -- which also keeps the two figures
                     // from double-counting a dollar.
                     roth_conversion = conversion.converted - conversion.withheld;
+                    if roth_basis.enabled {
+                        roth_basis.conversion_lots.push(RothConversionLot {
+                            conversion_year: tax_year,
+                            remaining_principal: roth_conversion,
+                        });
+                        roth_basis.unseasoned_principal += roth_conversion;
+                    }
                     conversion_tax_from_taxable = conversion.from_taxable;
                     conversion_tax_withheld = conversion.withheld;
                     taxes += conversion.tax;
@@ -985,13 +1095,15 @@ fn deposit_to_bucket(accounts: &mut Vec<Account>, account_type: AccountType, amo
 fn execute_ordered_withdrawals(
     target_spending: f64,
     accounts: &mut [Account],
+    roth_basis: &mut RothBasisState,
     context: WithdrawalContext<'_>,
 ) -> Result<WithdrawalResult> {
     const TOLERANCE: f64 = 1.0;
-    let forced = evaluate_ordered_withdrawals(accounts, 0.0, &context);
+    let forced = evaluate_ordered_withdrawals(accounts, roth_basis, 0.0, &context);
     if forced.cash_available_after_tax + TOLERANCE >= target_spending {
         return Ok(finish_ordered_withdrawals(
             accounts,
+            roth_basis,
             forced,
             target_spending,
             TOLERANCE,
@@ -1002,6 +1114,7 @@ fn execute_ordered_withdrawals(
     if max_voluntary_budget <= 0.0 {
         return Ok(finish_ordered_withdrawals(
             accounts,
+            roth_basis,
             forced,
             target_spending,
             TOLERANCE,
@@ -1013,16 +1126,17 @@ fn execute_ordered_withdrawals(
     let mut low = 0.0;
     let mut high = max_voluntary_budget
         .min(((target_spending - forced.cash_available_after_tax) * 2.0).max(1.0));
-    let mut best = evaluate_ordered_withdrawals(accounts, high, &context);
+    let mut best = evaluate_ordered_withdrawals(accounts, roth_basis, high, &context);
     while best.cash_available_after_tax + TOLERANCE < target_spending && high < max_voluntary_budget
     {
         low = high;
         high = max_voluntary_budget.min(high * 2.0);
-        best = evaluate_ordered_withdrawals(accounts, high, &context);
+        best = evaluate_ordered_withdrawals(accounts, roth_basis, high, &context);
     }
     if best.cash_available_after_tax + TOLERANCE < target_spending {
         return Ok(finish_ordered_withdrawals(
             accounts,
+            roth_basis,
             best,
             target_spending,
             TOLERANCE,
@@ -1034,7 +1148,7 @@ fn execute_ordered_withdrawals(
             break;
         }
         let midpoint = (low + high) / 2.0;
-        let candidate = evaluate_ordered_withdrawals(accounts, midpoint, &context);
+        let candidate = evaluate_ordered_withdrawals(accounts, roth_basis, midpoint, &context);
         if candidate.cash_available_after_tax + TOLERANCE >= target_spending {
             high = midpoint;
             best = candidate;
@@ -1045,6 +1159,7 @@ fn execute_ordered_withdrawals(
 
     Ok(finish_ordered_withdrawals(
         accounts,
+        roth_basis,
         best,
         target_spending,
         TOLERANCE,
@@ -1053,6 +1168,7 @@ fn execute_ordered_withdrawals(
 
 fn evaluate_ordered_withdrawals(
     accounts: &[Account],
+    roth_basis: &RothBasisState,
     voluntary_budget: f64,
     context: &WithdrawalContext<'_>,
 ) -> WithdrawalEvaluation {
@@ -1125,6 +1241,12 @@ fn evaluate_ordered_withdrawals(
         }
     }
 
+    let roth_conversion_penalty = if roth_basis.enabled && withdrawal_roth > 0.0 {
+        roth_conversion_penalty_for(withdrawal_roth, roth_basis, context.age)
+    } else {
+        0.0
+    };
+
     // An HSA pays medical costs tax-free; anything beyond them is an ordinary
     // distribution, and before 65 it carries a penalty as well.
     let hsa_qualified_used = withdrawal_hsa.min(context.hsa_qualified_allowance);
@@ -1139,7 +1261,12 @@ fn evaluate_ordered_withdrawals(
         context.tax_year,
     )
     .total_tax;
-    let penalties = penalties_on(withdrawal_traditional, non_qualified_hsa, context.age);
+    let penalties = penalties_on(
+        withdrawal_traditional,
+        non_qualified_hsa,
+        roth_conversion_penalty,
+        context.age,
+    );
     let total_taxes = tax + penalties;
     let total_withdrawn =
         withdrawal_taxable + withdrawal_traditional + withdrawal_roth + withdrawal_hsa;
@@ -1158,12 +1285,19 @@ fn evaluate_ordered_withdrawals(
 
 fn finish_ordered_withdrawals(
     accounts: &mut [Account],
+    roth_basis: &mut RothBasisState,
     evaluation: WithdrawalEvaluation,
     target_spending: f64,
     tolerance: f64,
 ) -> WithdrawalResult {
     for (account, balance) in accounts.iter_mut().zip(&evaluation.balances) {
         account.balance = *balance;
+    }
+    if roth_basis.enabled && evaluation.withdrawal_roth > 0.0 {
+        consume_roth_basis(evaluation.withdrawal_roth, roth_basis);
+        roth_basis
+            .conversion_lots
+            .retain(|lot| lot.remaining_principal > 0.0);
     }
     let difference = evaluation.cash_available_after_tax - target_spending;
     WithdrawalResult {
@@ -1390,6 +1524,36 @@ mod tests {
                 ceiling: RothConversionCeiling::Bracket24,
             }) < first_rmd(RothConversionPolicy::default())
         );
+    }
+
+    #[test]
+    fn roth_conversion_principal_seasons_after_five_tax_years() {
+        let state = RothBasisState {
+            enabled: true,
+            regular_principal: 100.0,
+            conversion_lots: vec![RothConversionLot {
+                conversion_year: 2026,
+                remaining_principal: 1_000.0,
+            }],
+            unseasoned_principal: 1_000.0,
+        };
+
+        let mut early = state.clone();
+        let early_penalty = roth_conversion_penalty_for(200.0, &early, 54);
+        consume_roth_basis(200.0, &mut early);
+        assert_eq!(early_penalty, 10.0);
+        assert_eq!(early.regular_principal, 0.0);
+        assert_eq!(early.conversion_lots[0].remaining_principal, 900.0);
+        assert_eq!(early.unseasoned_principal, 900.0);
+
+        let mut seasoned = state;
+        season_roth_conversions(&mut seasoned, 2031);
+        let seasoned_penalty = roth_conversion_penalty_for(200.0, &seasoned, 55);
+        consume_roth_basis(200.0, &mut seasoned);
+        assert_eq!(seasoned_penalty, 0.0);
+        assert!(seasoned.conversion_lots.is_empty());
+        assert_eq!(seasoned.regular_principal, 900.0);
+        assert_eq!(seasoned.unseasoned_principal, 0.0);
     }
 
     #[test]

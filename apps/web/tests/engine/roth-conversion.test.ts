@@ -46,6 +46,26 @@ function planWith(
   };
 }
 
+function earlyLadderPlan(): SimulationPlan {
+  const base = planWith({ enabled: true, ceiling: 'bracket24' });
+  return {
+    ...base,
+    profile: {
+      ...base.profile,
+      birthDate: '1976-01-01',
+      asOfDate: '2026-12-31',
+      retirementAge: 50,
+      lifeExpectancy: 56,
+      currentSpending: 20_000,
+      retirementSpending: 20_000,
+      state: 'TX',
+    },
+    accounts: [
+      { type: 'Traditional', balance: 250_000, assetWeights: { stocks: 0, bonds: 1 } },
+    ],
+  };
+}
+
 const config = { paths: 1, seed: 42 };
 
 describe('Roth conversions', () => {
@@ -152,5 +172,24 @@ describe('Roth conversions', () => {
     const off = projectScenario(planWith({ enabled: false, ceiling: 'bracket24' }), config);
     expect(off.afterTaxTerminalWealth).toBeLessThan(off.terminalWealth);
     expect(off.afterTaxTerminalWealth).toBeGreaterThan(off.terminalWealth * 0.69);
+  });
+
+  it('penalizes conversion principal withdrawn inside five tax years', () => {
+    const { projections } = projectScenario(earlyLadderPlan(), config);
+    const earlyWithdrawal = projections.find((year) => year.year === 2028)!;
+
+    expect(earlyWithdrawal.age).toBeLessThan(60);
+    expect(earlyWithdrawal.withdrawalTraditional).toBe(0);
+    expect(earlyWithdrawal.withdrawalRoth).toBeGreaterThan(0);
+    expect(earlyWithdrawal.taxes).toBeCloseTo(earlyWithdrawal.withdrawalRoth * 0.10, 6);
+  });
+
+  it('releases conversion principal after five tax years', () => {
+    const { projections } = projectScenario(earlyLadderPlan(), config);
+    const seasonedWithdrawal = projections.find((year) => year.year === 2031)!;
+
+    expect(seasonedWithdrawal.age).toBeLessThan(60);
+    expect(seasonedWithdrawal.withdrawalRoth).toBeGreaterThan(0);
+    expect(seasonedWithdrawal.taxes).toBe(0);
   });
 });

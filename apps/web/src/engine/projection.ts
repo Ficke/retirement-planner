@@ -30,6 +30,22 @@ import seedrandom from 'seedrandom';
 
 type ProjectionAccount = SimulationAccount & { isSurplusCash: boolean };
 
+interface RothConversionLot {
+  conversionYear: number;
+  remainingPrincipal: number;
+}
+
+interface RothBasisState {
+  /** False when conversions are off or the household cannot owe this penalty. */
+  enabled: boolean;
+  /** Existing Roth money and direct contributions retain the model's penalty-free assumption. */
+  regularPrincipal: number;
+  /** Conversion principal is consumed oldest-first under the statutory ordering rules. */
+  conversionLots: RothConversionLot[];
+  /** Sum of the still-unseasoned lots, cached so candidate penalties are O(1). */
+  unseasonedPrincipal: number;
+}
+
 const BUCKET_ORDER: AccountType[] = ['Taxable', 'Traditional', 'Roth', 'HSA'];
 
 /** Cash tolerance, in dollars, below which a shortfall is considered funded. */
@@ -192,6 +208,14 @@ function projectScenarioInternal(
   let success = true;
 
   const accountBalances: ProjectionAccount[] = toBuckets(accounts);
+  const rothBasis: RothBasisState = {
+    enabled: plan.assumptions.rothConversion.enabled
+      && profile.retirementAge < TRADITIONAL_PENALTY_AGE
+      && age < TRADITIONAL_PENALTY_AGE,
+    regularPrincipal: balanceOfBucket(accountBalances, 'Roth'),
+    conversionLots: [],
+    unseasonedPrincipal: 0,
+  };
   let currentPortfolioValue = accountBalances.reduce((sum, acc) => sum + acc.balance, 0);
   
   let previousYearTraditionalBalance = 0;
@@ -209,6 +233,15 @@ function projectScenarioInternal(
     const currentAge = age + year;
     const taxYear = currentYear + year;
     const isRetired = currentAge >= profile.retirementAge;
+
+    if (currentAge >= TRADITIONAL_PENALTY_AGE && rothBasis.enabled) {
+      rothBasis.enabled = false;
+      rothBasis.regularPrincipal = 0;
+      rothBasis.conversionLots = [];
+      rothBasis.unseasonedPrincipal = 0;
+    } else if (rothBasis.enabled) {
+      seasonRothConversions(rothBasis, taxYear);
+    }
 
     
     // An RMD is assessed on the prior year-end balance, which the first
@@ -330,7 +363,7 @@ function projectScenarioInternal(
         withdrawalHSAYear += drawn.hsa;
         // Traditional and HSA reach the cash-flow model as income; only the
         // buckets it never sees are principal it has to be credited with.
-        workingPenalties += penaltiesOn(drawn.traditional, drawn.hsa, currentAge);
+        workingPenalties += penaltiesOn(drawn.traditional, drawn.hsa, 0, currentAge);
         shortfallPrincipal += drawn.taxable + drawn.roth;
         shortfallGains += drawn.taxable * taxableGainRatio;
         workingCashFlow = cashFlowWith(
@@ -355,6 +388,12 @@ function projectScenarioInternal(
       income = annualSalary * periodFraction;
       spending = annualWorkingSpending * periodFraction - unfunded;
       taxes = taxResult.totalTax * periodFraction + workingPenalties;
+      if (rothBasis.enabled) {
+        rothBasis.regularPrincipal = Math.max(
+          0,
+          rothBasis.regularPrincipal - withdrawalRothYear,
+        );
+      }
 
       // The residual is fully invested, so the buckets receive all of it and
       // nothing is left unallocated. First year prorates like every other flow.
@@ -368,6 +407,7 @@ function projectScenarioInternal(
       depositRothYear = depositToBucket(
         accountBalances, 'Roth', contributions.roth * periodFraction,
       );
+      if (rothBasis.enabled) rothBasis.regularPrincipal += depositRothYear;
       depositTaxableYear = depositToBucket(
         accountBalances, 'Taxable', contributions.taxable * periodFraction,
       );
@@ -446,6 +486,7 @@ function projectScenarioInternal(
         executeOrderedWithdrawals(
           targetSpending,
           accountBalances,
+          rothBasis,
           {
             household: householdOf(profile.filingStatus, currentAge),
             state: profile.state,
@@ -494,6 +535,13 @@ function projectScenarioInternal(
           // there, so it is reported as the ordinary distribution it is —
           // which also keeps the two figures from double-counting a dollar.
           rothConversionYear = conversion.converted - conversion.withheld;
+          if (rothBasis.enabled) {
+            rothBasis.conversionLots.push({
+              conversionYear: taxYear,
+              remainingPrincipal: rothConversionYear,
+            });
+            rothBasis.unseasonedPrincipal += rothConversionYear;
+          }
           conversionTaxFromTaxable = conversion.fromTaxable;
           conversionTaxWithheld = conversion.withheld;
           taxes += conversion.tax;
@@ -909,13 +957,13 @@ function depositToBucket(
 
 /**
  * Money taken out of a retirement wrapper too early owes a penalty on top of
- * ordinary income tax. Taxable and Roth are left alone: taxable was never
- * sheltered, and a Roth's contributions come out at any age — telling those
- * apart needs basis the model does not track yet.
+ * ordinary income tax. Taxable was never sheltered. Roth conversion principal
+ * has its own five-tax-year clock, tracked separately below.
  */
 function penaltiesOn(
   traditionalWithdrawal: number,
   nonQualifiedHsaWithdrawal: number,
+  rothConversionPenalty: number,
   age: number,
 ): number {
   const traditionalPenalty = age < TRADITIONAL_PENALTY_AGE
@@ -924,7 +972,64 @@ function penaltiesOn(
   const hsaPenalty = age < MEDICARE_AGE
     ? nonQualifiedHsaWithdrawal * NON_QUALIFIED_HSA_PENALTY_RATE
     : 0;
-  return traditionalPenalty + hsaPenalty;
+  return traditionalPenalty + hsaPenalty + rothConversionPenalty;
+}
+
+/**
+ * Apply Roth distribution ordering to the part of a withdrawal whose basis the
+ * model knows: regular contributions first, then conversions oldest-first.
+ * Existing Roth money remains penalty-free because the plan does not collect
+ * its contribution basis. Each new conversion, however, has an exact amount
+ * and year, so withdrawing it before its fifth anniversary and before age 60
+ * incurs the modeled 10% early-distribution penalty.
+ */
+function rothConversionPenaltyFor(
+  withdrawal: number,
+  state: Readonly<RothBasisState>,
+  age: number,
+): number {
+  if (!state.enabled || withdrawal <= 0 || age >= TRADITIONAL_PENALTY_AGE) return 0;
+  const conversionPrincipal = Math.min(
+    Math.max(0, withdrawal - state.regularPrincipal),
+    state.unseasonedPrincipal,
+  );
+  return conversionPrincipal * EARLY_TRADITIONAL_PENALTY_RATE;
+}
+
+/** Move five-year-old conversion principal into the penalty-free basis pool. */
+function seasonRothConversions(state: RothBasisState, taxYear: number): void {
+  while (
+    state.conversionLots.length > 0
+    && taxYear >= state.conversionLots[0].conversionYear + 5
+  ) {
+    const lot = state.conversionLots.shift()!;
+    state.unseasonedPrincipal = Math.max(
+      0,
+      state.unseasonedPrincipal - lot.remainingPrincipal,
+    );
+    state.regularPrincipal += lot.remainingPrincipal;
+  }
+}
+
+/** Commit the selected withdrawal to the basis ledger after bisection finishes. */
+function consumeRothBasis(withdrawal: number, state: RothBasisState): void {
+  if (!state.enabled || withdrawal <= 0) return;
+  let remaining = withdrawal;
+  const regularUsed = Math.min(remaining, state.regularPrincipal);
+  state.regularPrincipal -= regularUsed;
+  remaining -= regularUsed;
+  const conversionPrincipalUsed = Math.min(remaining, state.unseasonedPrincipal);
+  state.unseasonedPrincipal = Math.max(
+    0,
+    state.unseasonedPrincipal - conversionPrincipalUsed,
+  );
+
+  for (const lot of state.conversionLots) {
+    if (remaining <= 0) break;
+    const used = Math.min(remaining, lot.remainingPrincipal);
+    lot.remainingPrincipal -= used;
+    remaining -= used;
+  }
 }
 
 /**
@@ -942,6 +1047,7 @@ function penaltiesOn(
 function executeOrderedWithdrawals(
   targetSpending: number,
   accountBalances: ProjectionAccount[],
+  rothBasis: RothBasisState,
   profile: { household: Household; state: State; taxYear: number; age: number },
   socialSecurityBenefit: number,
   rmdAmount: number,
@@ -1039,6 +1145,14 @@ function executeOrderedWithdrawals(
       }
     }
 
+    const rothConversionPenalty = rothBasis.enabled && withdrawalRoth > 0
+      ? rothConversionPenaltyFor(
+          withdrawalRoth,
+          rothBasis,
+          profile.age,
+        )
+      : 0;
+
     // An HSA pays medical costs tax-free; anything beyond them is an ordinary
     // distribution, and before 65 it carries a penalty as well.
     const hsaQualifiedUsed = Math.min(withdrawalHSA, hsaQualifiedAllowance);
@@ -1052,7 +1166,12 @@ function executeOrderedWithdrawals(
       state: profile.state,
       taxYear: profile.taxYear,
     }).totalTax;
-    const penalties = penaltiesOn(withdrawalTraditional, nonQualifiedHsa, profile.age);
+    const penalties = penaltiesOn(
+      withdrawalTraditional,
+      nonQualifiedHsa,
+      rothConversionPenalty,
+      profile.age,
+    );
     const totalTaxes = tax + penalties;
     const totalWithdrawn = withdrawalTaxable
       + withdrawalTraditional
@@ -1074,6 +1193,12 @@ function executeOrderedWithdrawals(
   const finish = (evaluation: Evaluation) => {
     for (let index = 0; index < accountBalances.length; index++) {
       accountBalances[index].balance = evaluation.balances[index].balance;
+    }
+    if (rothBasis.enabled && evaluation.withdrawalRoth > 0) {
+      consumeRothBasis(evaluation.withdrawalRoth, rothBasis);
+      rothBasis.conversionLots = rothBasis.conversionLots.filter(
+        (lot) => lot.remainingPrincipal > 0,
+      );
     }
     const difference = evaluation.cashAvailableAfterTax - targetSpending;
     return {
