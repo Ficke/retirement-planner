@@ -98,9 +98,9 @@ const LTC_MAX_COHORT_GROWTH_YEARS: i32 = 40;
 /// quintile is known, and the cost is not spent until the final modeled year.
 struct LongTermCareDraw {
     uniform: f64,
-    /// Turns one draw from the 2020-dollar table into this plan's money: the
-    /// CPI rebasing, this cohort's distance from the one ASPE modeled, and the
-    /// household's location and care level.
+    /// Turns one draw from the 2020-dollar table into this plan's money: CPI
+    /// rebasing, cohort distance, location and care level, and the share of the
+    /// age-65 lifetime horizon that remains when the plan starts.
     price_scale: f64,
     poverty_level: f64,
     annuity_factor: f64,
@@ -113,6 +113,7 @@ impl LongTermCareDraw {
         config: &ProjectionConfig,
         base_year: i32,
         birth_year: i32,
+        start_age: u32,
     ) -> Option<Self> {
         let profile = &plan.profile;
         if plan.schema_version < LTC_MODEL_SCHEMA_VERSION || !profile.long_term_care.enabled {
@@ -150,7 +151,8 @@ impl LongTermCareDraw {
             uniform: rng.gen(),
             price_scale: price_level_ratio(LTC_TABLE_DOLLAR_YEAR, base_year)
                 * cohort_growth
-                * profile.long_term_care.cost_multiplier,
+                * profile.long_term_care.cost_multiplier
+                * remaining_ltc_exposure(start_age, profile.life_expectancy),
             poverty_level: federal_poverty_level(household_size),
             annuity_factor: annuity_factor(term),
             quintile: None,
@@ -183,6 +185,24 @@ impl LongTermCareDraw {
 
 fn annuity_factor(term_years: u32) -> f64 {
     LTC_ANNUITY_REAL_RATE / (1.0 - (1.0 + LTC_ANNUITY_REAL_RATE).powi(-(term_years as i32)))
+}
+
+/// Share of the age-65 lifetime distribution that remains inside this plan's
+/// horizon. ASPE does not publish an age-conditioned cost distribution, so a
+/// linear exposure adjustment avoids charging pre-plan years without inventing
+/// another probability curve or disturbing the path's existing care draw.
+fn remaining_ltc_exposure(current_age: u32, life_expectancy: u32) -> f64 {
+    if current_age <= LTC_OBSERVATION_AGE {
+        return 1.0;
+    }
+
+    let lifetime_years = life_expectancy.saturating_sub(LTC_OBSERVATION_AGE);
+    if lifetime_years == 0 {
+        return 0.0;
+    }
+
+    let remaining_years = life_expectancy.saturating_sub(current_age);
+    (remaining_years as f64 / lifetime_years as f64).clamp(0.0, 1.0)
 }
 
 /// Price level between two calendar years, compounded from the CPI-U series the
@@ -619,7 +639,7 @@ fn project_scenario_internal(
     let mut magi_by_year: Vec<f64> = Vec::with_capacity(total_years as usize);
 
     let mut returns_generator = create_market_returns_generator(plan, &config);
-    let mut long_term_care = LongTermCareDraw::start(plan, &config, current_year, birth_year);
+    let mut long_term_care = LongTermCareDraw::start(plan, &config, current_year, birth_year, age);
 
     for year in 0..total_years {
         let current_age = age + year;
@@ -2864,6 +2884,46 @@ mod tests {
         assert!(last.withdrawal_hsa > 100_000.0);
         assert_eq!(last.taxes, 0.0);
         assert!(!last.insufficient_funds);
+    }
+
+    #[test]
+    fn remaining_care_exposure_is_full_through_65_and_tapers_afterward() {
+        assert_eq!(remaining_ltc_exposure(55, 90), 1.0);
+        assert_eq!(remaining_ltc_exposure(65, 90), 1.0);
+        assert_eq!(remaining_ltc_exposure(75, 90), 0.6);
+        assert_eq!(remaining_ltc_exposure(85, 90), 0.2);
+        assert_eq!(remaining_ltc_exposure(90, 90), 0.0);
+    }
+
+    /// The same episode and income quintile should cost only the share of the
+    /// age-65 lifetime horizon that remains when a plan starts later.
+    #[test]
+    fn a_plan_that_starts_after_65_prices_only_remaining_care_exposure() {
+        let config = long_term_care_config(EPISODE_SEED);
+        let mut age_65 = long_term_care_plan();
+        age_65.profile.birth_date = "1961-01-01".to_string();
+        age_65.profile.life_expectancy = 90;
+        age_65.profile.retirement_spending = 0.0;
+        age_65.social_security.enabled = false;
+        age_65.accounts = vec![Account {
+            account_type: AccountType::Taxable,
+            balance: 10_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        let mut age_75 = age_65.clone();
+        age_75.profile.birth_date = "1951-01-01".to_string();
+
+        let full_cost =
+            final_year(&project_scenario(&age_65, config.clone()).unwrap()).healthcare_cost;
+        let remaining_cost =
+            final_year(&project_scenario(&age_75, config).unwrap()).healthcare_cost;
+
+        assert!(full_cost > 0.0);
+        assert!((remaining_cost - full_cost * 0.6).abs() < 1e-6);
     }
 
     /// A household already past 65 has no age-65 year to read, so the first
