@@ -41,6 +41,7 @@ resource "google_cloud_run_v2_service" "main" {
     ignore_changes = [
       client,
       client_version,
+      template[0].revision,
       template[0].containers[0].image,
     ]
   }

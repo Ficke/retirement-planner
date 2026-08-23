@@ -176,12 +176,12 @@ resource "google_storage_bucket_iam_member" "cloud_build_tfstate_reader" {
   member = "serviceAccount:${element(reverse(split("/", var.cloud_build_service_account)), 0)}"
 }
 
-# Cloud Build trigger for automated deployments (optional)
-resource "google_cloudbuild_trigger" "main_branch" {
+# Cloud Build trigger for production release tags (optional)
+resource "google_cloudbuild_trigger" "release_tag" {
   count = var.enable_cloud_build_trigger ? 1 : 0
 
   name               = var.cloud_build_trigger_name
-  description        = "Build and deploy on push to main branch"
+  description        = "Build and deploy production release tags"
   service_account    = var.cloud_build_service_account
   include_build_logs = "INCLUDE_BUILD_LOGS_WITH_STATUS"
 
@@ -189,24 +189,9 @@ resource "google_cloudbuild_trigger" "main_branch" {
     owner = var.github_owner
     name  = var.github_repo
     push {
-      branch = "^main$"
+      tag = "^deploy-.*$"
     }
   }
-
-  # Only rebuild/redeploy when a change could affect one of the built images.
-  # Every application deployment runs a concurrent Terraform drift check.
-  included_files = [
-    "apps/web/**",
-    "rust-simulation-service/**",
-    "scripts/**",
-    "Dockerfile",
-    ".dockerignore",
-    ".gcloudignore",
-    "cloudbuild.yaml",
-    "package.json",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml",
-  ]
 
   filename = "cloudbuild.yaml"
 
@@ -215,4 +200,9 @@ resource "google_cloudbuild_trigger" "main_branch" {
   substitutions = var.build_substitutions
 
   depends_on = [google_project_service.required_apis]
+}
+
+moved {
+  from = google_cloudbuild_trigger.main_branch
+  to   = google_cloudbuild_trigger.release_tag
 }
