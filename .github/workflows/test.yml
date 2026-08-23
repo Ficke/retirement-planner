@@ -290,10 +290,20 @@ jobs:
       - name: Check generated state tax table
         run: node scripts/gen-rust-state-tax.mjs --check
 
-      - name: Rebuild and verify committed Wasm package
+      - name: Check committed Wasm provenance
+        run: pnpm wasm:check
+
+      - name: Rebuild and verify committed Wasm interface
         run: |
           pnpm wasm:build
-          git diff --exit-code -- apps/web/src/wasm
+          # Rust's Wasm binary is host-platform dependent. The contract below
+          # validates the rebuilt binary; these interface files are deterministic.
+          git diff --exit-code -- \
+            apps/web/src/wasm/package.json \
+            apps/web/src/wasm/retirement_simulation.d.ts \
+            apps/web/src/wasm/retirement_simulation.js \
+            apps/web/src/wasm/retirement_simulation_bg.wasm.d.ts \
+            apps/web/src/wasm/source.sha256
 
       - name: Build Rust service
         working-directory: rust-simulation-service
