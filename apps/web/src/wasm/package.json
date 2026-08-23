@@ -1,0 +1,15 @@
+{
+  "name": "retirement-simulation",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "retirement_simulation_bg.wasm",
+    "retirement_simulation.js",
+    "retirement_simulation.d.ts"
+  ],
+  "main": "retirement_simulation.js",
+  "types": "retirement_simulation.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

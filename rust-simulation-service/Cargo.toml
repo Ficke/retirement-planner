@@ -3,38 +3,31 @@ name = "retirement-simulation"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-# Web framework and async runtime
-tokio = { version = "1.0", features = ["full"] }
-warp = { version = "0.4", features = ["server"] }
-futures = "0.3"
+[lib]
+crate-type = ["cdylib", "rlib"]
 
-# Serialization
+[dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Parallel processing
-rayon = "1.7"
-
-# Random number generation
-rand = "0.8"
-rand_distr = "0.4"
-
-# Error handling
 anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
+once_cell = "1.19"
+rand = { version = "0.8", default-features = false, features = ["alloc"] }
+rand_chacha = { version = "0.3", default-features = false }
+rand_distr = { version = "0.4", default-features = false, features = ["alloc"] }
 
-# Logging
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dotenvy = "0.15"
+futures = "0.3"
+rayon = "1.7"
+tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+warp = { version = "0.4", features = ["server"] }
 
-# Date/time handling
-chrono = { version = "0.4", features = ["serde"] }
-
-# Lazy static initialization
-once_cell = "1.19"
-
-# Environment variables (maintained fork of dotenv)
-dotenvy = "0.15"
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -42,3 +35,11 @@ tokio-test = "0.4"
 [[bin]]
 name = "simulation-server"
 path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[package.metadata.wasm-pack.profile.release]
+# Avoid wasm-pack's platform-dependent binary download; Rust release LTO remains enabled.
+wasm-opt = false

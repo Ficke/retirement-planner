@@ -19,8 +19,8 @@ production project.
 
 ## Running the simulation engine
 
-The Rust service is optional. Without it the app falls back to the client-side
-Web Worker automatically:
+The native Rust service is optional. Without it the app runs the same Rust
+simulation library as WebAssembly in a client-side Worker:
 
 ```bash
 pnpm dev:rust                              # :8081, optimized build
@@ -28,12 +28,13 @@ pnpm dev:rust                              # :8081, optimized build
 
 Set `RUST_SERVICE_URL=http://localhost:8081` in `.env.local` to use it.
 
-Note that the two engines share scenario definitions and the historical dataset
-(`services/simulation.ts`, `data/market-history-annual.ts`) — after editing the
-dataset, regenerate the Rust table:
+Both execution targets use the Rust simulation core. Scenario definitions stay
+in `services/simulation.ts`, and `data/market-history-annual.ts` is the source
+dataset. After editing it, regenerate the Rust table and browser artifact:
 
 ```bash
 node scripts/gen-rust-historical-data.mjs
+pnpm wasm:build
 ```
 
 ## Commands
@@ -62,11 +63,13 @@ The e2e suite runs signed out (LOCAL data mode) and needs no database.
 
 ## CI
 
-Every PR to `main` runs, in three parallel jobs:
+Every PR to `main` runs independent gates for:
 
-- **TypeScript** — typecheck, unit tests, production build, lint
-- **E2E** — Playwright smoke tests against the 5-page IA
-- **Rust** — `cargo check`, `cargo clippy`, `cargo test`
+- **Web** — typecheck, unit tests, production build, lint, and dependency audit
+- **Browser** — Playwright smoke tests, including the real local Wasm path
+- **Rust** — native and Wasm checks, strict Clippy, tests, and dependency audit
+- **Engine contract** — native HTTP and Wasm fixtures with full-result parity
+- **Containers** — production image smoke checks, Wasm MIME type, caching, and CSP
 
 Merges to `main` trigger Cloud Build, which deploys both Cloud Run services.
 See `DEPLOYMENT.md`.

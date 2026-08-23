@@ -711,7 +711,8 @@ pub const HISTORICAL_RETURNS: &[AnnualMarketReturn] = &[
 /// Samples a random historical year's returns using bootstrap sampling.
 /// The returned values are real returns: real = (1 + nominal) / (1 + inflation) - 1.
 pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
-    let random_year = &HISTORICAL_RETURNS[rng.gen_range(0..HISTORICAL_RETURNS.len())];
+    let index = rng.gen_range(0..HISTORICAL_RETURNS.len() as u32) as usize;
+    let random_year = &HISTORICAL_RETURNS[index];
 
     let real_stock_return =
         (1.0 + random_year.stock_return) / (1.0 + random_year.inflation_rate) - 1.0;
@@ -724,7 +725,7 @@ pub fn sample_historical_returns<R: rand::Rng>(rng: &mut R) -> (f64, f64) {
 /// Samples a block of consecutive years for block bootstrap.
 /// The returned values are adjusted for inflation.
 pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f64)> {
-    let start_index = rng.gen_range(0..HISTORICAL_RETURNS.len());
+    let start_index = rng.gen_range(0..HISTORICAL_RETURNS.len() as u32) as usize;
     let block_size = block_size.min(HISTORICAL_RETURNS.len());
 
     (0..block_size)
@@ -737,4 +738,30 @@ pub fn sample_block<R: rand::Rng>(rng: &mut R, block_size: usize) -> Vec<(f64, f
             (real_stock_return, real_bond_return)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
+
+    #[test]
+    fn seed_42_sampling_has_pinned_year_and_block_results() {
+        let mut single_rng = ChaCha12Rng::seed_from_u64(42);
+        assert_eq!(
+            sample_historical_returns(&mut single_rng),
+            (-0.206_278_434_940_855_3, -0.108_462_238_398_544_08)
+        );
+
+        let mut block_rng = ChaCha12Rng::seed_from_u64(42);
+        assert_eq!(
+            sample_block(&mut block_rng, 3),
+            vec![
+                (-0.206_278_434_940_855_3, -0.108_462_238_398_544_08),
+                (0.093_302_752_293_577_87, -0.061_559_633_027_523_1),
+                (0.214_174_757_281_553_33, -0.004_951_456_310_679_725),
+            ]
+        );
+    }
 }

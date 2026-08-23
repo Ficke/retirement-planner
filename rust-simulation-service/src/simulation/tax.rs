@@ -1,5 +1,4 @@
-//! Federal, state, and FICA tax. Semantics are shared with the browser engine
-//! in apps/web/src/engine/tax.ts.
+//! Federal, state, and FICA tax shared by native and browser WebAssembly builds.
 use crate::simulation::historical_data::HISTORICAL_RETURNS;
 use crate::simulation::state_tax::{state_brackets, state_standard_deduction, state_tax_profile};
 use crate::types::{AnnualContributions, FilingStatus, State};
@@ -427,8 +426,6 @@ pub fn calculate_progressive_tax(income: f64, brackets: &[TaxBracket]) -> f64 {
     tax
 }
 
-/// Tax on a working year. Contribution targets are clamped to statutory
-/// limits and to what the income can actually fund.
 /// Federal, state, and FICA tax on a working year. Contribution targets are
 /// clamped to statutory limits and to what the income can actually fund.
 fn calculate_tax(
@@ -506,7 +503,7 @@ fn calculate_tax(
 /// Savings is the residual: whatever gross income does not lose to taxes and
 /// spending gets invested. Contributions fill statutory limits in the order
 /// HSA → Traditional → Roth, and taxable absorbs the remainder — so no cash is
-/// ever left over, and none of it disappears. Matches TypeScript.
+/// ever left over, and none of it disappears.
 pub fn calculate_working_cash_flow(
     gross_income: f64,
     annual_spending: f64,
@@ -758,6 +755,13 @@ fn calculate_ltcg_tax(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "expected {expected:.2}, got {actual:.2}"
+        );
+    }
 
     #[test]
     fn test_progressive_tax_calculation() {
@@ -1040,5 +1044,172 @@ mod tests {
             TAX_LAW_YEAR + 20,
         );
         assert!(twenty_years_on.total_tax > at_law_year.total_tax);
+    }
+
+    #[test]
+    fn uses_final_2025_california_brackets_and_standard_deduction() {
+        let tax = state_tax_of(
+            &State::CA,
+            &FilingStatus::Single,
+            &StateTaxInput {
+                wages: 0.0,
+                other_ordinary: 100_000.0,
+                qualified: 0.0,
+                social_security: 0.0,
+                pretax_hsa: 0.0,
+                pretax_traditional: 0.0,
+            },
+        );
+
+        assert_close(tax, 5_207.98);
+    }
+
+    #[test]
+    fn long_term_gains_stack_on_top_of_ordinary_income() {
+        let ordinary_only = federal_tax_on(40_000.0, 0.0, 0.0, &FilingStatus::Single, TAX_LAW_YEAR);
+        let with_gains =
+            federal_tax_on(40_000.0, 20_000.0, 0.0, &FilingStatus::Single, TAX_LAW_YEAR);
+
+        // $8,450 fills the remaining 0% band and $11,550 is taxed at 15%.
+        assert_close(with_gains - ordinary_only, 1_732.50);
+    }
+
+    #[test]
+    fn unused_standard_deduction_offsets_qualified_income() {
+        let tax = federal_tax_on(0.0, 10_000.0, 15_750.0, &FilingStatus::Single, TAX_LAW_YEAR);
+
+        assert_eq!(tax, 0.0);
+    }
+
+    #[test]
+    fn social_security_taxable_amount_is_capped_at_eighty_five_percent() {
+        let taxable = calculate_taxable_social_security(
+            40_000.0,
+            20_000.0,
+            0.0,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        );
+
+        assert_eq!(taxable, 17_000.0);
+    }
+
+    #[test]
+    fn california_excludes_social_security_from_taxable_income() {
+        let input = |social_security| StateTaxInput {
+            wages: 0.0,
+            other_ordinary: 20_000.0,
+            qualified: 0.0,
+            social_security,
+            pretax_hsa: 0.0,
+            pretax_traditional: 0.0,
+        };
+
+        let without_benefits = state_tax_of(&State::CA, &FilingStatus::Single, &input(0.0));
+        let with_benefits = state_tax_of(&State::CA, &FilingStatus::Single, &input(50_000.0));
+
+        assert_eq!(with_benefits, without_benefits);
+    }
+
+    #[test]
+    fn social_security_thresholds_erode_and_joint_thresholds_remain_distinct() {
+        let single_at_law_year = calculate_taxable_social_security(
+            25_000.0,
+            20_000.0,
+            0.0,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        );
+        let joint_at_law_year = calculate_taxable_social_security(
+            25_000.0,
+            20_000.0,
+            0.0,
+            &FilingStatus::MarriedFilingJointly,
+            TAX_LAW_YEAR,
+        );
+        let joint_twenty_years_on = calculate_taxable_social_security(
+            25_000.0,
+            20_000.0,
+            0.0,
+            &FilingStatus::MarriedFilingJointly,
+            TAX_LAW_YEAR + 20,
+        );
+
+        assert_close(single_at_law_year, 5_350.0);
+        assert_close(joint_at_law_year, 1_500.0);
+        assert!(joint_twenty_years_on > joint_at_law_year);
+    }
+
+    #[test]
+    fn gains_and_rmds_do_not_increase_payroll_tax() {
+        let household = Household::single(FilingStatus::Single, 45);
+        let requested = PretaxContributionTargets {
+            hsa: 0.0,
+            traditional: 0.0,
+        };
+        let baseline = calculate_tax(
+            100_000.0,
+            0.0,
+            &household,
+            &State::TX,
+            TAX_LAW_YEAR,
+            &requested,
+            0.0,
+        );
+        let with_gains = calculate_tax(
+            100_000.0,
+            50_000.0,
+            &household,
+            &State::TX,
+            TAX_LAW_YEAR,
+            &requested,
+            0.0,
+        );
+        let with_rmd = calculate_tax(
+            100_000.0,
+            0.0,
+            &household,
+            &State::TX,
+            TAX_LAW_YEAR,
+            &requested,
+            50_000.0,
+        );
+        let deduction = deduction_for(&household, TAX_LAW_YEAR, 100_000.0);
+        let gains_deduction = deduction_for(&household, TAX_LAW_YEAR, 150_000.0);
+        let expected_gain_tax_increase = federal_tax_on(
+            100_000.0,
+            50_000.0,
+            gains_deduction,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        ) - federal_tax_on(
+            100_000.0,
+            0.0,
+            deduction,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        );
+        let expected_rmd_tax_increase = federal_tax_on(
+            150_000.0,
+            0.0,
+            gains_deduction,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        ) - federal_tax_on(
+            100_000.0,
+            0.0,
+            deduction,
+            &FilingStatus::Single,
+            TAX_LAW_YEAR,
+        );
+
+        assert_close(
+            with_gains.total_tax - baseline.total_tax,
+            expected_gain_tax_increase,
+        );
+        assert_close(
+            with_rmd.total_tax - baseline.total_tax,
+            expected_rmd_tax_increase,
+        );
     }
 }

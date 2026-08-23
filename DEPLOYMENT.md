@@ -8,8 +8,8 @@ RetirePlan runs on Google Cloud Run as **two services**:
 | `rust-simulation-service` | Monte Carlo engine (Warp + Rayon) | Private — invokable only by the web service account |
 
 The web service proxies `/api/simulation/*` to the Rust service using a Cloud
-Run ID token (`lib/rust-service-client.ts`). The browser engine provides the
-same simulation semantics for on-device computation.
+Run ID token (`lib/rust-service-client.ts`). The local Wasm adapter runs the
+same Rust engine for on-device computation.
 
 **Terraform is the source of truth for infrastructure.** Cloud Build owns image
 rollout and candidate promotion. See `terraform/README.md` for the ownership
@@ -118,7 +118,7 @@ During an origin-secret rotation, read the version referenced by
 
 This is the same check Cloud Build runs. It posts a real simulation, so a pass
 means ingress, the Hono server, the API route, the web service's IAM token,
-the hop to the Rust service, and the wire contract between the two engines all
+the hop to the Rust service, and the wire contract between the two adapters all
 work. Failures are distinguishable: `400` wire-contract mismatch, `502` Rust
 error, `503` cannot reach Rust, `504` timeout.
 

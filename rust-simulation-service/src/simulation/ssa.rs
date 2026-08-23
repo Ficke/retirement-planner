@@ -1,6 +1,6 @@
-/// Social Security Administration benefit calculations
-/// Ports TypeScript ssa.ts logic to Rust
-/// Implements AIME/PIA calculation using bend points and claiming age adjustments
+//! Social Security benefit calculations using AIME, PIA, bend points, and
+//! claiming-age adjustments.
+
 use once_cell::sync::Lazy;
 
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct SSABenefitResult {
     pub annual_benefit: f64,
 }
 
-/// 2025 estimated bend points
+/// 2025 estimated bend points.
 static BEND_POINTS: Lazy<Vec<SSABendPoint>> = Lazy::new(|| {
     vec![
         SSABendPoint {
@@ -34,11 +34,7 @@ static BEND_POINTS: Lazy<Vec<SSABendPoint>> = Lazy::new(|| {
 
 const MAX_TAXABLE_WAGE: f64 = 176_100.0;
 
-/// Estimate Social Security benefits based on salary history and claim age
-///
-/// @param salary_history - Array of annual salaries (ideally 35 years)
-/// @param claim_age - Age when benefits are claimed (62-70)
-/// @returns Detailed benefit calculation
+/// Estimates an annual benefit from earnings history and claiming age.
 pub fn calculate_ssa_benefit(
     salary_history: &[f64],
     claim_age: u32,
@@ -53,14 +49,11 @@ pub fn calculate_ssa_benefit(
     SSABenefitResult { annual_benefit }
 }
 
-/// Calculate Average Indexed Monthly Earnings (AIME) from salary history
-/// Uses the highest 35 years of indexed earnings
+/// Calculates average monthly earnings from the highest 35 annual values.
 ///
-/// @param salary_history - Array of annual salaries
-/// @returns Monthly average of top 35 indexed years
+/// The current model does not wage-index historical earnings. Missing years in
+/// a shorter history remain zero because the divisor is always 420 months.
 pub fn calculate_aime(salary_history: &[f64]) -> f64 {
-    // TODO: Implement proper wage indexing using SSA historical data
-    // For now, use nominal values and top years available
     let mut sorted_salaries = salary_history.to_vec();
     sorted_salaries.sort_by(|a, b| b.partial_cmp(a).unwrap());
 
@@ -76,11 +69,7 @@ pub fn calculate_aime(salary_history: &[f64]) -> f64 {
     (total_earnings / 420.0).floor()
 }
 
-/// Calculate Primary Insurance Amount (PIA) using bend points
-///
-/// @param aime - Average Indexed Monthly Earnings
-/// @param bend_points - SSA bend points for the calculation year
-/// @returns Primary Insurance Amount (monthly)
+/// Calculates the monthly primary insurance amount from AIME and bend points.
 pub fn calculate_pia(aime: f64, bend_points: &[SSABendPoint]) -> f64 {
     let mut pia = 0.0;
     let mut remaining_aime = aime;
@@ -105,11 +94,7 @@ pub fn calculate_pia(aime: f64, bend_points: &[SSABendPoint]) -> f64 {
     (pia * 10.0).floor() / 10.0
 }
 
-/// Get claiming age adjustment factor
-/// Early claiming reduces benefits; delayed claiming increases them
-///
-/// @param claim_age - Age when benefits are claimed (62-70)
-/// @returns Adjustment factor to apply to PIA
+/// Returns full retirement age in months for a birth-year cohort.
 pub fn get_full_retirement_age_months(birth_year: i32) -> i32 {
     if birth_year <= 1937 {
         65 * 12
@@ -135,6 +120,7 @@ fn delayed_retirement_credit_per_month(birth_year: i32) -> f64 {
     }
 }
 
+/// Returns the PIA multiplier for claiming at an integer age from 62 through 70.
 pub fn get_claim_age_adjustment(claim_age: u32, birth_year: i32) -> f64 {
     let claim_months = claim_age.clamp(62, 70) as i32 * 12;
     let full_retirement_age_months = get_full_retirement_age_months(birth_year);
@@ -149,14 +135,7 @@ pub fn get_claim_age_adjustment(claim_age: u32, birth_year: i32) -> f64 {
     1.0 + months_delayed as f64 * delayed_retirement_credit_per_month(birth_year)
 }
 
-/// Estimate salary history for Social Security calculation
-/// Projects backwards from current salary and growth rate
-///
-/// @param current_salary - Current annual salary
-/// @param salary_growth_rate - Real annual salary growth rate
-/// @param current_age - Current age
-/// @param retirement_age - Planned retirement age
-/// @returns Array of estimated annual salaries for SS calculation
+/// Estimates annual earnings from career start through the year before retirement.
 pub fn estimate_salary_history(
     current_salary: f64,
     salary_growth_rate: f64,
@@ -183,7 +162,6 @@ mod tests {
 
     #[test]
     fn test_aime_calculation() {
-        // Test with simple uniform salary
         let salary_history: Vec<f64> = vec![50000.0; 35];
         let aime = calculate_aime(&salary_history);
         assert_eq!(aime, 4_166.0);
@@ -201,7 +179,6 @@ mod tests {
 
     #[test]
     fn test_pia_calculation() {
-        // Test with AIME of $5000/month
         let aime = 5000.0;
         let bend_points = vec![
             SSABendPoint {
@@ -220,9 +197,14 @@ mod tests {
 
         let pia = calculate_pia(aime, &bend_points);
 
-        // Expected: 1174*0.9 + (5000-1174)*0.32
         let expected = 1174.0 * 0.90 + (5000.0 - 1174.0) * 0.32;
         assert_eq!(pia, (expected * 10.0_f64).floor() / 10.0);
+    }
+
+    #[test]
+    fn test_2025_bend_point_spot_values() {
+        assert_eq!(calculate_pia(1_226.0, &BEND_POINTS), 1_103.4);
+        assert_eq!(calculate_pia(5_000.0, &BEND_POINTS), 2_311.0);
     }
 
     #[test]
@@ -252,14 +234,22 @@ mod tests {
     fn test_estimate_salary_history() {
         let history = estimate_salary_history(100000.0, 0.03, 45, 65);
 
-        // Should have entries
         assert!(!history.is_empty());
 
         // Preserve the full estimated record; AIME selects its highest 35 years.
         assert_eq!(history.len(), 43);
         assert!((history[23] - 100000.0).abs() < 0.01); // age 45
 
-        // All salaries should be positive
         assert!(history.iter().all(|&s| s > 0.0));
+    }
+
+    #[test]
+    fn estimated_salary_history_anchors_and_grows_from_current_age() {
+        let history = estimate_salary_history(100_000.0, 0.02, 40, 42);
+
+        assert_eq!(history.len(), 20);
+        assert!((history[18] - 100_000.0).abs() < 1e-6);
+        assert!((history[19] - 102_000.0).abs() < 1e-6);
+        assert!(history.windows(2).all(|years| years[0] < years[1]));
     }
 }

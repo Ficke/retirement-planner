@@ -65,7 +65,7 @@ app.use(
       frameSrc: ["'self'", 'https://*.firebaseapp.com'],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       objectSrc: ["'none'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       workerSrc: ["'self'", 'blob:'],
     },

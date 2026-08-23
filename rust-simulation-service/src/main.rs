@@ -3,18 +3,12 @@ use tokio::sync::Semaphore;
 use tracing::info;
 use warp::Filter;
 
-mod server;
-mod simulation;
-mod types;
-
-use crate::server::routes;
+use retirement_simulation::server::routes;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
     tracing_subscriber::fmt().init();
 
-    // Load environment variables
     dotenvy::dotenv().ok();
 
     let simulation_threads = env::var("SIMULATION_THREADS")
@@ -54,7 +48,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         port, simulation_threads, max_concurrent_simulations
     );
 
-    // Build routes
     let routes = routes(Arc::new(Semaphore::new(max_concurrent_simulations)));
 
     // Detailed health endpoint (kept for backward compat / human use)
@@ -73,7 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let all_routes = healthz.or(health).or(routes);
 
-    // Start server
     info!(
         "Retirement simulation service running on http://0.0.0.0:{}",
         port

@@ -1,10 +1,9 @@
-//! Single-path retirement projection. Semantics are shared with the browser
-//! engine in apps/web/src/engine/projection.ts; the cross-engine contract
-//! tests pin the two together.
+//! Single-path retirement projection compiled for both the native service and
+//! the browser WebAssembly adapter.
 use anyhow::Result;
 use chrono::Datelike;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 
 use super::age::{age_on, birth_year_of};
 use super::healthcare_premiums::{expected_premium_contribution, irmaa_annual_surcharge};
@@ -27,8 +26,6 @@ use crate::types::{
 /// All-in annual portfolio cost, subtracted from the realized return before it
 /// reaches a balance. The historical series are gross index returns, so without
 /// this every projection quietly assumes a free portfolio.
-///
-/// Mirrored from ANNUAL_PORTFOLIO_FEE in apps/web/src/data/market-history.ts.
 const ANNUAL_PORTFOLIO_FEE: f64 = 0.001;
 
 const BUCKET_ORDER: [AccountType; 4] = [
@@ -329,13 +326,13 @@ pub trait MarketReturnsGenerator {
 }
 
 pub struct SingleBootstrapGenerator {
-    rng: StdRng,
+    rng: ChaCha12Rng,
 }
 
 impl SingleBootstrapGenerator {
     pub fn new(seed: u64) -> Self {
         Self {
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
         }
     }
 }
@@ -347,7 +344,7 @@ impl MarketReturnsGenerator for SingleBootstrapGenerator {
 }
 
 pub struct BlockBootstrapGenerator {
-    rng: StdRng,
+    rng: ChaCha12Rng,
     block_size: usize,
     current_block: Vec<(f64, f64)>,
     block_index: usize,
@@ -356,7 +353,7 @@ pub struct BlockBootstrapGenerator {
 impl BlockBootstrapGenerator {
     pub fn new(seed: u64, block_size: usize) -> Self {
         let mut generator = Self {
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
             block_size,
             current_block: Vec::new(),
             block_index: 0,
@@ -384,13 +381,13 @@ impl MarketReturnsGenerator for BlockBootstrapGenerator {
 }
 
 pub struct ParametricReturnsGenerator {
-    rng: StdRng,
+    rng: ChaCha12Rng,
 }
 
 impl ParametricReturnsGenerator {
     pub fn new(seed: u64) -> Self {
         Self {
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
         }
     }
 }
@@ -755,7 +752,6 @@ fn project_scenario_internal(
                 * retirement_period_fraction
                 + healthcare_cost;
 
-            // Calculate Social Security
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
                 let annual_social_security_benefit = if plan.social_security.manual_override {
                     plan.social_security
@@ -780,10 +776,8 @@ fn project_scenario_internal(
                     annual_social_security_benefit * retirement_period_fraction;
             }
 
-            // Generate market returns
             let (stock_return, bond_return) = returns_generator.next();
 
-            // Apply returns to each account
             for account in &mut accounts {
                 let account_return = account.asset_weights.stocks * stock_return
                     + account.asset_weights.bonds * bond_return
@@ -883,10 +877,7 @@ fn project_scenario_internal(
                 }
             }
 
-            // Calculate actual spending based on available funds
             spending = if insufficient_funds {
-                // If funds are insufficient, actual spending is limited to what's available
-                // = withdrawals - taxes + social security (and any other income sources)
                 (withdrawal_result.total_withdrawn - taxes - deposit_taxable
                     + social_security_benefit)
                     .max(0.0)
@@ -905,7 +896,6 @@ fn project_scenario_internal(
             portfolio_value = accounts.iter().map(|acc| acc.balance).sum();
         }
 
-        // Update previous year traditional balance for next iteration
         previous_year_traditional_balance = accounts
             .iter()
             .filter(|acc| matches!(acc.account_type, AccountType::Traditional))
@@ -1321,10 +1311,6 @@ fn create_market_returns_generator(
     plan: &RetirementPlan,
     config: &ProjectionConfig,
 ) -> Box<dyn MarketReturnsGenerator> {
-    // NOTE: Rust uses `rand::StdRng` while TS uses `seedrandom`. Identical seeds
-    // do NOT produce identical path sequences across engines. This is accepted;
-    // cross-engine results should be compared in aggregate (percentiles), not
-    // path-by-path. See apps/web/src/services/simulation.ts.
     match plan.assumptions.simulation_model {
         crate::types::SimulationModel::Parametric => {
             Box::new(ParametricReturnsGenerator::new(config.seed))
@@ -1351,6 +1337,22 @@ mod tests {
         AssetWeights, ProjectionSettings, RetirementHealthcare, SimulationModel,
         SocialSecuritySettings, UserProfile,
     };
+    use rand::RngCore;
+
+    #[test]
+    fn chacha12_seed_42_has_a_pinned_reference_stream() {
+        let mut rng = ChaCha12Rng::seed_from_u64(42);
+        let actual = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+
+        assert_eq!(
+            actual,
+            [
+                9_713_269_763_989_775_522,
+                10_011_513_049_433_592_189,
+                11_740_708_795_755_607_249,
+            ]
+        );
+    }
     use crate::types::{RothConversionCeiling, RothConversionPolicy, PLAN_SCHEMA_VERSION};
 
     fn test_plan() -> RetirementPlan {
@@ -1452,6 +1454,119 @@ mod tests {
         }
     }
 
+    fn early_ladder_plan() -> RetirementPlan {
+        let mut plan = conversion_plan(RothConversionPolicy {
+            enabled: true,
+            ceiling: RothConversionCeiling::Bracket24,
+        });
+        plan.profile.birth_date = "1976-01-01".to_string();
+        plan.profile.as_of_date = "2026-12-31".to_string();
+        plan.profile.retirement_age = 50;
+        plan.profile.life_expectancy = 56;
+        plan.profile.current_spending = 20_000.0;
+        plan.profile.retirement_spending = 20_000.0;
+        plan.profile.state = State::TX;
+        plan.accounts = vec![account(AccountType::Traditional, 250_000.0)];
+        plan
+    }
+
+    fn account(account_type: AccountType, balance: f64) -> Account {
+        Account {
+            account_type,
+            balance,
+            asset_weights: AssetWeights {
+                stocks: 0.0,
+                bonds: 1.0,
+            },
+            is_surplus_cash: false,
+        }
+    }
+
+    fn withdrawal_context(
+        age: u32,
+        rmd_amount: f64,
+        household: &Household,
+    ) -> WithdrawalContext<'_> {
+        static STATE: State = State::TX;
+
+        WithdrawalContext {
+            household,
+            state: &STATE,
+            tax_year: 2026,
+            age,
+            social_security_benefit: 0.0,
+            rmd_amount,
+            taxable_gain_ratio: 0.0,
+            hsa_qualified_allowance: 0.0,
+        }
+    }
+
+    fn disabled_roth_basis() -> RothBasisState {
+        RothBasisState {
+            enabled: false,
+            regular_principal: 0.0,
+            conversion_lots: Vec::new(),
+            unseasoned_principal: 0.0,
+        }
+    }
+
+    #[test]
+    fn voluntary_withdrawals_follow_taxable_traditional_roth_hsa_priority() {
+        let household = Household::single(FilingStatus::Single, 65);
+        let accounts = vec![
+            account(AccountType::Hsa, 10_000.0),
+            account(AccountType::Roth, 10_000.0),
+            account(AccountType::Traditional, 10_000.0),
+            account(AccountType::Taxable, 10_000.0),
+        ];
+        let evaluation = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            25_000.0,
+            &withdrawal_context(65, 0.0, &household),
+        );
+
+        assert_eq!(evaluation.withdrawal_taxable, 10_000.0);
+        assert_eq!(evaluation.withdrawal_traditional, 10_000.0);
+        assert_eq!(evaluation.withdrawal_roth, 5_000.0);
+        assert_eq!(evaluation.withdrawal_hsa, 0.0);
+
+        let hsa_reached = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            35_000.0,
+            &withdrawal_context(65, 0.0, &household),
+        );
+        assert_eq!(hsa_reached.withdrawal_taxable, 10_000.0);
+        assert_eq!(hsa_reached.withdrawal_traditional, 10_000.0);
+        assert_eq!(hsa_reached.withdrawal_roth, 10_000.0);
+        assert_eq!(hsa_reached.withdrawal_hsa, 5_000.0);
+    }
+
+    #[test]
+    fn hsa_stays_untouched_while_traditional_money_can_fund_retirement() {
+        let household = Household::single(FilingStatus::Single, 75);
+        let mut accounts = vec![
+            account(AccountType::Traditional, 1_000_000.0),
+            account(AccountType::Roth, 300_000.0),
+            account(AccountType::Hsa, 50_000.0),
+            account(AccountType::Taxable, 100_000.0),
+        ];
+        let mut roth_basis = disabled_roth_basis();
+        let result = execute_ordered_withdrawals(
+            120_000.0,
+            &mut accounts,
+            &mut roth_basis,
+            withdrawal_context(75, 1_000_000.0 / 24.6, &household),
+        )
+        .expect("withdrawal succeeds");
+
+        assert!(result.withdrawal_traditional > 30_000.0);
+        assert_eq!(result.withdrawal_roth, 0.0);
+        assert_eq!(result.withdrawal_hsa, 0.0);
+        assert!(!result.insufficient_funds);
+    }
+
     #[test]
     fn converts_nothing_when_the_policy_is_off() {
         let result = project_scenario(
@@ -1527,6 +1642,63 @@ mod tests {
     }
 
     #[test]
+    fn conversion_year_cash_flow_reconciles() {
+        let result = project_scenario(
+            &conversion_plan(RothConversionPolicy {
+                enabled: true,
+                ceiling: RothConversionCeiling::Bracket24,
+            }),
+            conversion_config(),
+        )
+        .unwrap();
+        let converting: Vec<_> = result
+            .projections
+            .iter()
+            .filter(|year| year.roth_conversion > 0.0)
+            .collect();
+
+        assert!(!converting.is_empty());
+        for year in converting {
+            let money_in = year.income
+                + year.withdrawal_taxable
+                + year.withdrawal_traditional
+                + year.withdrawal_roth
+                + year.withdrawal_hsa
+                - year.deposit_taxable;
+            let money_out = year.spending + year.taxes;
+            assert!((money_out - money_in).abs() < SHORTFALL_TOLERANCE);
+        }
+    }
+
+    #[test]
+    fn first_conversion_year_portfolio_delta_equals_incremental_tax() {
+        let without = project_scenario(
+            &conversion_plan(RothConversionPolicy::default()),
+            conversion_config(),
+        )
+        .unwrap();
+        let with = project_scenario(
+            &conversion_plan(RothConversionPolicy {
+                enabled: true,
+                ceiling: RothConversionCeiling::Bracket24,
+            }),
+            conversion_config(),
+        )
+        .unwrap();
+        let first = with
+            .projections
+            .iter()
+            .position(|year| year.roth_conversion > 0.0)
+            .unwrap();
+        let portfolio_gap =
+            without.projections[first].portfolio_value - with.projections[first].portfolio_value;
+        let incremental_tax = with.projections[first].taxes - without.projections[first].taxes;
+
+        assert!(with.projections[first].roth_conversion > 0.0);
+        assert!((portfolio_gap - incremental_tax).abs() < 0.0001);
+    }
+
+    #[test]
     fn roth_conversion_principal_seasons_after_five_tax_years() {
         let state = RothBasisState {
             enabled: true,
@@ -1554,6 +1726,30 @@ mod tests {
         assert!(seasoned.conversion_lots.is_empty());
         assert_eq!(seasoned.regular_principal, 900.0);
         assert_eq!(seasoned.unseasoned_principal, 0.0);
+    }
+
+    #[test]
+    fn early_ladder_penalizes_unseasoned_but_not_seasoned_conversion_principal() {
+        let result = project_scenario(&early_ladder_plan(), conversion_config()).unwrap();
+        let early = result
+            .projections
+            .iter()
+            .find(|year| year.year == 2028)
+            .unwrap();
+        let seasoned = result
+            .projections
+            .iter()
+            .find(|year| year.year == 2031)
+            .unwrap();
+
+        assert!(early.age < TRADITIONAL_PENALTY_AGE);
+        assert_eq!(early.withdrawal_traditional, 0.0);
+        assert!(early.withdrawal_roth > 0.0);
+        assert!((early.taxes - early.withdrawal_roth * 0.10).abs() < 0.000001);
+
+        assert!(seasoned.age < TRADITIONAL_PENALTY_AGE);
+        assert!(seasoned.withdrawal_roth > 0.0);
+        assert_eq!(seasoned.taxes, 0.0);
     }
 
     #[test]
@@ -1589,6 +1785,123 @@ mod tests {
             is_surplus_cash: false,
         }];
         plan
+    }
+
+    fn penalized_shortfall_plan(account_type: AccountType) -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1986-01-01".to_string();
+        plan.profile.state = State::TX;
+        plan.profile.retirement_age = 60;
+        plan.profile.life_expectancy = 61;
+        plan.profile.current_salary = 50_000.0;
+        plan.profile.salary_growth_rate = 0.0;
+        plan.profile.current_spending = 120_000.0;
+        plan.profile.working_spending_growth_rate = 0.0;
+        plan.profile.as_of_date = "2026-01-01".to_string();
+        plan.social_security.enabled = false;
+        plan.accounts = vec![Account {
+            account_type,
+            balance: 5_000_000.0,
+            asset_weights: AssetWeights {
+                stocks: 0.6,
+                bonds: 0.4,
+            },
+            is_surplus_cash: false,
+        }];
+        plan
+    }
+
+    fn rmd_plan(age: u32, traditional_balance: f64, retirement_spending: f64) -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.birth_date = format!("{}-01-01", 2025 - age);
+        plan.profile.as_of_date = "2025-01-01".to_string();
+        plan.profile.state = State::CA;
+        plan.profile.retirement_age = age - 1;
+        plan.profile.life_expectancy = age + 20;
+        plan.profile.current_salary = 0.0;
+        plan.profile.current_spending = retirement_spending;
+        plan.profile.retirement_spending = retirement_spending;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.social_security.enabled = false;
+        plan.accounts = vec![
+            account(AccountType::Traditional, traditional_balance),
+            account(AccountType::Taxable, 100_000.0),
+        ];
+        plan
+    }
+
+    #[test]
+    fn early_traditional_and_hsa_shortfalls_are_grossed_up_for_the_penalty_once() {
+        let config = ProjectionConfig {
+            seed: 5,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+
+        for (account_type, penalty_rate) in
+            [(AccountType::Traditional, 0.10), (AccountType::Hsa, 0.20)]
+        {
+            let result = project_scenario(&penalized_shortfall_plan(account_type), config.clone())
+                .expect("projection succeeds");
+            let year = &result.projections[1];
+            let drawn = match account_type {
+                AccountType::Traditional => year.withdrawal_traditional,
+                AccountType::Hsa => year.withdrawal_hsa,
+                _ => unreachable!(),
+            };
+
+            assert!(!year.is_retired);
+            assert!(!year.insufficient_funds);
+            assert!(year.spending > 120_000.0 - SHORTFALL_TOLERANCE);
+            assert!(year.spending <= 120_000.0);
+            assert!(drawn > 0.0);
+            assert!(year.taxes > drawn * penalty_rate);
+            assert!((year.income + drawn - year.taxes - year.spending).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn rmd_is_taken_when_social_security_already_covers_spending() {
+        let mut plan = rmd_plan(75, 1_000_000.0, 20_000.0);
+        plan.social_security.enabled = true;
+        plan.social_security.manual_override = true;
+        plan.social_security.claim_age = 67;
+        plan.social_security.estimated_benefit = Some(50_000.0);
+
+        let result = project_scenario(&plan, conversion_config()).expect("projection succeeds");
+        let first_year = &result.projections[0];
+
+        assert_eq!(first_year.social_security_benefit, 50_000.0);
+        assert!((first_year.withdrawal_traditional - first_year.rmd_amount).abs() < 1e-6);
+        assert!(first_year.deposit_taxable > 0.0);
+    }
+
+    #[test]
+    fn spending_above_the_rmd_never_reduces_the_required_withdrawal() {
+        let plan = rmd_plan(73, 800_000.0, 50_000.0);
+        let result = project_scenario(&plan, conversion_config()).expect("projection succeeds");
+        let first_year = &result.projections[0];
+
+        assert!(first_year.spending > first_year.rmd_amount);
+        assert!(first_year.withdrawal_traditional + 1.0 >= first_year.rmd_amount);
+        assert_eq!(first_year.deposit_taxable, 0.0);
+    }
+
+    #[test]
+    fn every_multiyear_required_distribution_is_fully_withdrawn() {
+        let plan = rmd_plan(73, 1_000_000.0, 25_000.0);
+        let result = project_scenario(&plan, conversion_config()).expect("projection succeeds");
+
+        for year in result.projections.iter().take(3) {
+            assert!(year.rmd_amount > 0.0);
+            assert!(
+                year.withdrawal_traditional + 0.001 >= year.rmd_amount,
+                "age {} withdrew {} against an RMD of {}",
+                year.age,
+                year.withdrawal_traditional,
+                year.rmd_amount,
+            );
+        }
     }
 
     /// A plan retiring twenty years out prices healthcare at what its entered
@@ -1755,6 +2068,81 @@ mod tests {
         );
     }
 
+    fn real_historical_returns(index: usize) -> (f64, f64) {
+        let year = &historical_data::HISTORICAL_RETURNS[index];
+        (
+            (1.0 + year.stock_return) / (1.0 + year.inflation_rate) - 1.0,
+            (1.0 + year.bond_return) / (1.0 + year.inflation_rate) - 1.0,
+        )
+    }
+
+    #[test]
+    fn block_bootstrap_is_deterministic_and_preserves_wrapped_history() {
+        let history_len = historical_data::HISTORICAL_RETURNS.len();
+        let block_size = 5;
+        let (seed, start_index) = (0_u64..10_000)
+            .find_map(|seed| {
+                let generator = BlockBootstrapGenerator::new(seed, block_size);
+                let first = generator.current_block[0];
+                let start =
+                    (0..history_len).find(|index| real_historical_returns(*index) == first)?;
+                (start + block_size > history_len).then_some((seed, start))
+            })
+            .expect("a seed should select a block that wraps the dataset");
+
+        let mut first = BlockBootstrapGenerator::new(seed, block_size);
+        let mut second = BlockBootstrapGenerator::new(seed, block_size);
+        for offset in 0..block_size {
+            let expected = real_historical_returns((start_index + offset) % history_len);
+            assert_eq!(first.next(), expected);
+            assert_eq!(second.next(), expected);
+        }
+
+        let next_block_first_return = first.next();
+        assert_eq!(next_block_first_return, first.current_block[0]);
+        assert_eq!(first.block_index, 1);
+        assert_eq!(second.next(), next_block_first_return);
+    }
+
+    #[test]
+    fn return_generator_factory_selects_the_plan_model() {
+        let config = ProjectionConfig {
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 5,
+        };
+        let mut historical_plan = test_plan();
+        historical_plan.assumptions.simulation_model = SimulationModel::Historical;
+        let mut historical = create_market_returns_generator(&historical_plan, &config);
+        let mut expected_historical = BlockBootstrapGenerator::new(config.seed, config.block_size);
+        assert_eq!(historical.next(), expected_historical.next());
+
+        let mut parametric_plan = historical_plan;
+        parametric_plan.assumptions.simulation_model = SimulationModel::Parametric;
+        let mut parametric = create_market_returns_generator(&parametric_plan, &config);
+        let mut expected_parametric = ParametricReturnsGenerator::new(config.seed);
+        assert_eq!(parametric.next(), expected_parametric.next());
+    }
+
+    #[test]
+    fn account_order_does_not_change_deposit_routing_or_projection() {
+        let plan = test_plan();
+        let mut reversed = plan.clone();
+        reversed.accounts.reverse();
+        let config = ProjectionConfig {
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 5,
+        };
+
+        let first = project_scenario(&plan, config.clone()).unwrap();
+        let second = project_scenario(&reversed, config).unwrap();
+        assert_eq!(
+            serde_json::to_value(first).unwrap(),
+            serde_json::to_value(second).unwrap()
+        );
+    }
+
     #[test]
     fn summary_matches_full_projection_exactly() {
         let mut high_spending = test_plan();
@@ -1799,7 +2187,7 @@ mod tests {
 
         assert!(
             retired.income > 0.0,
-            "retirement-year income must not be zeroed out (regression: projection.rs:357)"
+            "retirement-year income must not be zeroed out"
         );
         assert!(
             (retired.income - retired.social_security_benefit).abs() < 1e-6,

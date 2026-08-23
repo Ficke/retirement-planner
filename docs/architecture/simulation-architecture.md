@@ -2,156 +2,185 @@
 
 ## Product contract
 
-The app has two first-class compute modes:
+The app has one simulation implementation with two execution adapters:
 
-- Cloud mode sends a transient, stripped simulation plan through the Hono
-  proxy to the Rust Cloud Run service.
-- Local mode calculates the same scenario grids in browser Web Workers without
-  sending plan data off-device.
+- Cloud compute sends a transient plan through the Hono proxy to the native
+  Rust service. Independent paths run in Rayon.
+- Local compute loads the same Rust library as WebAssembly inside dedicated
+  browser Workers. A Worker runs Rust sequentially; sensitivity work is split
+  across a bounded pool of ordinary Workers.
 
-`apps/web/src/services/simulation.ts` defines scenario construction, path
-counts, and seeds. Both engines implement the same cash-flow semantics and use
-the canonical annual market history in
-`apps/web/src/data/market-history-annual.ts`.
+`apps/web/src/services/simulation.ts` remains the product orchestration layer.
+It resolves the stored plan to the engine wire format, constructs the headline
+and sensitivity scenarios, and supplies the complete Monte Carlo config. It
+does not implement projection or aggregation math.
 
-## Seed and path identity
+The portable library is rooted at `rust-simulation-service/src/lib.rs`.
+Projection, tax, withdrawal, Social Security, RMD, return generation,
+Monte Carlo aggregation, and outcome cohorts live under `src/simulation/` and
+are compiled into both the native server and the browser Wasm artifact.
 
-Every plan has one root seed, editable in Settings and defaulted to `42` when an
-older plan or request omits it. There is no random-per-run mode.
-
-Within either engine, path `i` in every scenario uses:
+## Layer boundaries
 
 ```text
-rootSeed + pathIndex
+services/simulation.ts
+  |-- HTTP JSON --> Hono --> native Rust adapter --> Rayon scheduling --|
+  |                                                               shared
+  `-- Comlink --> module Worker --> Wasm adapter --> serial scheduling --| core
+                                                                         |
+                                            projection + aggregation <---'
 ```
 
-The headline simulation and every sensitivity point therefore use common
-random numbers at a given path index. This path identity must not change when
-work is split across threads or Workers. TypeScript and Rust use different RNG
-implementations, so the identity contract does not require identical draws
-between engines; cross-engine tests instead verify the resulting financial
-semantics within their numerical tolerances.
+The adapters differ only in scheduling and transport:
 
-## Main simulation
+- `src/server.rs` owns HTTP limits, cancellation, logging, and blocking-task
+  isolation. Those dependencies are excluded from `wasm32` builds.
+- `src/wasm.rs` owns Serde/JavaScript conversion, Wasm ABI versioning, and the
+  explicit sensitivity-shard boundary.
+- `src/simulation/monte_carlo.rs` owns the shared path summary and aggregation
+  kernels. Native and Wasm adapters both call those kernels.
+- `src/validation.rs` owns engine-safety validation and is called by both
+  adapters. Hono still validates and rate-limits public input as a separate
+  abuse boundary.
 
-The headline simulation runs 5,000 paths and returns a complete
-`SimulationResult`:
+## Determinism
 
-- success probability and risk of ruin;
-- terminal-wealth percentiles;
-- yearly portfolio percentiles;
-- one internally coherent representative cash-flow path.
+Every plan has one 32-bit root seed. Path `i` in every scenario uses:
 
-Rust parallelizes paths with Rayon. Local mode keeps the headline simulation on
-one Web Worker; sharding percentile and representative-path aggregation remains
-deferred.
+```text
+u64(rootSeed) + u64(pathIndex)
+```
+
+The generator is the named and pinned `ChaCha12Rng`, not `StdRng`, whose
+algorithm is allowed to change. Historical indices are sampled as fixed-width
+`u32` values before conversion to `usize`, so a 32-bit Wasm target and a 64-bit
+native target consume the same random stream.
+
+Rayon collects the indexed path iterator in path order. Terminal-wealth ties
+use path index as a secondary key. Floating cash-flow aggregation is performed
+in path order rather than as a parallel reduction.
+
+Historical mode is expected to serialize identically across native and Wasm
+for a pinned toolchain. Parametric mode uses floating distributions and
+transcendental functions, so its cross-target contract is semantic parity with
+tight numeric tolerances plus exact structure and discrete outcomes. Contract
+tests cover both modes.
+
+## Headline simulation
+
+The headline request runs 5,000 paths and returns a complete
+`SimulationResult`: success/risk, terminal-wealth percentiles, yearly portfolio
+percentiles, a coherent median-terminal-wealth cash-flow path, and nine outcome
+cohorts.
+
+All aggregation occurs in Rust. The Wasm boundary receives one plan/config
+object and returns only the aggregated result; path-scale data never crosses
+into JavaScript.
+
+The local call is synchronous inside its Worker. An abort terminates that
+Worker immediately, which also discards its Wasm instance. The next run creates
+a clean Worker and initializes Wasm again. State generation counters remain the
+last defense against a stale result committing.
 
 ## Sensitivity sweeps
 
-The Plan page evaluates 17 grid points at 300 paths each:
+All sensitivity scenarios use 1,000 paths and the same root seed. The exact
+number of scenarios depends on lever ranges and includes Social Security,
+spending, retirement age, and Roth conversion.
 
-- Social Security claim age: 62, 64, 66, 68, and 70;
-- current spending: 60% through 120% in 10% steps;
-- retirement age: the plan age plus or minus four years in two-year steps,
-  subject to plan bounds.
-
-Spending sensitivity varies `currentSpending`. The plan's retirement-spending
-multiplier is then resolved to a dollar amount at the engine boundary. This
-keeps sensitivity behavior aligned with the canonical plan model.
-
-Sensitivity consumers need only success probability. Both projection engines
-therefore expose a summary seam that runs the same yearly financial loop with
-projection-row recording disabled. Full and summary success must be exactly
-equal for the same plan and path seed.
-
-### Cloud kernel
-
-Summary batches use path-major loop inversion:
-
-```text
-parallel path index
-  for each grid point
-    run summary projection(rootSeed + pathIndex)
-    increment the worker-local success count
-reduce worker-local count vectors
-```
-
-This removes the sequential Rayon barrier between grid points. CPU-bound Rayon
-work is launched through Tokio `spawn_blocking`, keeping the async runtime
-available for HTTP work and health probes.
-
-### Local kernel
-
-Sensitivity work is divided into contiguous, balanced path-index shards across:
+Native summary batches use a path-major Rayon kernel. Browser work is divided
+into contiguous ranges across:
 
 ```text
 min(max(hardwareConcurrency - 1, 1), 8, pathCount)
 ```
 
-Each Worker receives the scenario plans and its path range, regenerates returns
-from the shared root seed, and returns one success count per grid point.
-Aborting a stale simulation terminates both the headline Worker and the
-sensitivity pool; the next run creates fresh Workers.
+The Wasm shard ABI is explicit:
 
-## HTTP contracts and rolling deployment
+```text
+{ simulations, startPath, endPath } -> [{ id, successCount }]
+```
 
-`POST /api/simulate` returns a full `SimulationResult`.
+Every simulation carries its complete `MCConfig`, including root seed,
+historical-bootstrap choice, and block size. Workers return integer counts;
+JavaScript only sums those counts and divides once by the full path count.
 
-`POST /api/batch` accepts `responseMode`:
+## Wasm packaging and loading
 
-- `summary` returns `{ id, successProbability }` per scenario;
-- omitted or `full` returns the legacy nested full result for browser bundles
-  already open during deployment.
+`pnpm wasm:build` uses pinned `wasm-pack` with the `web` target and writes the
+generated package to `apps/web/src/wasm`. Vite imports the generated ES module
+from `mc.worker.ts` and emits the binary as a hashed `/assets/*.wasm` file.
+Initialization is lazy, so cloud-only users do not download Wasm.
 
-The new web client also accepts the legacy full response after requesting
-summary mode. This covers the opposite rolling-deployment order, where a new web
-revision reaches an older Rust revision that ignores `responseMode`.
+The generated package is committed so Node-only web and container builds do
+not need a Rust toolchain. This opaque artifact is guarded in two ways:
 
-Successful proxy responses stream through Hono without parsing and
-reserializing. Validation, rate limiting, and normalized error responses remain
-at the public proxy boundary.
+- `scripts/check-wasm-artifact.mjs` hashes the portable Rust sources and locked
+  dependencies. Every web build fails if the artifact is stale.
+- CI rebuilds the package with the pinned Rust/wasm-pack toolchain and requires
+  a clean diff.
 
-The legacy full batch response can be removed only in a later release, after
-old browser bundles have aged out.
+The worker checks a dedicated Wasm ABI version before accepting work. The ABI
+version is independent of the persisted plan schema version.
 
-## Parallelism and infrastructure
+The production CSP grants only `'wasm-unsafe-eval'`, not general
+`'unsafe-eval'`. The existing immutable asset policy covers the hashed binary,
+which must be served as `application/wasm` for streaming compilation.
 
-Cloud Run is configured for one request per Rust instance, 8 vCPU, and 4 GiB of
-memory. `SIMULATION_THREADS` pins the Rayon global pool to the allocated CPU
-count instead of relying on host-core discovery.
+## HTTP compatibility
 
-Each path is isolated: it borrows the plan, owns its account copy and RNG, and
-writes no shared state. That makes future path-range distribution possible, but
-interactive work should continue to fit within one instance. If latency
-regresses, first adjust grids and path counts; do not add scatter-gather to the
-interactive request path without evidence that one instance is the constraint.
+The existing native routes and rolling-deployment behavior remain unchanged:
 
-## Correctness invariants
+- `POST /api/simulate` returns a full `SimulationResult`.
+- `POST /api/batch` accepts `responseMode: "summary"` for compact sensitivity
+  responses and preserves the legacy full response when omitted.
+- The new web client accepts the legacy nested batch result during rolling
+  deployment.
 
-- A path fails if any modeled year is underfunded, not only when terminal wealth
-  is zero.
-- Summary projection is the full projection with recording suppressed, never a
-  second financial implementation.
-- Contributions are derived from residual working cash flow; they are not
-  stored plan assumptions.
-- `rootSeed + pathIndex` is stable across sequential, threaded, and sharded
-  execution.
-- Scenario construction remains in `services/simulation.ts`.
-- The TypeScript historical table is canonical; regenerate Rust data with
-  `node scripts/gen-rust-historical-data.mjs` after edits.
-- Generation counters and abort signals prevent stale results from overwriting
-  newer plan results.
+Browser Wasm output is never authoritative for authentication, persistence, or
+server-side decisions. The native service and public proxy retain independent
+input and resource limits.
 
-## Validation
+## Design review decisions
 
-Changes to projection, seed, batching, or parallel execution require:
+The pre-implementation red-team review rejected the first draft until these
+risks were addressed:
 
-1. TypeScript unit tests, lint, and type checking.
-2. Rust formatting, strict Clippy, release tests, and release build.
-3. The live TypeScript/Rust contract suite.
-4. Terraform formatting and validation for deployment changes.
-5. Browser smoke tests in both Cloud and Local compute modes, including
-   rapid-edit cancellation.
+1. `StdRng` and target-width historical sampling were replaced with named
+   ChaCha and fixed-width draws.
+2. Browser sweep work gained an absolute path-range ABI to prevent duplicated
+   paths across Workers.
+3. Local calls now receive the same full config as server calls.
+4. Engine-safety validation moved out of the HTTP adapter and into shared Rust.
+5. Aggregation stayed in one shared kernel; only scheduling is target-specific.
+6. The Wasm ABI and generated artifact gained independent version/provenance
+   checks.
+7. Legacy TypeScript regression coverage is mapped and ported before deleting
+   the old implementation.
+8. Browser tests exercise the real Wasm response, MIME type, runtime errors,
+   and CSP permission; orchestration tests cover cancellation and Worker
+   recreation.
 
-Keep `/api/batch` full-response compatibility until a later release has allowed
-old browser bundles to age out.
+Shared-memory Wasm threads were deliberately rejected for the initial design.
+They would require cross-origin isolation and could disrupt authentication
+popups and third-party resources. Ordinary Workers already provide bounded
+sensitivity parallelism and preserve hard cancellation.
+
+## Validation gates
+
+Changes to simulation logic, config, seeds, aggregation, or packaging require:
+
+1. Rust formatting, strict Clippy, release tests, and native release build.
+2. A `wasm32-unknown-unknown` release-library check.
+3. Generated historical/state-tax checks and Wasm source-provenance check.
+4. Native HTTP versus Wasm contract fixtures for historical and parametric
+   modes.
+5. TypeScript type checking, lint, unit tests, and production Vite/Hono build.
+6. Browser local-Wasm tests for MIME/runtime behavior, plus orchestration tests
+   for cancellation and Worker recovery.
+7. Container smoke tests for immutable Wasm caching and production CSP.
+
+Performance reviews record native and Wasm 5,000-path latency, browser cold and
+warm timing, sensitivity duration, binary transfer size, and peak memory where
+the host tooling exposes it. Worker count or Wasm threading should change only
+in response to those measurements.

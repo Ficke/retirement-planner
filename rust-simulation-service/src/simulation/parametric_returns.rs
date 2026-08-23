@@ -1,12 +1,11 @@
 //! Parametric return generation.
 //!
-//! All statistics are DERIVED from the canonical historical dataset in
-//! `historical_data.rs` (itself generated from the TS source of truth), so the
-//! parametric model in both engines is fit to the same real-return history.
-//! Sampling matches the TS implementation: log-space, Student-t (df=6) equity
-//! shocks, Normal bond shocks, Cholesky-correlated.
+//! All statistics are derived from the canonical historical dataset in
+//! `historical_data.rs`, so native and WebAssembly builds fit the same
+//! real-return history. Sampling uses log-space Student-t (df=6) equity shocks,
+//! normal bond shocks, and Cholesky correlation.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rand::Rng;
 use rand_distr::{Distribution, Normal, StudentT};
 use std::sync::LazyLock;
@@ -96,13 +95,14 @@ static STATS: LazyLock<DerivedStats> = LazyLock::new(|| {
 /// Generate correlated annual real returns for stocks and bonds.
 /// See module docs; matches the TS implementation in aggregate distribution.
 pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns> {
-    let student_t = StudentT::new(6.0)?;
-    let normal = Normal::new(0.0, 1.0)?;
+    let student_t =
+        StudentT::new(6.0).map_err(|error| anyhow!("invalid Student-t parameters: {error:?}"))?;
+    let normal =
+        Normal::new(0.0, 1.0).map_err(|error| anyhow!("invalid Normal parameters: {error:?}"))?;
 
     let degrees_of_freedom: f64 = 6.0;
-    // Match the browser engine's numerical guard. An unbounded Student-t draw
-    // passed through exp() can overflow an entire path; ±10 retains very heavy
-    // tails while keeping both engines finite and semantically aligned.
+    // An unbounded Student-t draw passed through exp() can overflow an entire
+    // path; ±10 retains very heavy tails while keeping every target finite.
     let raw_stock_shock: f64 = student_t.sample(rng);
     let stock_shock = raw_stock_shock.clamp(-10.0, 10.0)
         / (degrees_of_freedom / (degrees_of_freedom - 2.0)).sqrt();
@@ -125,8 +125,8 @@ pub fn generate_parametric_returns<R: Rng>(rng: &mut R) -> Result<MarketReturns>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
 
     #[test]
     fn derived_stats_are_sane() {
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn parametric_returns_match_derived_moments() {
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = ChaCha12Rng::seed_from_u64(42);
 
         let mut stock_returns = Vec::new();
         let mut bond_returns = Vec::new();

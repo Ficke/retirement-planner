@@ -42,8 +42,8 @@ import {
  *           the database; localStorage doubles as a write-through cache so
  *           unsaved changes survive crashes.
  *
- * Independently, simulations run on the cloud engine (Rust service; inputs
- * processed transiently, never stored) or the local engine (Web Worker).
+ * Independently, simulations run through native Rust in the cloud (inputs
+ * processed transiently, never stored) or Rust WebAssembly in a local Worker.
  *
  * `plan` is the single source of truth for everything the simulation reads,
  * including `plan.accounts`.
@@ -51,7 +51,7 @@ import {
 
 // Debounce plan changes before re-running the primary result. Sensitivity
 // sweeps are lazy and run only while the Plan page consumes them.
-const SIMULATION_DELAY = 300; // ms
+const SIMULATION_DELAY_MS = 300;
 const CLOUD_PROFILE_SCHEMA_VERSION = PLAN_SCHEMA_VERSION;
 let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -72,7 +72,7 @@ function scheduleSimulations(get: () => PlanState, set: PlanSetter) {
     }
     get().runMainSimulation();
     simulationTimeoutId = null;
-  }, SIMULATION_DELAY);
+  }, SIMULATION_DELAY_MS);
 }
 
 // --- Cloud profile flush (cloud mode only) ---
@@ -262,12 +262,12 @@ export function hydratePlan(
         profileInput.retirementSpendingGrowthRate
         ?? profileInput.spendingGrowthRate
         ?? defaultPlan.profile.retirementSpendingGrowthRate,
-      // Age and birth year were once stored separately. Rebuilding the date
-      // that reproduces the stored age exactly keeps results from shifting.
       retirementHealthcare: {
         ...defaultPlan.profile.retirementHealthcare,
         ...(profileInput.retirementHealthcare ?? {}),
       },
+      // Age and birth year were once stored separately. Rebuilding the date
+      // that reproduces the stored age exactly keeps results from shifting.
       birthDate:
         profileInput.birthDate
         ?? birthDateFromLegacyAge(
@@ -781,7 +781,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         ssAnalysisResult: null,
         spendingAnalysisResult: null,
         retirementAgeAnalysisResult: null,
-  rothConversionAnalysisResult: null,
+        rothConversionAnalysisResult: null,
       });
     }
   },

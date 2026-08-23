@@ -56,8 +56,8 @@ secret or a client certificate is what distinguishes this zone from any other.
 The web app is a Vite-built, client-rendered React SPA with a Hono
 backend-for-frontend. The previous Next.js runtime supplied no meaningful
 server rendering, so the migration removed framework server components while
-preserving React, Radix, Recharts, TanStack Table, Zustand, and the Web Worker
-engine. Hono serves the production SPA and owns API routing, origin
+preserving React, Radix, Recharts, TanStack Table, Zustand, and Web Worker
+orchestration. Hono serves the production SPA and owns API routing, origin
 authentication, security headers, and the private Rust proxy.
 
 The Worker proxy remains necessary for API calls and for keeping the Cloud Run
@@ -65,10 +65,10 @@ origin behind the shared-secret control. It also serves the SPA so browser
 history routes and API requests stay on one origin. Hashed Vite assets under
 `/assets/` receive immutable edge caching.
 
-Compiling the Rust engine to WebAssembly would collapse the two-engine
-maintenance burden into one and make the server optional rather than merely
-skippable. Threaded WebAssembly requires cross-origin isolation headers, which
-break Firebase Auth popup flows, so it would force redirect-based sign-in.
+The Rust simulation core is compiled to WebAssembly for local execution in
+ordinary Workers. Sensitivity paths are sharded across Workers rather than
+using shared-memory Wasm threads, so Firebase Auth popups remain compatible and
+the app does not require cross-origin isolation.
 
 ## Open follow-ups
 

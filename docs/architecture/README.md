@@ -14,24 +14,25 @@ Reference for the Monte Carlo simulation architecture, including:
 
 ## Runtime properties
 
-- **Parallelization**: Rayon thread pool sized to the service's CPU allocation
+- **Parallelization**: Rayon in the native service; bounded ordinary Workers in the browser
 - **Isolation**: Each path is a pure function with no shared state
 
 ## Implementation Status
 
-✅ **Phase 1: Rust Service Foundation** - COMPLETED
-- Full TypeScript → Rust logic port
+✅ **Phase 1: Unified Rust Simulation Core** - COMPLETED
+- One projection and aggregation implementation for native and WebAssembly targets
 - Tax calculations (federal/state/FICA)
 - RMD calculations
 - Social Security benefits (AIME/PIA)
 - Complete projection engine with tax-efficient withdrawals
-- Cross-engine contract tests compare financial semantics within the suite's
-  numerical tolerances
+- Native/WebAssembly contract tests compare complete results within the suite's
+  numerical policy
 
 ✅ **Phase 2: Vite/Hono Integration** - COMPLETED
 - User preference for server-side vs client-side
 - Public, rate-limited Hono proxy endpoints
 - Graceful fallback mechanisms
+- Browser WebAssembly adapter with explicit ABI and artifact provenance
 
 ✅ **Phase 3: Production Deployment** - COMPLETED
 - Docker containerization

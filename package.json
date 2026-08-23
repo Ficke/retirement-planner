@@ -14,12 +14,15 @@
     "test:ui": "pnpm -C apps/web test:ui",
     "e2e": "pnpm -C apps/web e2e",
     "e2e:ui": "pnpm -C apps/web e2e:ui",
+    "wasm:build": "pnpm exec wasm-pack build rust-simulation-service --target web --out-dir ../apps/web/src/wasm --out-name retirement_simulation --release && node scripts/check-wasm-artifact.mjs --write",
+    "wasm:check": "node scripts/check-wasm-artifact.mjs",
     "clean": "rm -rf apps/*/node_modules apps/*/.next apps/*/dist apps/*/dist-server",
     "install:all": "pnpm install",
     "bootstrap": "node scripts/bootstrap"
   },
   "devDependencies": {
-    "typescript": "^5"
+    "typescript": "^5",
+    "wasm-pack": "0.15.0"
   },
   "engines": {
     "node": ">=22",

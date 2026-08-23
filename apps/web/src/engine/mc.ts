@@ -3,15 +3,13 @@ import type { SimulationPlan, SimulationResult } from '@/domain/types';
 import type { WorkerAPI, WorkerSweepScenario } from '@/workers/mc.worker';
 import { simulationPlanSchema } from '@/domain/schemas';
 
-/**
- * Monte Carlo simulation client wrapper.
- * Handles communication with Web Worker for heavy computation.
- * Returns aggregated results from multiple simulation paths.
- */
+/** Browser Worker orchestration for the Rust WebAssembly engine. */
 
 export interface MCConfig {
   paths: number;
   seed: number;
+  useHistoricalBootstrap: boolean;
+  blockSize: number;
 }
 
 let workerInstance: Comlink.Remote<WorkerAPI> | null = null;
@@ -21,10 +19,6 @@ let sweepWorkerInstances: Array<{
   remote: Comlink.Remote<WorkerAPI>;
 }> = [];
 
-/**
- * Initialize Web Worker for Monte Carlo simulation.
- * Creates worker instance with Comlink proxy.
- */
 async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
   if (workerInstance) {
     return workerInstance;
@@ -132,14 +126,20 @@ export async function runMonteCarloSummaries(
     : navigator.hardwareConcurrency || 2;
   const shards = sweepPathShards(config.paths, hardwareConcurrency);
   const workers = initializeSweepWorkers(shards.length);
-  const shardCounts = await waitForWorker(
-    Promise.all(workers.map((worker, workerIndex) => {
-      const { startPath, endPath } = shards[workerIndex];
-      return worker.runSweepShard(scenarios, config.seed, startPath, endPath);
-    })),
-    signal,
-    cancelSweepWorkers,
-  );
+  let shardCounts: number[][];
+  try {
+    shardCounts = await waitForWorker(
+      Promise.all(workers.map((worker, workerIndex) => {
+        const { startPath, endPath } = shards[workerIndex];
+        return worker.runSweepShard(scenarios, config, startPath, endPath);
+      })),
+      signal,
+      cancelSweepWorkers,
+    );
+  } catch (error) {
+    cancelSweepWorkers();
+    throw error;
+  }
   if (signal?.aborted) throw abortError();
 
   const counts = new Array<number>(scenarios.length).fill(0);
@@ -152,17 +152,9 @@ export async function runMonteCarloSummaries(
   }));
 }
 
-/**
- * Run Monte Carlo simulation using Web Worker.
- * Aggregates multiple projection paths into statistical summary.
- * 
- * @param plan - Complete retirement plan configuration  
- * @param config - Monte Carlo simulation parameters
- * @returns Promise resolving to simulation results
- */
 export async function runMonteCarloSimulation(
   plan: SimulationPlan,
-  config: MCConfig = { paths: 5000, seed: 42 },
+  config: MCConfig,
   signal?: AbortSignal,
 ): Promise<SimulationResult> {
   if (signal?.aborted) throw abortError();
@@ -177,18 +169,12 @@ export async function runMonteCarloSimulation(
     return result;
   } catch (error) {
     if (signal?.aborted) throw abortError();
+    cancelMainWorker();
     console.error('Monte Carlo simulation failed:', error);
     throw new Error('Simulation failed. Please check your inputs and try again.');
   }
 }
 
-/**
- * Validate simulation inputs before running Monte Carlo.
- * Ensures all required data is present and reasonable.
- * 
- * @param plan - Retirement plan to validate
- * @returns Array of validation errors (empty if valid)
- */
 export function validateSimulationInputs(plan: SimulationPlan): string[] {
   const validation = simulationPlanSchema.safeParse(plan);
   return validation.success

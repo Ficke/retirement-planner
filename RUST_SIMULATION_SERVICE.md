@@ -1,11 +1,12 @@
 # Rust simulation service
 
-The Rust service is the default Monte Carlo engine. It is stateless: requests
-are processed in memory and simulation inputs are never persisted. The web app
-falls back to its local Web Worker engine when the service is unavailable.
+The Rust service is the cloud adapter for the shared Monte Carlo engine. It is
+stateless: requests are processed in memory and simulation inputs are never
+persisted. When the service is unavailable, the web app runs the same Rust
+library as WebAssembly in a local Worker.
 
-Both engines implement the same financial semantics. The cross-engine contract
-suite runs representative scenarios through each and compares their cash flows.
+The contract suite runs representative scenarios through the native and
+WebAssembly adapters and compares their complete results.
 
 ## Endpoints
 
@@ -45,15 +46,15 @@ representative cash-flow path. Summary batches invert the loops: each Rayon task
 runs one path index across all sensitivity scenarios and retains only local
 success counts.
 
-Within each engine, every scenario uses the plan's root seed and path `i` uses:
+Every scenario uses the plan's root seed and path `i` uses:
 
 ```text
 pathSeed = plan.assumptions.randomSeed + pathIndex
 ```
 
-Missing seeds from older clients deserialize as `42`. The TypeScript and Rust
-engines preserve the same path identity, although their different RNG
-implementations do not promise identical return draws across engines.
+Missing seeds from older clients deserialize as `42`. Both targets use the
+named `ChaCha12Rng` stream and fixed-width sampling so path identity and draws
+remain stable across native and WebAssembly builds.
 
 ## Local development
 
@@ -73,10 +74,12 @@ Useful checks:
 ```bash
 cargo fmt --manifest-path rust-simulation-service/Cargo.toml --all -- --check
 cargo clippy --manifest-path rust-simulation-service/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path rust-simulation-service/Cargo.toml
+cargo test --release --manifest-path rust-simulation-service/Cargo.toml
+cargo check --release --target wasm32-unknown-unknown --lib --manifest-path rust-simulation-service/Cargo.toml
+pnpm wasm:check
 ```
 
-The live cross-engine contract check builds the release binary, starts it on a
+The live cross-target contract check builds the release binary, starts it on a
 dedicated port, and runs:
 
 ```bash
@@ -85,9 +88,9 @@ RUST_SERVICE_URL=http://127.0.0.1:18081 pnpm -C apps/web test:contract
 
 ## Historical data
 
-`src/simulation/historical_data.rs` is generated from the canonical TypeScript
-dataset. After editing `apps/web/src/data/market-history-annual.ts`, regenerate
-it with:
+`src/simulation/historical_data.rs` is generated from the canonical annual
+market dataset. After editing `apps/web/src/data/market-history-annual.ts`,
+regenerate it with:
 
 ```bash
 node scripts/gen-rust-historical-data.mjs
@@ -113,7 +116,7 @@ overwrite them.
 
 - Keep summary and full projection logic on one financial loop.
 - Preserve `rootSeed + pathIndex` when changing parallel topology.
-- Run TypeScript/Rust contract tests after changing projection, tax,
+- Run native/WebAssembly contract tests after changing projection, tax,
   withdrawal, RMD, Social Security, seed, or historical-data behavior.
 - Do not remove the full `/api/batch` response in the release that introduces
   summary mode.

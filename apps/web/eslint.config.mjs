@@ -9,6 +9,7 @@ export default tseslint.config(
       'node_modules/**',
       'dist/**',
       'dist-server/**',
+      'src/wasm/**',
       'playwright-report/**',
       'test-results/**',
       'test-seedrandom.js',

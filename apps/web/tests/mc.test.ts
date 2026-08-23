@@ -2,12 +2,12 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createTestAccount } from './test-helpers';
 import {
   cancelMonteCarloSimulation,
+  runMonteCarloSimulation,
   runMonteCarloSummaries,
   sweepPathShards,
   validateSimulationInputs,
 } from '@/engine/mc';
-import { countSweepSuccesses, projectScenario } from '@/engine/projection';
-import type { SimulationPlan } from '@/domain/types';
+import type { SimulationPlan, SimulationResult } from '@/domain/types';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 
 vi.mock('comlink', () => ({
@@ -23,7 +23,7 @@ const testPlan: SimulationPlan = {
   schemaVersion: PLAN_SCHEMA_VERSION,
   profile: {
     birthDate: '1990-01-01',
-    state: 'CA', 
+    state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
     currentSalary: 100000,
@@ -54,7 +54,8 @@ const testPlan: SimulationPlan = {
     simulationModel: 'historical',
     randomSeed: 42,
     taxableGainRatio: 0.5,
-    hsaEligible: false, useBackdoorRoth: false,
+    hsaEligible: false,
+    useBackdoorRoth: false,
     rothConversion: { enabled: false, ceiling: 'bracket24' as const },
     terminalTaxRate: 0.30,
   },
@@ -115,16 +116,23 @@ describe('Monte Carlo Simulation', () => {
     expect(() => sweepPathShards(1.5, 8)).toThrow(RangeError);
   });
 
-  it('returns the same per-scenario probabilities as full path projections', async () => {
+  it('reduces integer shard counts to per-scenario probabilities', async () => {
     class LocalWorker {
       remote = {
         runSimulation: () => new Promise<never>(() => {}),
         runSweepShard: async (
           scenarios: Array<{ id: string; plan: SimulationPlan }>,
-          seed: number,
+          _config: { seed: number },
           startPath: number,
           endPath: number,
-        ) => countSweepSuccesses(scenarios, seed, startPath, endPath),
+        ) => scenarios.map((_, scenarioIndex) => {
+          if (scenarioIndex === 0) return endPath - startPath;
+          let successes = 0;
+          for (let pathIndex = startPath; pathIndex < endPath; pathIndex += 1) {
+            if (pathIndex % 2 === 0) successes += 1;
+          }
+          return successes;
+        }),
       };
 
       terminate() {}
@@ -141,18 +149,17 @@ describe('Monte Carlo Simulation', () => {
       },
     ];
     const paths = 11;
-    const rootSeed = 42;
-
-    const summaries = await runMonteCarloSummaries(scenarios, { paths, seed: rootSeed });
-    const expected = scenarios.map(({ id, plan }) => {
-      let successes = 0;
-      for (let pathIndex = 0; pathIndex < paths; pathIndex++) {
-        if (projectScenario(plan, { paths: 1, seed: rootSeed + pathIndex }).success) successes++;
-      }
-      return { id, successProbability: successes / paths };
+    const summaries = await runMonteCarloSummaries(scenarios, {
+      paths,
+      seed: 42,
+      useHistoricalBootstrap: true,
+      blockSize: 5,
     });
 
-    expect(summaries).toEqual(expected);
+    expect(summaries).toEqual([
+      { id: 'base', successProbability: 1 },
+      { id: 'high-spending', successProbability: 6 / 11 },
+    ]);
   });
 
   it('terminates sensitivity workers and rejects promptly when aborted', async () => {
@@ -181,7 +188,7 @@ describe('Monte Carlo Simulation', () => {
     const controller = new AbortController();
     const simulation = runMonteCarloSummaries(
       [{ id: 'base', plan: testPlan }],
-      { paths: 300, seed: 42 },
+      { paths: 300, seed: 42, useHistoricalBootstrap: true, blockSize: 5 },
       controller.signal,
     );
 
@@ -195,7 +202,7 @@ describe('Monte Carlo Simulation', () => {
     const secondController = new AbortController();
     const secondSimulation = runMonteCarloSummaries(
       [{ id: 'base', plan: testPlan }],
-      { paths: 300, seed: 42 },
+      { paths: 300, seed: 42, useHistoricalBootstrap: true, blockSize: 5 },
       secondController.signal,
     );
 
@@ -210,17 +217,93 @@ describe('Monte Carlo Simulation', () => {
     expect(workers.slice(8).every((worker) => worker.terminated)).toBe(true);
   });
 
-  it('should validate correct simulation inputs', () => {
+  it('recreates the main worker after an operation failure', async () => {
+    const workers: Array<{ terminated: boolean }> = [];
+    class RecoveringWorker {
+      terminated = false;
+      private readonly attempt = workers.length;
+      remote = {
+        runSimulation: () => this.attempt === 0
+          ? Promise.reject(new Error('Wasm initialization failed'))
+          : Promise.resolve({ successProbability: 1 } as SimulationResult),
+        runSweepShard: () => Promise.resolve([]),
+      };
+
+      constructor() {
+        workers.push(this);
+      }
+
+      terminate() {
+        this.terminated = true;
+      }
+    }
+    vi.stubGlobal('Worker', RecoveringWorker);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const config = {
+      paths: 1,
+      seed: 42,
+      useHistoricalBootstrap: true,
+      blockSize: 5,
+    };
+
+    await expect(runMonteCarloSimulation(testPlan, config)).rejects.toThrow('Simulation failed');
+    expect(workers[0].terminated).toBe(true);
+    await expect(runMonteCarloSimulation(testPlan, config)).resolves.toMatchObject({
+      successProbability: 1,
+    });
+    expect(workers).toHaveLength(2);
+  });
+
+  it('recreates sensitivity workers after an operation failure', async () => {
+    const workers: Array<{ terminated: boolean }> = [];
+    class RecoveringWorker {
+      terminated = false;
+      private readonly attempt = workers.length;
+      remote = {
+        runSimulation: () => Promise.resolve({} as SimulationResult),
+        runSweepShard: (_scenarios: unknown, _config: unknown, start: number, end: number) => (
+          this.attempt === 0
+            ? Promise.reject(new Error('Wasm initialization failed'))
+            : Promise.resolve([end - start])
+        ),
+      };
+
+      constructor() {
+        workers.push(this);
+      }
+
+      terminate() {
+        this.terminated = true;
+      }
+    }
+    vi.stubGlobal('Worker', RecoveringWorker);
+    vi.stubGlobal('navigator', { hardwareConcurrency: 2 });
+    const config = {
+      paths: 3,
+      seed: 42,
+      useHistoricalBootstrap: true,
+      blockSize: 5,
+    };
+
+    await expect(runMonteCarloSummaries([{ id: 'base', plan: testPlan }], config))
+      .rejects.toThrow('Wasm initialization failed');
+    expect(workers[0].terminated).toBe(true);
+    await expect(runMonteCarloSummaries([{ id: 'base', plan: testPlan }], config))
+      .resolves.toEqual([{ id: 'base', successProbability: 1 }]);
+    expect(workers).toHaveLength(2);
+  });
+
+  it('accepts valid simulation inputs', () => {
     const errors = validateSimulationInputs(testPlan);
     expect(errors).toEqual([]);
   });
 
-  it('should reject plans with invalid asset weights', () => {
+  it('rejects plans with invalid asset weights', () => {
     const invalidPlan = {
       ...testPlan,
       accounts: [{
         ...testPlan.accounts[0],
-        assetWeights: { stocks: 0.6, bonds: 0.5 }, // Sum = 1.1
+        assetWeights: { stocks: 0.6, bonds: 0.5 },
       }],
     };
     
@@ -243,15 +326,4 @@ describe('Monte Carlo Simulation', () => {
     expect(validateSimulationInputs(retiredPlan)).toEqual([]);
   });
 
-  it.skip('should produce reasonable success probability (requires browser environment)', async () => {
-    // Skip in Node.js test environment - Worker not available
-    // This test passes in browser environment
-    expect(true).toBe(true);
-  });
-
-  it.skip('should maintain percentile ordering (requires browser environment)', async () => {
-    // Skip in Node.js test environment - Worker not available  
-    // This test passes in browser environment
-    expect(true).toBe(true);
-  });
 });

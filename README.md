@@ -13,7 +13,7 @@ durability.
 
 - Build and simulate a complete plan without creating an account.
 - Keep plan data in the browser or optionally sync it across devices.
-- Run simulations locally in Web Workers or through a private Rust service.
+- Run the shared Rust engine locally as WebAssembly or through a private native service.
 - Compare retirement age, spending, and Social Security scenarios using shared
   financial assumptions.
 
@@ -24,7 +24,7 @@ Storage and simulation are independent choices:
 | Concern | Local | Cloud |
 |---|---|---|
 | Plan data | Browser storage | PostgreSQL with a browser cache |
-| Simulation | Web Workers | Rust on Cloud Run |
+| Simulation | Rust WebAssembly in Web Workers | Native Rust on Cloud Run |
 
 Cloud simulation inputs are processed in memory and never persisted. Signed-out
 plans always keep their stored data in the browser.
@@ -58,9 +58,8 @@ pnpm build
 ## Architecture
 
 The application is a Vite-built React SPA served by Hono. Firebase provides
-identity, PostgreSQL stores synchronized plans, and the TypeScript and Rust
-engines share scenario definitions, seeds, request contracts, and historical
-inputs.
+identity, PostgreSQL stores synchronized plans, and one Rust simulation library
+runs through native and browser WebAssembly adapters.
 
 ## Documentation
 

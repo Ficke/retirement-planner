@@ -1,15 +1,19 @@
 use anyhow::{anyhow, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
 use crate::simulation::projection::{project_scenario, project_scenario_summary, ProjectionConfig};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::types::BatchSimulationSummaryResponse;
 use crate::types::{
-    BatchSimulationRequest, BatchSimulationSummaryResponse, MCConfig, OutcomeBucket,
-    OutcomeCashFlowRow, PathResult, RetirementPlan, SimulationResult, YearlyProjection,
+    BatchSimulationRequest, MCConfig, OutcomeBucket, OutcomeCashFlowRow, PathResult,
+    RetirementPlan, SimulationResult, YearlyProjection,
 };
 
 const OUTCOME_CENTERS: [u32; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
@@ -48,13 +52,13 @@ struct PathSummary {
     success: bool,
 }
 
-/// Run Monte Carlo paths in parallel, then aggregate them without retaining
-/// every cash-flow field for every path.
+/// Run the native Monte Carlo adapter, then aggregate with the shared kernel.
 #[cfg(test)]
 pub fn run_simulation(plan: RetirementPlan, config: MCConfig) -> Result<SimulationResult> {
     run_simulation_cancellable(plan, config, CancellationToken::default())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run_simulation_cancellable(
     plan: RetirementPlan,
     config: MCConfig,
@@ -66,45 +70,11 @@ pub fn run_simulation_cancellable(
         config.paths
     );
 
-    let path_summaries: Vec<PathSummary> = (0..config.paths)
+    let path_summaries = (0..config.paths)
         .into_par_iter()
         .map(|path_index| {
             cancellation.ensure_active()?;
-            let result = run_single_path(
-                &plan,
-                config.seed.wrapping_add(path_index as u64),
-                config.use_historical_bootstrap,
-                config.block_size,
-            )?;
-            let terminal_wealth = result.terminal_wealth;
-            let after_tax_terminal_wealth = result.after_tax_terminal_wealth;
-            let success = result.success;
-            let mut portfolio_values = Vec::with_capacity(result.projections.len());
-            let mut cash_flows = Vec::with_capacity(result.projections.len());
-            for projection in result.projections {
-                portfolio_values.push(projection.portfolio_value);
-                cash_flows.push(OutcomeCashFlowRow {
-                    age: projection.age,
-                    is_retired: projection.is_retired,
-                    income: projection.income,
-                    spending: projection.spending,
-                    taxes: projection.taxes,
-                    savings: projection.savings,
-                    social_security_benefit: projection.social_security_benefit,
-                    withdrawal_taxable: projection.withdrawal_taxable,
-                    withdrawal_traditional: projection.withdrawal_traditional,
-                    withdrawal_roth: projection.withdrawal_roth,
-                    withdrawal_hsa: projection.withdrawal_hsa,
-                    healthcare_cost: projection.healthcare_cost,
-                });
-            }
-            Ok(PathSummary {
-                terminal_wealth,
-                after_tax_terminal_wealth,
-                portfolio_values,
-                cash_flows,
-                success,
-            })
+            summarize_path(&plan, &config, path_index)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -119,6 +89,62 @@ pub fn run_simulation_cancellable(
     aggregate_results(&plan, &config, path_summaries, &cancellation)
 }
 
+/// Run a complete simulation without platform threads. Browser Workers call
+/// this entry point; all financial and aggregation semantics are shared with
+/// the native adapter above.
+pub fn run_simulation_sequential(
+    plan: RetirementPlan,
+    config: MCConfig,
+) -> Result<SimulationResult> {
+    let cancellation = CancellationToken::default();
+    let path_summaries = (0..config.paths)
+        .map(|path_index| summarize_path(&plan, &config, path_index))
+        .collect::<Result<Vec<_>>>()?;
+    aggregate_results(&plan, &config, path_summaries, &cancellation)
+}
+
+fn summarize_path(
+    plan: &RetirementPlan,
+    config: &MCConfig,
+    path_index: u32,
+) -> Result<PathSummary> {
+    let result = run_single_path(
+        plan,
+        u64::from(config.seed).wrapping_add(u64::from(path_index)),
+        config.use_historical_bootstrap,
+        config.block_size,
+    )?;
+    let terminal_wealth = result.terminal_wealth;
+    let after_tax_terminal_wealth = result.after_tax_terminal_wealth;
+    let success = result.success;
+    let mut portfolio_values = Vec::with_capacity(result.projections.len());
+    let mut cash_flows = Vec::with_capacity(result.projections.len());
+    for projection in result.projections {
+        portfolio_values.push(projection.portfolio_value);
+        cash_flows.push(OutcomeCashFlowRow {
+            age: projection.age,
+            is_retired: projection.is_retired,
+            income: projection.income,
+            spending: projection.spending,
+            taxes: projection.taxes,
+            savings: projection.savings,
+            social_security_benefit: projection.social_security_benefit,
+            withdrawal_taxable: projection.withdrawal_taxable,
+            withdrawal_traditional: projection.withdrawal_traditional,
+            withdrawal_roth: projection.withdrawal_roth,
+            withdrawal_hsa: projection.withdrawal_hsa,
+            healthcare_cost: projection.healthcare_cost,
+        });
+    }
+    Ok(PathSummary {
+        terminal_wealth,
+        after_tax_terminal_wealth,
+        portfolio_values,
+        cash_flows,
+        success,
+    })
+}
+
 /// Run all sweep points path-major. Each Rayon task owns a local vector of
 /// success counts, so the only shared work is the final vector reduction.
 #[cfg(test)]
@@ -128,6 +154,7 @@ pub fn run_sweep(
     run_sweep_cancellable(simulations, CancellationToken::default())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run_sweep_cancellable(
     simulations: Vec<BatchSimulationRequest>,
     cancellation: CancellationToken,
@@ -156,7 +183,8 @@ pub fn run_sweep_cancellable(
                     let summary = project_scenario_summary(
                         &simulation.plan,
                         ProjectionConfig {
-                            seed: simulation.config.seed.wrapping_add(path_index as u64),
+                            seed: u64::from(simulation.config.seed)
+                                .wrapping_add(u64::from(path_index)),
                             use_historical_bootstrap: simulation.config.use_historical_bootstrap,
                             block_size: simulation.config.block_size,
                         },
@@ -180,7 +208,54 @@ pub fn run_sweep_cancellable(
 
     cancellation.ensure_active()?;
 
-    Ok(simulations
+    Ok(sweep_summaries(simulations, success_counts))
+}
+
+/// Count successes for one absolute path range. Multiple browser Workers can
+/// run disjoint ranges and safely reduce these integer counts without changing
+/// path identity or floating-point aggregation order.
+pub fn count_sweep_shard_sequential(
+    simulations: &[BatchSimulationRequest],
+    start_path: u32,
+    end_path: u32,
+) -> Result<Vec<u32>> {
+    if simulations.is_empty() {
+        return Ok(Vec::new());
+    }
+    if start_path >= end_path
+        || simulations
+            .iter()
+            .any(|simulation| end_path > simulation.config.paths)
+    {
+        return Err(anyhow!(
+            "Sweep path range is outside a scenario's path count"
+        ));
+    }
+    let mut counts = vec![0_u32; simulations.len()];
+    for path_index in start_path..end_path {
+        for (scenario_index, simulation) in simulations.iter().enumerate() {
+            let summary = project_scenario_summary(
+                &simulation.plan,
+                ProjectionConfig {
+                    seed: u64::from(simulation.config.seed).wrapping_add(u64::from(path_index)),
+                    use_historical_bootstrap: simulation.config.use_historical_bootstrap,
+                    block_size: simulation.config.block_size,
+                },
+            )?;
+            if summary.success {
+                counts[scenario_index] += 1;
+            }
+        }
+    }
+    Ok(counts)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn sweep_summaries(
+    simulations: Vec<BatchSimulationRequest>,
+    success_counts: Vec<u32>,
+) -> Vec<BatchSimulationSummaryResponse> {
+    simulations
         .into_iter()
         .zip(success_counts)
         .map(
@@ -189,7 +264,7 @@ pub fn run_sweep_cancellable(
                 success_probability: success_count as f64 / simulation.config.paths as f64,
             },
         )
-        .collect())
+        .collect()
 }
 
 fn run_single_path(
@@ -250,13 +325,13 @@ fn aggregate_results(
             )
         })
         .collect();
-    terminal_outcomes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    terminal_outcomes.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
     let representative_path_index = terminal_outcomes[p50_index].1;
     cancellation.ensure_active()?;
     let representative = run_single_path(
         plan,
-        config.seed.wrapping_add(representative_path_index as u64),
+        u64::from(config.seed).wrapping_add(representative_path_index as u64),
         config.use_historical_bootstrap,
         config.block_size,
     )?;
@@ -381,6 +456,7 @@ fn aggregate_results(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     fn plan(spending: f64) -> RetirementPlan {
         serde_json::from_value(serde_json::json!({
@@ -453,6 +529,80 @@ mod tests {
             assert_eq!(summary.id, simulation.id);
             assert_eq!(summary.success_probability, full.success_probability);
         }
+    }
+
+    #[test]
+    fn sequential_and_parallel_adapters_serialize_identically() {
+        let plan = plan(60_000.0);
+        let config = MCConfig {
+            paths: 100,
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+
+        let parallel = run_simulation(plan.clone(), config.clone()).unwrap();
+        let sequential = run_simulation_sequential(plan, config).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(parallel).unwrap(),
+            serde_json::to_value(sequential).unwrap()
+        );
+    }
+
+    #[test]
+    fn disjoint_sweep_shards_sum_to_the_parallel_result() {
+        let simulations = vec![BatchSimulationRequest {
+            id: "sharded".into(),
+            plan: plan(60_000.0),
+            config: MCConfig {
+                paths: 101,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        }];
+        let first = count_sweep_shard_sequential(&simulations, 0, 51).unwrap();
+        let second = count_sweep_shard_sequential(&simulations, 51, 101).unwrap();
+        let parallel = run_sweep(simulations).unwrap();
+
+        assert_eq!(
+            (first[0] + second[0]) as f64 / 101.0,
+            parallel[0].success_probability
+        );
+    }
+
+    #[test]
+    fn sweep_shards_validate_empty_and_out_of_range_work() {
+        assert_eq!(
+            count_sweep_shard_sequential(&[], 0, 1).unwrap(),
+            Vec::<u32>::new()
+        );
+
+        let simulations = vec![BatchSimulationRequest {
+            id: "bounds".into(),
+            plan: plan(60_000.0),
+            config: MCConfig {
+                paths: 10,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        }];
+
+        for (start_path, end_path) in [(0, 0), (5, 5), (6, 5), (0, 11)] {
+            assert!(
+                count_sweep_shard_sequential(&simulations, start_path, end_path).is_err(),
+                "range {start_path}..{end_path} should be rejected"
+            );
+        }
+
+        assert_eq!(
+            count_sweep_shard_sequential(&simulations, 0, 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -529,5 +679,81 @@ mod tests {
         let result = run_sweep_cancellable(vec![simulation], cancellation);
 
         assert_eq!(result.unwrap_err().to_string(), "Simulation canceled");
+    }
+
+    #[test]
+    #[ignore = "manual 5,000-path performance check"]
+    fn native_headline_performance_budget() {
+        let mut performance_plan = plan(50_000.0);
+        performance_plan.profile.birth_date = "1989-01-01".into();
+        performance_plan.profile.as_of_date = "2024-01-01".into();
+        performance_plan.profile.retirement_age = 65;
+        performance_plan.profile.life_expectancy = 90;
+        performance_plan.profile.current_salary = 100_000.0;
+        performance_plan.profile.salary_growth_rate = 0.03;
+        performance_plan.profile.current_spending = 50_000.0;
+        performance_plan.profile.retirement_spending_growth_rate = 0.02;
+        performance_plan
+            .profile
+            .retirement_healthcare
+            .pre_medicare_premium = 12_000.0;
+        performance_plan
+            .profile
+            .retirement_healthcare
+            .medicare_premium = 6_000.0;
+        performance_plan.profile.retirement_healthcare.out_of_pocket = 3_000.0;
+        performance_plan
+            .profile
+            .retirement_healthcare
+            .real_growth_rate = 0.02;
+        performance_plan.accounts = vec![
+            crate::types::Account {
+                account_type: crate::types::AccountType::Traditional,
+                balance: 150_000.0,
+                asset_weights: crate::types::AssetWeights {
+                    stocks: 0.8,
+                    bonds: 0.2,
+                },
+                is_surplus_cash: false,
+            },
+            crate::types::Account {
+                account_type: crate::types::AccountType::Roth,
+                balance: 50_000.0,
+                asset_weights: crate::types::AssetWeights {
+                    stocks: 0.9,
+                    bonds: 0.1,
+                },
+                is_surplus_cash: false,
+            },
+            crate::types::Account {
+                account_type: crate::types::AccountType::Taxable,
+                balance: 50_000.0,
+                asset_weights: crate::types::AssetWeights {
+                    stocks: 0.7,
+                    bonds: 0.3,
+                },
+                is_surplus_cash: false,
+            },
+        ];
+
+        let started = Instant::now();
+        let result = run_simulation(
+            performance_plan,
+            MCConfig {
+                paths: 5_000,
+                seed: 42,
+                use_historical_bootstrap: true,
+                block_size: 5,
+            },
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "native_headline_5000_ms={}",
+            elapsed.as_secs_f64() * 1_000.0
+        );
+
+        assert!(result.success_probability.is_finite());
+        assert!(elapsed < Duration::from_secs(10));
     }
 }

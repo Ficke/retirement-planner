@@ -12,7 +12,7 @@
 # is up, which says nothing about whether the app can compute.
 #
 # A 200 always means the Hono server, the API route, the network hop to the
-# Rust service, and the wire contract between the two engines all work. Against
+# Rust service, and the wire contract between the two adapters all work. Against
 # a deployed revision it additionally covers ingress and the web service's Cloud
 # Run IAM token; against compose it cannot, because that token is minted only
 # for https targets and enforced by Cloud Run rather than by the Rust service
@@ -52,7 +52,7 @@ while [ "$attempt" -le "$ATTEMPTS" ]; do
 
   if [ "$STATUS" = "200" ]; then
     # Structural, not numeric: assert the engine answered with a result, and
-    # leave the actual figures to the cross-engine contract tests.
+    # leave the actual figures to the cross-target contract tests.
     if grep -q '"successProbability"' "$BODY_FILE" \
       && grep -q '"yearlyProjections"' "$BODY_FILE"; then
       echo "Smoke check passed: simulation served end to end."
