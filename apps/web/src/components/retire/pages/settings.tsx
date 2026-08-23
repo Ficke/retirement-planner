@@ -67,6 +67,7 @@ export function PageSettings() {
   ) => updatePlan({ assumptions });
   const a = plan.assumptions;
   const hc = plan.profile.retirementHealthcare;
+  const ltc = plan.profile.longTermCare;
 
   const signedIn = user != null && authUser != null;
   const dataMode = signedIn && cloudSyncEnabled && cloudAvailable ? "cloud" : "local";
@@ -280,6 +281,11 @@ export function PageSettings() {
               <ReferenceRow
                 label="Retirement healthcare: before / from 65"
                 value={`${fmtCurrency(hc.preMedicarePremium + hc.outOfPocket)} / ${fmtCurrency(hc.medicarePremium + hc.outOfPocket)}`}
+                source="Profile page"
+              />
+              <ReferenceRow
+                label="Long-term care"
+                value={ltc.enabled ? `Modeled, cost level ${ltc.costMultiplier}` : "Off"}
                 source="Profile page"
               />
             </TableBody>

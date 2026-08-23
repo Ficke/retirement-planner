@@ -8,6 +8,7 @@ import { healthcareCostFor } from "@/domain/healthcare";
 import type { FilingStatus, State } from "@/domain/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -60,6 +61,9 @@ export function PageProfile() {
   const h = p.retirementHealthcare;
   const updateHealthcare = (patch: Partial<typeof h>) =>
     updateProfile({ retirementHealthcare: { ...h, ...patch } });
+  const ltc = p.longTermCare;
+  const updateLongTermCare = (patch: Partial<typeof ltc>) =>
+    updateProfile({ longTermCare: { ...ltc, ...patch } });
   const age = ageOn(p.birthDate, p.asOfDate);
   const retirementSpending = retirementSpendingOf(p);
   // An already-retired plan's first modeled year is the as-of year, so it is
@@ -217,9 +221,9 @@ export function PageProfile() {
 
       <DashboardCard
         title="Retirement healthcare"
-        description="Today's cost for the whole household, added on top of the spending target."
+        description="Today's dollars, whole household. Added to your spending target."
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid max-w-xs grid-cols-1 gap-4 sm:hidden">
           <CurrencyField
             label="Premiums before 65"
             value={h.preMedicarePremium}
@@ -232,6 +236,7 @@ export function PageProfile() {
           />
           <CurrencyField
             label="Out-of-pocket"
+            hint="Both phases"
             value={h.outOfPocket}
             onChange={(v) => updateHealthcare({ outOfPocket: v })}
           />
@@ -243,23 +248,106 @@ export function PageProfile() {
             max={10}
             onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
           />
+          <div className="border-border grid grid-cols-2 gap-4 border-t pt-4">
+            <div>
+              <RowLabel>Before 65</RowLabel>
+              <PhaseTotal value={h.preMedicarePremium + h.outOfPocket} />
+            </div>
+            <div>
+              <RowLabel>From 65</RowLabel>
+              <PhaseTotal value={h.medicarePremium + h.outOfPocket} />
+            </div>
+          </div>
         </div>
-        <div className="bg-muted/40 border-border mt-4 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
-          <SpendingPreview
-            label="Before 65"
-            value={h.preMedicarePremium + h.outOfPocket}
-            detail="Marketplace or COBRA coverage"
+
+        <div className="hidden max-w-xl grid-cols-[minmax(0,auto)_minmax(0,1fr)_minmax(0,1fr)] items-end gap-x-4 gap-y-2.5 sm:grid">
+          <div />
+          <PhaseHeader label="Before 65" detail="Marketplace or COBRA" />
+          <PhaseHeader label="From 65" detail="Medicare" />
+
+          <RowLabel>Premiums</RowLabel>
+          <CurrencyField
+            ariaLabel="Premiums before 65"
+            value={h.preMedicarePremium}
+            onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
           />
-          <SpendingPreview
-            label="From 65"
-            value={h.medicarePremium + h.outOfPocket}
-            detail="Part B, Part D, and supplemental"
+          <CurrencyField
+            ariaLabel="Premiums from 65"
+            value={h.medicarePremium}
+            onChange={(v) => updateHealthcare({ medicarePremium: v })}
           />
+
+          <RowLabel>Out-of-pocket</RowLabel>
+          <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="w-full max-w-36">
+              <CurrencyField
+                ariaLabel="Out-of-pocket, both phases"
+                value={h.outOfPocket}
+                onChange={(v) => updateHealthcare({ outOfPocket: v })}
+              />
+            </div>
+            <span className="text-muted-foreground text-xs">Both phases</span>
+          </div>
+
+          <div className="border-border col-span-3 mt-1 border-t" />
+
+          <RowLabel>Per year</RowLabel>
+          <PhaseTotal value={h.preMedicarePremium + h.outOfPocket} />
+          <PhaseTotal value={h.medicarePremium + h.outOfPocket} />
+
+          <RowLabel>Growth</RowLabel>
+          <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="w-full max-w-24">
+              <NumberField
+                ariaLabel="Growth above inflation, percent a year"
+                value={Number((h.realGrowthRate * 100).toFixed(1))}
+                step={0.1}
+                min={-10}
+                max={10}
+                onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
+              />
+            </div>
+            <span className="text-muted-foreground text-xs">% a year above inflation</span>
+          </div>
         </div>
-        <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
-          An HSA can pay out-of-pocket costs tax-free, and premiums once you are on Medicare.
-          It cannot pay marketplace premiums. The only premiums it covers are COBRA,
-          unemployment, Medicare, and long-term care.
+
+        <div className="border-border mt-6 border-t pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Long-term care</div>
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                A possible care episode, drawn per scenario from national spending data.
+              </p>
+            </div>
+            <Switch
+              checked={ltc.enabled}
+              onCheckedChange={(enabled) => updateLongTermCare({ enabled })}
+              aria-label="Model a long-term care episode"
+            />
+          </div>
+
+          {ltc.enabled && (
+            <div className="mt-4 flex flex-wrap items-end gap-x-3 gap-y-1">
+              <div className="w-full max-w-32">
+                <NumberField
+                  label="Cost level"
+                  value={ltc.costMultiplier}
+                  step={0.05}
+                  min={0.5}
+                  max={3}
+                  onChange={(v) => updateLongTermCare({ costMultiplier: v })}
+                />
+              </div>
+              <span className="text-muted-foreground pb-2.5 text-xs">
+                National average · California ≈ 1.2
+              </span>
+            </div>
+          )}
+        </div>
+
+        <p className="text-muted-foreground border-border mt-5 border-t pt-3 text-xs">
+          An HSA covers out-of-pocket, Medicare, COBRA, and long-term care — not
+          marketplace premiums.
         </p>
       </DashboardCard>
 
@@ -355,16 +443,51 @@ function SpendingPreview({
   );
 }
 
+/**
+ * A matrix row's name. It heads its own line until there is room for a label
+ * column, because two dollar columns plus a label do not fit on a phone.
+ */
+function RowLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-muted-foreground col-span-2 text-xs sm:col-span-1 sm:pb-2 sm:text-sm">
+      {children}
+    </div>
+  );
+}
+
+function PhaseHeader({ label, detail }: { label: string; detail: string }) {
+  return (
+    <div className="self-start">
+      <div className="text-sm font-medium">{label}</div>
+      <div className="text-muted-foreground text-xs">{detail}</div>
+    </div>
+  );
+}
+
+function PhaseTotal({ value }: { value: number }) {
+  return <div className="font-mono text-lg font-semibold">{fmtCurrency(value)}</div>;
+}
+
+/**
+ * A number input. Pass `label` for a standalone field, or `ariaLabel` when a
+ * surrounding row and column already name it on screen.
+ *
+ * A value outside `min`/`max` is held in the input but not committed, because
+ * `updatePlan` re-validates the whole plan and would reject the edit outright.
+ * Blurring commits the clamped value.
+ */
 function NumberField({
   label,
+  ariaLabel,
   value,
   step,
-  min,
-  max,
+  min = -Infinity,
+  max = Infinity,
   hint,
   onChange,
 }: {
-  label: string;
+  label?: string;
+  ariaLabel?: string;
   value: number;
   step?: number;
   min?: number;
@@ -373,20 +496,37 @@ function NumberField({
   onChange: (v: number) => void;
 }) {
   const id = useId();
+  const [draft, setDraft] = useState<string | null>(null);
+  const input = (
+    <Input
+      id={id}
+      type="number"
+      aria-label={ariaLabel}
+      step={step}
+      min={Number.isFinite(min) ? min : undefined}
+      max={Number.isFinite(max) ? max : undefined}
+      value={draft ?? value}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value.trim() !== "" && !Number.isNaN(n) && n >= min && n <= max) {
+          onChange(n);
+        }
+      }}
+      onBlur={() => {
+        if (draft == null) return;
+        const n = Number(draft);
+        if (draft.trim() !== "" && !Number.isNaN(n)) {
+          onChange(Math.min(max, Math.max(min, n)));
+        }
+        setDraft(null);
+      }}
+    />
+  );
+  if (!label) return input;
   return (
     <Wrap label={label} htmlFor={id} hint={hint}>
-      <Input
-        id={id}
-        type="number"
-        step={step}
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (!Number.isNaN(n)) onChange(n);
-        }}
-      />
+      {input}
     </Wrap>
   );
 }
@@ -408,12 +548,17 @@ function DateField({
   );
 }
 
+/** A dollar input. Labelled like {@link NumberField}. */
 function CurrencyField({
   label,
+  ariaLabel,
+  hint,
   value,
   onChange,
 }: {
-  label: string;
+  label?: string;
+  ariaLabel?: string;
+  hint?: string;
   value: number;
   onChange: (v: number) => void;
 }) {
@@ -429,22 +574,27 @@ function CurrencyField({
   );
   // Switch to raw editing on focus, format on blur — keeps text caret happy.
   const [draft, setDraft] = useState<string | null>(null);
+  const input = (
+    <Input
+      id={id}
+      inputMode="numeric"
+      aria-label={ariaLabel}
+      className="font-mono"
+      value={draft ?? formatted}
+      onFocus={() => setDraft(String(value))}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft == null) return;
+        const n = Number(draft.replace(/[^0-9.-]/g, ""));
+        if (!Number.isNaN(n)) onChange(n);
+        setDraft(null);
+      }}
+    />
+  );
+  if (!label) return input;
   return (
-    <Wrap label={label} htmlFor={id}>
-      <Input
-        id={id}
-        inputMode="numeric"
-        className="font-mono"
-        value={draft ?? formatted}
-        onFocus={() => setDraft(String(value))}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft == null) return;
-          const n = Number(draft.replace(/[^0-9.-]/g, ""));
-          if (!Number.isNaN(n)) onChange(n);
-          setDraft(null);
-        }}
-      />
+    <Wrap label={label} htmlFor={id} hint={hint}>
+      {input}
     </Wrap>
   );
 }
