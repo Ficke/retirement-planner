@@ -25,21 +25,64 @@ import { fmtAxisCurrency, fmtCurrency } from "@/components/retire/format";
 import type { OutcomeCashFlowRow } from "@/domain/types";
 import { toCashFlowRows, type CashFlowRow } from "./cash-flow-data";
 
-type Series = { key: string; label: string; color: string };
+type Series = {
+  key: string;
+  label: string;
+  color: string;
+  stackId: "money-in" | "money-out";
+};
 
 const TRANSITION_EPSILON_YEARS = 0.01;
 
+// Recharts classifies zero as positive under its sign offset. Separate
+// one-sign stacks keep sparse outflows anchored below zero instead of at the
+// top of the inflow stack.
 const inflow: Series[] = [
-  { key: "salary", label: "Salary", color: "var(--color-money-in-1)" },
-  { key: "socialSecurity", label: "Social Security", color: "var(--color-money-in-2)" },
-  { key: "portfolio", label: "Portfolio", color: "var(--color-money-in-3)" },
+  {
+    key: "salary",
+    label: "Salary",
+    color: "var(--color-money-in-1)",
+    stackId: "money-in",
+  },
+  {
+    key: "socialSecurity",
+    label: "Social Security",
+    color: "var(--color-money-in-2)",
+    stackId: "money-in",
+  },
+  {
+    key: "portfolio",
+    label: "Portfolio",
+    color: "var(--color-money-in-3)",
+    stackId: "money-in",
+  },
 ];
 
 const outflow: Series[] = [
-  { key: "living", label: "Living", color: "var(--color-money-out-1)" },
-  { key: "healthcare", label: "Healthcare", color: "var(--color-money-out-2)" },
-  { key: "longTermCare", label: "Long-term care", color: "var(--color-money-out-3)" },
-  { key: "tax", label: "Tax", color: "var(--color-money-out-4)" },
+  {
+    key: "living",
+    label: "Living",
+    color: "var(--color-money-out-1)",
+    stackId: "money-out",
+  },
+  {
+    key: "healthcare",
+    label: "Healthcare",
+    color: "var(--color-money-out-2)",
+    stackId: "money-out",
+  },
+  {
+    key: "longTermCare",
+    label: "Long-term care",
+    color: "var(--color-money-out-3)",
+    stackId: "money-out",
+  },
+  {
+    key: "tax",
+    label: "Tax",
+    color: "var(--color-money-out-4)",
+    stackId: "money-out",
+  },
 ];
 
 /**
@@ -176,7 +219,6 @@ function CashFlowPlot({
         <ComposedChart
           accessibilityLayer
           data={data}
-          stackOffset="sign"
           margin={{ top: 10, right: 12, left: 0, bottom: 0 }}
         >
           <CartesianGrid {...chartGridProps} />
@@ -197,7 +239,7 @@ function CashFlowPlot({
             <Bar
               key={s.key}
               dataKey={s.key}
-              stackId="cash-flow"
+              stackId={s.stackId}
               barSize={48}
               fill={s.color}
               isAnimationActive={false}
@@ -207,7 +249,7 @@ function CashFlowPlot({
               key={s.key}
               type="monotone"
               dataKey={s.key}
-              stackId="cash-flow"
+              stackId={s.stackId}
               stroke="none"
               fill={s.color}
               fillOpacity={1}

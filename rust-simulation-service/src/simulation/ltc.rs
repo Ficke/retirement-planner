@@ -1,5 +1,5 @@
-//! Long-term care episodes: one lifetime out-of-pocket LTSS bill per path,
-//! drawn from the empirical distribution rather than modeled as a rate.
+//! Long-term care episodes: one lifetime out-of-pocket LTSS total per path,
+//! drawn from the empirical distribution rather than modeled as a fixed rate.
 //!
 //! Source: ASPE Research Brief, August 2022 (revised), "Long-Term Services and
 //! Supports for Older Americans: Risks and Financing, 2022" (Favreault et al.,
@@ -22,9 +22,10 @@ pub struct LtcEpisode {
     /// nothing else in the engine will notice.
     pub lifetime_cost_2020: f64,
     /// Years of paid LTSS measured in service days, where 365 paid days count as
-    /// one year regardless of how many calendar years they span (ASPE p5). This
-    /// is care intensity, not elapsed time, which is why the engine works in
-    /// dollars and uses years only as a sanity check on the implied rate.
+    /// one year regardless of how many calendar years they span (ASPE p5). The
+    /// projection maps these paid days to a contiguous episode ending at life
+    /// expectancy so the sampled duration affects cash flow without changing
+    /// the sampled lifetime total.
     pub years: f64,
 }
 

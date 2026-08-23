@@ -149,4 +149,61 @@ describe('cash-flow chart rows', () => {
     expect(container.querySelectorAll('.recharts-wrapper')).toHaveLength(1);
     expect(container.querySelector('.recharts-line')).toBeNull();
   });
+
+  it('never lets a cash-flow area cross the zero line', () => {
+    vi.stubGlobal('React', React);
+    const projections = [
+      row({
+        age: 88,
+        spending: 60_000,
+        taxes: 10_000,
+        savings: -50_000,
+        socialSecurityBenefit: 20_000,
+        withdrawalTaxable: 50_000,
+        healthcareCost: 10_000,
+      }),
+      row({
+        age: 89,
+        spending: 60_000,
+        taxes: 10_000,
+        savings: -50_000,
+        socialSecurityBenefit: 20_000,
+        withdrawalTaxable: 50_000,
+        healthcareCost: 10_000,
+      }),
+      row({
+        age: 90,
+        spending: 110_000,
+        taxes: 10_000,
+        savings: -100_000,
+        socialSecurityBenefit: 20_000,
+        withdrawalTaxable: 100_000,
+        healthcareCost: 10_000,
+        longTermCareCost: 50_000,
+      }),
+    ];
+
+    const { container } = render(React.createElement(CashFlowChart, {
+      projections,
+      height: 400,
+    }));
+
+    const zeroLine = container.querySelector('.recharts-reference-line-line');
+    const zeroY = Number(zeroLine?.getAttribute('y1'));
+    const areas = [...container.querySelectorAll('path.recharts-area-area')];
+
+    expect(areas.length).toBeGreaterThan(0);
+    for (const area of areas) {
+      const fill = area.getAttribute('fill') ?? '';
+      const coordinates = [...(area.getAttribute('d') ?? '')
+        .matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)]
+        .map((match) => Number(match[2]));
+      const staysOnItsSide = fill.includes('money-in')
+        ? coordinates.every((y) => y <= zeroY)
+        : coordinates.every((y) => y >= zeroY);
+
+      expect(coordinates.length).toBeGreaterThan(0);
+      expect(staysOnItsSide, `${fill} crossed the zero line`).toBe(true);
+    }
+  });
 });
