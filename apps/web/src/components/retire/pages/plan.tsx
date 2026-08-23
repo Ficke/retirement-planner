@@ -229,7 +229,7 @@ export function PagePlan() {
         />
         <LeverCard
           lever="rothConversion"
-          label="Roth conversions"
+          label="Roth conversion bracket"
           value={conversionStep}
           display={conversionStep === 0
             ? "Off"
