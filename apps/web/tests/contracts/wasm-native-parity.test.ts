@@ -56,6 +56,7 @@ function planFor(simulationModel: SimulationModel): SimulationPlan {
         outOfPocket: 6_000,
         realGrowthRate: 0.02,
       },
+      longTermCare: { enabled: false, costMultiplier: 1 },
       asOfDate: '2026-08-23',
     },
     accounts: [

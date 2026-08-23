@@ -9,6 +9,7 @@ const plan = (step: number): RetirementPlan => ({
     retirementAge: 65, lifeExpectancy: 95, currentSpending: 100_000, workingSpendingGrowthRate: 0,
     retirementSpendingMultiplier: 1, retirementSpendingGrowthRate: 0,
     retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    longTermCare: { enabled: false, costMultiplier: 1 },
     filingStatus: 'Single', state: 'CA',
   },
   accounts: [],

@@ -1371,6 +1371,7 @@ mod tests {
                 retirement_spending_growth_rate: 0.025,
                 life_expectancy: 90,
                 retirement_healthcare: Default::default(),
+                long_term_care: Default::default(),
                 as_of_date: "2026-01-01".to_string(),
             },
             accounts: vec![

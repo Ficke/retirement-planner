@@ -54,6 +54,17 @@ export interface RetirementHealthcare {
   realGrowthRate: number;
 }
 
+/**
+ * Long-term care, whose cost is a lifetime out-of-pocket draw rather than an
+ * annual budget line, so the plan carries only whether to model it and how the
+ * household's prices compare to the national blend the distribution assumes.
+ */
+export interface LongTermCare {
+  enabled: boolean;
+  /** Location and care level together. California is roughly 1.2. */
+  costMultiplier: number;
+}
+
 export interface UserProfile {
   /**
    * Date of birth, ISO. Age and the RMD/Social-Security birth-year cohort are
@@ -82,6 +93,8 @@ export interface UserProfile {
    * it steps down at Medicare and grows faster than everything else.
    */
   retirementHealthcare: RetirementHealthcare;
+  /** Long-term care, drawn per path rather than budgeted. */
+  longTermCare: LongTermCare;
   asOfDate: string; // ISO date string for when salary/projections are calculated from
 }
 

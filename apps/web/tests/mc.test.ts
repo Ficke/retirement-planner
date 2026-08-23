@@ -34,6 +34,7 @@ const testPlan: SimulationPlan = {
     retirementSpendingGrowthRate: 0.02,
     lifeExpectancy: 85,
     retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+    longTermCare: { enabled: false, costMultiplier: 1 },
     asOfDate: '2025-01-01',
   },
   accounts: [

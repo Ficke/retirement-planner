@@ -1,4 +1,11 @@
-import { accountSchema, isoDateSchema, retirementPlanSchema } from '@/domain/schemas';
+import {
+  accountSchema,
+  isoDateSchema,
+  legacySimulationProfileSchema,
+  legacyStoredProfileSchema,
+  retirementPlanSchema,
+  userProfileSchema,
+} from '@/domain/schemas';
 import { createTestAccount, createTestProjectionSettings } from './test-helpers';
 import {
   AccountIdSchema,
@@ -114,6 +121,58 @@ describe('Domain Schemas', () => {
     expect(saved.profile).not.toHaveProperty('desiredSpending');
   });
 
+  describe('long-term care migration', () => {
+    /** Everything a v6 profile carried, which is everything but long-term care. */
+    const v6Profile = {
+      birthDate: '1986-01-01',
+      state: 'CA',
+      filingStatus: 'Single',
+      retirementAge: 65,
+      currentSalary: 120_000,
+      salaryGrowthRate: 0.02,
+      currentSpending: 60_000,
+      workingSpendingGrowthRate: 0,
+      retirementSpending: 60_000,
+      retirementSpendingGrowthRate: 0,
+      lifeExpectancy: 90,
+      retirementHealthcare: {
+        preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0,
+      },
+      asOfDate: '2026-01-01',
+    };
+
+    it('turns the model on for a v6 profile, identically on both legacy paths', () => {
+      // Deliberately unlike the healthcare migration beside it, which fills
+      // zeros so an older plan projects exactly as it did. Care risk is not
+      // something a v6 plan declined, so migrating it moves its success rate.
+      const stored = legacyStoredProfileSchema.parse(v6Profile);
+      const simulation = legacySimulationProfileSchema.parse(v6Profile);
+
+      expect(stored.longTermCare).toEqual({ enabled: true, costMultiplier: 1 });
+      expect(simulation.longTermCare).toEqual(stored.longTermCare);
+    });
+
+    it('keeps a stored choice rather than re-applying the default', () => {
+      const off = { ...v6Profile, longTermCare: { enabled: false, costMultiplier: 1.2 } };
+
+      expect(legacyStoredProfileSchema.parse(off).longTermCare).toEqual(off.longTermCare);
+      expect(legacySimulationProfileSchema.parse(off).longTermCare).toEqual(off.longTermCare);
+    });
+
+    it('rejects a cost multiplier outside the priced range', () => {
+      const withMultiplier = (costMultiplier: number) => ({
+        ...v6Profile,
+        retirementSpendingMultiplier: 1,
+        longTermCare: { enabled: true, costMultiplier },
+      });
+
+      expect(userProfileSchema.safeParse(withMultiplier(0.49)).success).toBe(false);
+      expect(userProfileSchema.safeParse(withMultiplier(3.01)).success).toBe(false);
+      expect(userProfileSchema.safeParse(withMultiplier(0.5)).success).toBe(true);
+      expect(userProfileSchema.safeParse(withMultiplier(3)).success).toBe(true);
+    });
+  });
+
   it('should accept valid default retirement plan', () => {
     const defaultPlan = {
       profile: {
@@ -129,6 +188,7 @@ describe('Domain Schemas', () => {
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        longTermCare: { enabled: true, costMultiplier: 1 },
         asOfDate: '2025-01-01',
       },
       accounts: [
@@ -172,6 +232,7 @@ describe('Domain Schemas', () => {
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        longTermCare: { enabled: true, costMultiplier: 1 },
         asOfDate: '2025-01-01',
       },
       accounts: [],
@@ -196,6 +257,7 @@ describe('Domain Schemas', () => {
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        longTermCare: { enabled: true, costMultiplier: 1 },
         asOfDate: '2025-06-30',
       },
       accounts: [createTestAccount({ type: 'Traditional', balance: 500_000 })],
@@ -220,6 +282,7 @@ describe('Domain Schemas', () => {
         retirementSpendingGrowthRate: 0,
         lifeExpectancy: 90,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        longTermCare: { enabled: true, costMultiplier: 1 },
         asOfDate: '2025-06-30',
       },
       accounts: [createTestAccount({ type: 'Traditional', balance: 500_000 })],
@@ -248,6 +311,7 @@ describe('Domain Schemas', () => {
         retirementSpendingGrowthRate: 0.02,
         lifeExpectancy: 95,
         retirementHealthcare: { preMedicarePremium: 0, medicarePremium: 0, outOfPocket: 0, realGrowthRate: 0 },
+        longTermCare: { enabled: true, costMultiplier: 1 },
         asOfDate: '2025-01-01',
       },
       accounts: [
