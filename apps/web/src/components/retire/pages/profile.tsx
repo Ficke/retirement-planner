@@ -8,6 +8,7 @@ import { healthcareCostFor } from "@/domain/healthcare";
 import type { FilingStatus, State } from "@/domain/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -223,83 +224,60 @@ export function PageProfile() {
         title="Retirement healthcare"
         description="Today's dollars, whole household. Added to your spending target."
       >
-        <div className="grid max-w-xs grid-cols-1 gap-4 sm:hidden">
-          <CurrencyField
-            label="Premiums before 65"
-            value={h.preMedicarePremium}
-            onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
-          />
-          <CurrencyField
-            label="Premiums from 65"
-            value={h.medicarePremium}
-            onChange={(v) => updateHealthcare({ medicarePremium: v })}
-          />
-          <CurrencyField
-            label="Out-of-pocket"
-            hint="Both phases"
-            value={h.outOfPocket}
-            onChange={(v) => updateHealthcare({ outOfPocket: v })}
-          />
-          <NumberField
-            label="Growth above inflation (%)"
-            value={Number((h.realGrowthRate * 100).toFixed(1))}
-            step={0.1}
-            min={-10}
-            max={10}
-            onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
-          />
-          <div className="border-border grid grid-cols-2 gap-4 border-t pt-4">
-            <div>
-              <RowLabel>Before 65</RowLabel>
-              <PhaseTotal value={h.preMedicarePremium + h.outOfPocket} />
-            </div>
-            <div>
-              <RowLabel>From 65</RowLabel>
-              <PhaseTotal value={h.medicarePremium + h.outOfPocket} />
-            </div>
-          </div>
-        </div>
-
-        <div className="hidden max-w-xl grid-cols-[minmax(0,auto)_minmax(0,1fr)_minmax(0,1fr)] items-end gap-x-4 gap-y-2.5 sm:grid">
-          <div />
+        <div className="grid max-w-xl grid-cols-2 items-end gap-x-4 gap-y-4 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)_minmax(0,1fr)] sm:gap-y-2.5">
+          <div className="hidden sm:block" />
           <PhaseHeader label="Before 65" detail="Marketplace or COBRA" />
           <PhaseHeader label="From 65" detail="Medicare" />
 
           <RowLabel>Premiums</RowLabel>
-          <CurrencyField
-            ariaLabel="Premiums before 65"
-            value={h.preMedicarePremium}
-            onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
-          />
-          <CurrencyField
-            ariaLabel="Premiums from 65"
-            value={h.medicarePremium}
-            onChange={(v) => updateHealthcare({ medicarePremium: v })}
-          />
+          <div className="col-span-2 sm:col-span-1">
+            <CurrencyField
+              label="Premiums before 65"
+              labelClassName="sm:sr-only"
+              value={h.preMedicarePremium}
+              onChange={(v) => updateHealthcare({ preMedicarePremium: v })}
+            />
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <CurrencyField
+              label="Premiums from 65"
+              labelClassName="sm:sr-only"
+              value={h.medicarePremium}
+              onChange={(v) => updateHealthcare({ medicarePremium: v })}
+            />
+          </div>
 
           <RowLabel>Out-of-pocket</RowLabel>
-          <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="col-span-2 flex flex-wrap items-end gap-x-3 gap-y-1">
             <div className="w-full max-w-36">
               <CurrencyField
-                ariaLabel="Out-of-pocket, both phases"
+                label="Out-of-pocket"
+                labelClassName="sm:sr-only"
                 value={h.outOfPocket}
                 onChange={(v) => updateHealthcare({ outOfPocket: v })}
               />
             </div>
-            <span className="text-muted-foreground text-xs">Both phases</span>
+            <span className="text-muted-foreground pb-2.5 text-xs">Both phases</span>
           </div>
 
-          <div className="border-border col-span-3 mt-1 border-t" />
+          <div className="border-border col-span-2 border-t sm:col-span-3 sm:mt-1" />
 
           <RowLabel>Per year</RowLabel>
-          <PhaseTotal value={h.preMedicarePremium + h.outOfPocket} />
-          <PhaseTotal value={h.medicarePremium + h.outOfPocket} />
+          <div>
+            <div className="text-muted-foreground text-xs sm:hidden">Before 65</div>
+            <PhaseTotal value={h.preMedicarePremium + h.outOfPocket} />
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs sm:hidden">From 65</div>
+            <PhaseTotal value={h.medicarePremium + h.outOfPocket} />
+          </div>
 
           <RowLabel>Growth</RowLabel>
-          <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <div className="w-full max-w-24">
+          <div className="col-span-2 flex flex-wrap items-end gap-x-3 gap-y-1">
+            <div className="w-full max-w-32">
               <NumberField
-                ariaLabel="Growth above inflation, percent a year"
+                label="Growth above inflation (%)"
+                labelClassName="sm:sr-only"
                 value={Number((h.realGrowthRate * 100).toFixed(1))}
                 step={0.1}
                 min={-10}
@@ -307,7 +285,9 @@ export function PageProfile() {
                 onChange={(v) => updateHealthcare({ realGrowthRate: v / 100 })}
               />
             </div>
-            <span className="text-muted-foreground text-xs">% a year above inflation</span>
+            <span className="text-muted-foreground hidden pb-2.5 text-xs sm:inline">
+              % a year above inflation
+            </span>
           </div>
         </div>
 
@@ -385,11 +365,13 @@ export function PageProfile() {
 
 function Wrap({
   label,
+  labelClassName,
   htmlFor,
   hint,
   children,
 }: {
   label: string;
+  labelClassName?: string;
   htmlFor: string;
   hint?: string;
   children: React.ReactNode;
@@ -398,7 +380,10 @@ function Wrap({
     <div className="flex flex-col gap-1.5">
       <Label
         htmlFor={htmlFor}
-        className="text-muted-foreground text-xs font-medium tracking-wide uppercase"
+        className={cn(
+          "text-muted-foreground text-xs font-medium tracking-wide uppercase",
+          labelClassName,
+        )}
       >
         {label}
       </Label>
@@ -444,12 +429,12 @@ function SpendingPreview({
 }
 
 function RowLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-muted-foreground text-sm sm:pb-2">{children}</div>;
+  return <div className="text-muted-foreground hidden text-sm sm:block sm:pb-2">{children}</div>;
 }
 
 function PhaseHeader({ label, detail }: { label: string; detail: string }) {
   return (
-    <div className="self-start">
+    <div className="hidden self-start sm:block">
       <div className="text-sm font-medium">{label}</div>
       <div className="text-muted-foreground text-xs">{detail}</div>
     </div>
@@ -470,6 +455,7 @@ function PhaseTotal({ value }: { value: number }) {
  */
 function NumberField({
   label,
+  labelClassName,
   ariaLabel,
   value,
   step,
@@ -479,6 +465,7 @@ function NumberField({
   onChange,
 }: {
   label?: string;
+  labelClassName?: string;
   ariaLabel?: string;
   value: number;
   step?: number;
@@ -517,7 +504,7 @@ function NumberField({
   );
   if (!label) return input;
   return (
-    <Wrap label={label} htmlFor={id} hint={hint}>
+    <Wrap label={label} labelClassName={labelClassName} htmlFor={id} hint={hint}>
       {input}
     </Wrap>
   );
@@ -543,12 +530,14 @@ function DateField({
 /** A dollar input. Labelled like {@link NumberField}. */
 function CurrencyField({
   label,
+  labelClassName,
   ariaLabel,
   hint,
   value,
   onChange,
 }: {
   label?: string;
+  labelClassName?: string;
   ariaLabel?: string;
   hint?: string;
   value: number;
@@ -585,7 +574,7 @@ function CurrencyField({
   );
   if (!label) return input;
   return (
-    <Wrap label={label} htmlFor={id} hint={hint}>
+    <Wrap label={label} labelClassName={labelClassName} htmlFor={id} hint={hint}>
       {input}
     </Wrap>
   );
