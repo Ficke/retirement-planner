@@ -130,6 +130,24 @@ describe('Roth conversions', () => {
     }
   });
 
+  it('leaks nothing but tax: the first conversion year costs exactly its own tax', () => {
+    const off = projectScenario(planWith({ enabled: false, ceiling: 'bracket24' }), config);
+    const on = projectScenario(planWith({ enabled: true, ceiling: 'bracket24' }), config);
+
+    const first = on.projections.findIndex((year) => year.rothConversion > 0);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(on.projections[first].rothConversion).toBeGreaterThan(0);
+
+    // A conversion moves money between buckets one for one. Up to the first
+    // conversion the two runs are identical, so at the end of that year the
+    // whole difference in portfolio value has to be the tax the conversion
+    // added — no more, and none of the converted principal itself.
+    const portfolioGap = off.projections[first].portfolioValue
+      - on.projections[first].portfolioValue;
+    const extraTax = on.projections[first].taxes - off.projections[first].taxes;
+    expect(portfolioGap).toBeCloseTo(extraTax, 4);
+  });
+
   it('reports terminal wealth after the tax the pre-tax balance still owes', () => {
     const off = projectScenario(planWith({ enabled: false, ceiling: 'bracket24' }), config);
     expect(off.afterTaxTerminalWealth).toBeLessThan(off.terminalWealth);

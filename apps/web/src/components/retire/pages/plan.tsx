@@ -190,7 +190,7 @@ export function PagePlan() {
 
       <ProjectionSummary result={result} resultPlan={resultPlan} isCalculating={isCalculating} />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <LeverCard
           lever="retirementAge"
           label="Retirement age"
@@ -243,10 +243,7 @@ export function PagePlan() {
           xTooltipFormat={(v) => v === 0
             ? "No conversions"
             : `Convert up to ${conversionLabelOf(v)}`}
-          note={"Each year moves pre-tax savings into a Roth until the year's income reaches this ceiling. "
-            + "Unlike the other levers, this curve is not the whole story: converting spends cash on tax now, "
-            + "so it trades a little success probability for wealth that is already taxed. Watch the after-tax "
-            + "figure above as you move it."}
+          note="Converting trades a little success probability for wealth that is already taxed, so this curve alone understates it. Watch the after-tax figure above."
         />
       </div>
 
