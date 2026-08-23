@@ -2,13 +2,8 @@ name: Deploy Edge Worker
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'apps/edge-proxy/**'
-      - '.github/workflows/deploy-edge.yml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
+    tags:
+      - 'deploy-*'
 
 permissions:
   contents: read
