@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 /**
  * This suite covers the four-page sidebar: plan controls and projections on
@@ -28,12 +29,12 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 
   for (const label of [
     'Current wealth',
-    'Chance of success',
-    'Projected wealth at retirement',
+    'Modeled plan success',
+    'Median wealth at retirement',
   ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
-  await expect(page.getByText(/Projected wealth at age \d+/)).toBeVisible();
+  await expect(page.getByText(/Median wealth at age \d+/)).toBeVisible();
   await expect(page.getByText('Levers', { exact: true })).toHaveCount(0);
 
   const sections = [
@@ -70,6 +71,47 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await expect(cashFlowChart.locator('.recharts-wrapper')).toHaveCount(1);
   await expect(cashFlowChart.getByText('RMD', { exact: true })).toBeVisible();
   await expect(page.getByText('Money in — what it clears is saved')).toHaveCount(0);
+});
+
+test('Plan exports the completed simulation as self-describing JSON', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'retirement-planner:preferences',
+      JSON.stringify({ useServerSideCalculations: false, cloudSyncEnabled: true }),
+    );
+  });
+  await gotoApp(page);
+
+  const exportButton = page.getByRole('button', { name: 'Export simulation' });
+  await expect(exportButton).toBeEnabled({ timeout: 15_000 });
+  const downloadPromise = page.waitForEvent('download');
+  await exportButton.click();
+  const download = await downloadPromise;
+  const downloadPath = await download.path();
+
+  expect(download.suggestedFilename()).toMatch(/^retirement-simulation-\d{4}-\d{2}-\d{2}\.json$/);
+  expect(downloadPath).not.toBeNull();
+  const exported = JSON.parse(await readFile(downloadPath!, 'utf8')) as Record<string, unknown>;
+  expect(exported).toMatchObject({
+    schema: {
+      id: 'urn:retirement-planner:simulation-export',
+      version: '1.0.0',
+    },
+    privacy: { containsSensitiveFinancialData: true },
+    run: { paths: 5000 },
+    semantics: {
+      conditionalNature: expect.stringContaining('hypothetical'),
+    },
+    output: {
+      successProbability: expect.any(Number),
+      yearlyProjections: expect.any(Array),
+    },
+  });
+  const input = exported.input as { accounts: Array<Record<string, unknown>> };
+  expect(input.accounts.length).toBeGreaterThan(0);
+  expect(input.accounts[0]).not.toHaveProperty('id');
+  expect(input.accounts[0]).not.toHaveProperty('name');
+  expect(input.accounts[0]).not.toHaveProperty('institution');
 });
 
 test('local simulation loads the Rust Wasm module without runtime errors', async ({ page }) => {
@@ -109,7 +151,7 @@ test('Plan labels sensitivity axes without repeating age in every tick', async (
   await expect(page.getByText(/success at Age/)).toHaveCount(0);
 
   await expect(page.getByRole('img', {
-    name: 'Projected wealth by age, showing the median and 25th to 75th percentile range',
+    name: 'Modeled wealth by age, showing the median, middle 50%, and 10th to 90th percentile range',
   })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Middle 50%' })).toBeVisible();
 });

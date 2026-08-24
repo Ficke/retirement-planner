@@ -13,6 +13,8 @@
 
 import type { FilingStatus } from '@/domain/types';
 
+export const HEALTHCARE_PREMIUM_RULES_YEAR = 2026;
+
 /**
  * HHS poverty guidelines for the 48 contiguous states, published January 2025
  * and the ones a 2026 coverage year is measured against. Alaska and Hawaii run

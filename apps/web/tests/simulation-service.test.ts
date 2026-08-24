@@ -4,10 +4,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getSimulationService } from '@/services/simulation';
+import { buildSimulationExport, getSimulationService } from '@/services/simulation';
 import { runMonteCarloSummaries } from '@/engine/mc';
-import type { RetirementPlan } from '@/domain/types';
+import type { RetirementPlan, SimulationResult } from '@/domain/types';
 import { batchRequestSchema } from '@/lib/simulation-request';
+import { simulationExportSchema } from '@/domain/simulation-export';
 import { createTestProjectionSettings } from './test-helpers';
 
 // Mock the analysis and mc modules
@@ -259,5 +260,95 @@ describe('SimulationService (Pure)', () => {
     expect(mainResult).toBeDefined();
     expect(ssResult).toBeDefined();
     expect(spendingResult).toBeDefined();
+  });
+});
+
+describe('simulation export', () => {
+  it('is reproducible, self-describing, and excludes account identity fields', () => {
+    const plan: RetirementPlan = {
+      ...mockPlan,
+      accounts: [{
+        id: 'private-account-id',
+        name: 'Private account name',
+        institution: 'Private institution',
+        type: 'Taxable',
+        balance: 123_456,
+        assetWeights: { stocks: 0.7, bonds: 0.3 },
+      }],
+    };
+    const result: SimulationResult = {
+      source: 'client',
+      engineVersion: '0.1.0:chacha12-v1',
+      sourceRevision: 'exact-source-revision',
+      successProbability: 0.8,
+      riskOfRuin: 0.2,
+      medianTerminalWealth: 1_000_000,
+      medianAfterTaxTerminalWealth: 900_000,
+      percentile5TerminalWealth: 0,
+      percentile10TerminalWealth: 100_000,
+      percentile90TerminalWealth: 3_000_000,
+      yearlyProjections: [],
+      outcomeBuckets: [],
+    };
+
+    const exported = buildSimulationExport(plan, result, new Date('2026-08-23T12:00:00Z'));
+    const account = exported.input.accounts[0] as unknown as Record<string, unknown>;
+
+    expect(exported).toMatchObject({
+      schema: {
+        id: 'urn:retirement-planner:simulation-export',
+        version: '1.0.0',
+      },
+      exportedAt: '2026-08-23T12:00:00.000Z',
+      engine: {
+        adapter: 'client',
+        kernelVersion: '0.1.0:chacha12-v1',
+        sourceRevision: 'exact-source-revision',
+        randomStream: 'chacha12-v1',
+      },
+      model: {
+        simulationModel: 'historical',
+        returnGeneration: 'historical-circular-block-bootstrap-with-replacement',
+        annualPortfolioFeeRate: 0.001,
+        healthcarePremiumPolicyYear: 2026,
+        marketData: {
+          historicalBlockYears: 5,
+          statistics: {
+            stockRealArithmeticMean: expect.any(Number),
+            stockRealVolatility: expect.any(Number),
+            bondRealArithmeticMean: expect.any(Number),
+            bondRealVolatility: expect.any(Number),
+            stockBondCorrelation: expect.any(Number),
+            inflationArithmeticMean: expect.any(Number),
+          },
+        },
+        treatments: {
+          cashFlowTiming: 'annual-returns-before-cash-flows',
+          taxableInvestmentIncome: 'withdrawal-gain-ratio-only-no-annual-tax-drag',
+          estateTaxes: 'not-modeled',
+          taxLaw: 'fixed-current-rules-projected-through-horizon',
+          healthcarePremiumPolicy: 'fixed-current-rules-projected-through-horizon',
+          mortality: 'fixed-life-expectancy-horizon',
+          longTermCareTiming: 'disabled',
+        },
+      },
+      run: { paths: 5000, rootSeed: 42 },
+      semantics: {
+        conditionalNature: expect.stringContaining('hypothetical'),
+        percentileRanks: expect.stringContaining('p75'),
+        riskOfRuin: expect.stringContaining('underfunded year'),
+      },
+      units: { monetaryValues: 'real dollars as of 2024-01-01' },
+    });
+    expect(simulationExportSchema.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
+    expect(exported.input.profile.retirementSpending).toBe(50_000);
+    expect(account).toEqual({
+      type: 'Taxable',
+      balance: 123_456,
+      assetWeights: { stocks: 0.7, bonds: 0.3 },
+    });
+    expect(JSON.stringify(exported)).not.toContain('Private account name');
+    expect(JSON.stringify(exported)).not.toContain('Private institution');
+    expect(JSON.stringify(exported)).not.toContain('private-account-id');
   });
 });

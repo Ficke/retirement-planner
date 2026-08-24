@@ -222,6 +222,10 @@ export interface SimulationResult {
   riskOfRuin: number;
   /** Which engine produced this result. Set by the simulation service, not the engine. */
   source?: 'server' | 'client';
+  /** Runtime-reported kernel version, when the selected adapter exposes it. */
+  engineVersion?: string;
+  /** Exact source fingerprint for the bundled kernel, when available. */
+  sourceRevision?: string;
 }
 
 /** Sensitivity sweeps use this minimal result. */

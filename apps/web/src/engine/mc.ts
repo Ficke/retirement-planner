@@ -2,6 +2,7 @@ import * as Comlink from 'comlink';
 import type { SimulationPlan, SimulationResult } from '@/domain/types';
 import type { WorkerAPI, WorkerSweepScenario } from '@/workers/mc.worker';
 import { simulationPlanSchema } from '@/domain/schemas';
+import rustSourceRevision from '@/wasm/source.sha256?raw';
 
 /** Browser Worker orchestration for the Rust WebAssembly engine. */
 
@@ -160,13 +161,20 @@ export async function runMonteCarloSimulation(
   if (signal?.aborted) throw abortError();
   try {
     const worker = await initializeWorker();
-    const result = await waitForWorker(
-      worker.runSimulation(plan, config),
+    const [result, engineVersion] = await waitForWorker(
+      Promise.all([
+        worker.runSimulation(plan, config),
+        worker.engineVersion(),
+      ]),
       signal,
       cancelMainWorker,
     );
     if (signal?.aborted) throw abortError();
-    return result;
+    return {
+      ...result,
+      engineVersion,
+      sourceRevision: rustSourceRevision.trim(),
+    };
   } catch (error) {
     if (signal?.aborted) throw abortError();
     cancelMainWorker();
