@@ -1,6 +1,4 @@
-"use client";
-
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AlertTriangle, Moon, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/firebase";
@@ -8,12 +6,21 @@ import { usePlan } from "@/state/usePlan";
 import { Sidebar, type PageId } from "@/components/retire/sidebar";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { PagePlan } from "@/components/retire/pages/plan";
-import { PageProfile } from "@/components/retire/pages/profile";
-import { PageAccounts } from "@/components/retire/pages/accounts";
-import { PageSettings } from "@/components/retire/pages/settings";
 
-const PAGES: Record<PageId, { label: string; Comp: () => React.ReactElement }> = {
+const PagePlan = lazy(() =>
+  import("@/components/retire/pages/plan").then(({ PagePlan }) => ({ default: PagePlan }))
+);
+const PageProfile = lazy(() =>
+  import("@/components/retire/pages/profile").then(({ PageProfile }) => ({ default: PageProfile }))
+);
+const PageAccounts = lazy(() =>
+  import("@/components/retire/pages/accounts").then(({ PageAccounts }) => ({ default: PageAccounts }))
+);
+const PageSettings = lazy(() =>
+  import("@/components/retire/pages/settings").then(({ PageSettings }) => ({ default: PageSettings }))
+);
+
+const PAGES: Record<PageId, { label: string; Comp: React.ElementType }> = {
   plan:        { label: "Plan",        Comp: PagePlan },
   accounts:    { label: "Accounts",    Comp: PageAccounts },
   profile:     { label: "Profile",     Comp: PageProfile },
@@ -117,7 +124,9 @@ export default function Home() {
                 </AlertDescription>
               </Alert>
             )}
-            <Page />
+            <Suspense fallback={<div className="text-muted-foreground py-8 text-center">Loading…</div>}>
+              <Page />
+            </Suspense>
           </div>
         </main>
       </div>

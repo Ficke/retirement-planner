@@ -6,9 +6,9 @@ const authMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn().mockImplementation(() => ({
-    getIdTokenClient: authMocks.getIdTokenClient,
-  })),
+  GoogleAuth: vi.fn(function GoogleAuthMock() {
+    return { getIdTokenClient: authMocks.getIdTokenClient };
+  }),
 }));
 
 import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';

@@ -18,12 +18,6 @@ coverage
 playwright-report
 test-results
 
-# Framework build output
-.next
-out
-.vercel
-.turbo
-
 # Production
 build
 dist

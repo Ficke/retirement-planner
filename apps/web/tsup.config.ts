@@ -4,7 +4,7 @@ export default defineConfig({
   entry: ['src/server/index.ts'],
   format: ['cjs'],
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   outDir: 'dist-server',
   clean: true,
   splitting: false,

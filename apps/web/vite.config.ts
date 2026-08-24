@@ -18,5 +18,23 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'firebase',
+              test: /node_modules[\\/](@firebase|firebase)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: 'react',
+              test: /node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
   },
 });

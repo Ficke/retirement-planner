@@ -1,5 +1,3 @@
-"use client";
-
 export function Donut({
   data,
   size = 120,
