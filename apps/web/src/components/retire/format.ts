@@ -23,14 +23,13 @@ export function fmtSigned(n: number, compact = false): string {
   return (n >= 0 ? '+' : '') + fmtCurrency(n, compact);
 }
 
-/** Shared thresholds for describing a success probability. */
 export function successTone(p: number): {
   label: string;
   tone: 'positive' | 'neutral' | 'warn';
 } {
   if (p >= 0.95) return { label: 'High cushion', tone: 'positive' };
   if (p >= 0.9) return { label: 'Strong', tone: 'positive' };
-  if (p >= 0.8) return { label: 'On track with flexibility', tone: 'neutral' };
+  if (p >= 0.8) return { label: 'On track', tone: 'neutral' };
   if (p >= 0.7) return { label: 'Needs guardrails', tone: 'warn' };
   return { label: 'At risk', tone: 'warn' };
 }

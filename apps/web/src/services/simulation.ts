@@ -10,22 +10,11 @@
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
 import { retirementSpendingOf } from '@/domain/age';
 import {
-  SIMULATION_EXPORT_SCHEMA_ID,
-  SIMULATION_EXPORT_SCHEMA_VERSION,
+  SIMULATION_EXPORT_VERSION,
   simulationExportSchema,
   type SimulationExport,
 } from '@/domain/simulation-export';
-import {
-  DATA_FIRST_YEAR,
-  DATA_LAST_YEAR,
-  MONTE_CARLO_BLOCK_SIZE,
-  STOCK_BOND_CORRELATION,
-  US_BOND_REAL_RETURNS,
-  US_INFLATION,
-  US_STOCK_REAL_RETURNS,
-} from '@/data/market-history';
-import { TAX_LAW_YEAR } from '@/data/tax-brackets-2025';
-import { HEALTHCARE_PREMIUM_RULES_YEAR } from '@/data/healthcare-premiums';
+import { MONTE_CARLO_BLOCK_SIZE } from '@/data/market-history';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { simulationResultSchema } from '@/domain/schemas';
 import { CONVERSION_STEPS, leverRange } from '@/domain/levers';
@@ -93,7 +82,10 @@ export function toSimulationPlan(plan: RetirementPlan): SimulationPlan {
   };
 }
 
-/** A reproducible, privacy-trimmed record of one completed headline run. */
+/**
+ * Build a compact simulation record without account identity fields. Profile
+ * and financial data remain in the export.
+ */
 export function buildSimulationExport(
   plan: RetirementPlan,
   result: SimulationResult,
@@ -111,94 +103,9 @@ export function buildSimulationExport(
     riskOfRuin: result.riskOfRuin,
   });
   return simulationExportSchema.parse({
-    schema: {
-      id: SIMULATION_EXPORT_SCHEMA_ID,
-      version: SIMULATION_EXPORT_SCHEMA_VERSION,
-      compatibility: 'Reject unsupported major versions; ignore unknown additive fields.',
-    },
+    version: SIMULATION_EXPORT_VERSION,
     exportedAt: exportedAt.toISOString(),
-    privacy: {
-      containsSensitiveFinancialData: true,
-      omittedAccountFields: ['id', 'name', 'institution'],
-    },
-    units: {
-      currency: 'USD',
-      monetaryValues: `real dollars as of ${plan.profile.asOfDate}`,
-      ratesAndAssetWeights: 'decimal fractions',
-      probabilities: 'decimal fractions from 0 to 1',
-      ages: 'completed years',
-      periods: 'calendar years',
-    },
-    engine: {
-      kernel: 'retirement-simulation-rust',
-      adapter: result.source ?? 'unknown',
-      kernelVersion: result.engineVersion ?? null,
-      sourceRevision: result.sourceRevision ?? null,
-      randomStream: 'chacha12-v1',
-    },
-    model: {
-      simulationModel: plan.assumptions.simulationModel,
-      returnGeneration: historicalBootstrapFor(plan)
-        ? 'historical-circular-block-bootstrap-with-replacement'
-        : 'parametric-fitted-distribution',
-      returnBasis: 'real annual total returns',
-      annualPortfolioFeeRate: 0.001,
-      marketData: {
-        id: `damodaran-sp500-10yr-treasury-bls-cpi-${DATA_FIRST_YEAR}-${DATA_LAST_YEAR}`,
-        firstYear: DATA_FIRST_YEAR,
-        lastYear: DATA_LAST_YEAR,
-        historicalBlockYears: historicalBootstrapFor(plan) ? MONTE_CARLO_BLOCK_SIZE : null,
-        statistics: {
-          stockRealArithmeticMean: US_STOCK_REAL_RETURNS.mean,
-          stockRealVolatility: US_STOCK_REAL_RETURNS.volatility,
-          bondRealArithmeticMean: US_BOND_REAL_RETURNS.mean,
-          bondRealVolatility: US_BOND_REAL_RETURNS.volatility,
-          stockBondCorrelation: STOCK_BOND_CORRELATION,
-          inflationArithmeticMean: US_INFLATION.mean,
-        },
-      },
-      taxLawDollarYear: TAX_LAW_YEAR,
-      healthcarePremiumPolicyYear: HEALTHCARE_PREMIUM_RULES_YEAR,
-      planSchemaVersion: PLAN_SCHEMA_VERSION,
-      treatments: {
-        cashFlowTiming: 'annual-returns-before-cash-flows',
-        assetAllocation: 'fixed-weights-annual-rebalance-no-tax-or-cost',
-        taxableInvestmentIncome: 'withdrawal-gain-ratio-only-no-annual-tax-drag',
-        estateTaxes: 'not-modeled',
-        taxLaw: 'fixed-current-rules-projected-through-horizon',
-        healthcarePremiumPolicy: 'fixed-current-rules-projected-through-horizon',
-        mortality: 'fixed-life-expectancy-horizon',
-        employment: 'deterministic-through-retirement-age',
-        socialSecurity: 'scheduled-benefit-no-solvency-adjustment',
-        longTermCareTiming: plan.profile.longTermCare.enabled
-          ? 'sampled-contiguous-ending-at-horizon'
-          : 'disabled',
-      },
-    },
-    run: {
-      paths: MAIN_PATHS,
-      rootSeed: baseSeed(plan),
-    },
-    semantics: {
-      conditionalNature:
-        'All results are hypothetical and conditional on the exported inputs and model assumptions. They are not guarantees or calibrated real-world probabilities.',
-      successProbability:
-        'Share of simulated paths that fully fund every modeled working and retirement year.',
-      riskOfRuin:
-        'One minus successProbability. It is the share of simulated paths with at least one underfunded year.',
-      terminalWealth:
-        'Gross portfolio value at the plan life-expectancy age, in the stated real-dollar basis.',
-      percentileRanks:
-        'pN is the value at or below which N percent of simulated outcomes fall. For example, 25 percent of outcomes exceed p75.',
-      yearlyPercentiles:
-        'Each pN field is the cross-path percentile at that age; it is not necessarily one continuous path.',
-      representativeCashFlows:
-        'Yearly projection cash flows come from the median-terminal-wealth path while portfolioValue is the cross-path median for that age.',
-      afterTaxTerminalWealth:
-        'Value from the same path as medianTerminalWealth after applying terminalTaxRate to Traditional and HSA balances only.',
-      outcomeBuckets:
-        'Mean cash flows for paths in the stated terminal-wealth percentile cohort.',
-    },
+    paths: MAIN_PATHS,
     input: toSimulationPlan(plan),
     output,
   });

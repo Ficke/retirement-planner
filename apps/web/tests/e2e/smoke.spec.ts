@@ -73,7 +73,7 @@ test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await expect(page.getByText('Money in — what it clears is saved')).toHaveCount(0);
 });
 
-test('Plan exports the completed simulation as self-describing JSON', async ({ page }) => {
+test('Plan exports the completed simulation as compact JSON', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem(
       'retirement-planner:preferences',
@@ -93,20 +93,14 @@ test('Plan exports the completed simulation as self-describing JSON', async ({ p
   expect(downloadPath).not.toBeNull();
   const exported = JSON.parse(await readFile(downloadPath!, 'utf8')) as Record<string, unknown>;
   expect(exported).toMatchObject({
-    schema: {
-      id: 'urn:retirement-planner:simulation-export',
-      version: '1.0.0',
-    },
-    privacy: { containsSensitiveFinancialData: true },
-    run: { paths: 5000 },
-    semantics: {
-      conditionalNature: expect.stringContaining('hypothetical'),
-    },
+    version: 1,
+    paths: 5000,
     output: {
       successProbability: expect.any(Number),
       yearlyProjections: expect.any(Array),
     },
   });
+  expect(Object.keys(exported)).toEqual(['version', 'exportedAt', 'paths', 'input', 'output']);
   const input = exported.input as { accounts: Array<Record<string, unknown>> };
   expect(input.accounts.length).toBeGreaterThan(0);
   expect(input.accounts[0]).not.toHaveProperty('id');
@@ -151,7 +145,7 @@ test('Plan labels sensitivity axes without repeating age in every tick', async (
   await expect(page.getByText(/success at Age/)).toHaveCount(0);
 
   await expect(page.getByRole('img', {
-    name: 'Modeled wealth by age, showing the median, middle 50%, and 10th to 90th percentile range',
+    name: 'Modeled wealth by age, showing the median and 25th to 75th percentile range',
   })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Middle 50%' })).toBeVisible();
 });

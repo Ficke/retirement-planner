@@ -63,8 +63,10 @@ pnpm -C apps/web exec playwright install chromium
 
 ## Production deploy
 
-After the release commit is on `main`, push an annotated tag named
-`deploy-YYYYMMDDTHHMMSSZ-<short-sha>`. The `deploy-*` tag triggers the Cloud
+The [nightly release workflow](.github/workflows/nightly-release.yml) tags the
+current `main` branch when production files have changed since the last
+release. To deploy immediately, push an annotated tag named
+`deploy-YYYYMMDDTHHMMSSZ-<short-sha>`. Any `deploy-*` tag triggers the Cloud
 Build production pipeline defined in `cloudbuild.yaml`.
 
 ```bash
