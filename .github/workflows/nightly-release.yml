@@ -54,6 +54,23 @@ jobs:
               echo "::error::Latest release $latest_release_tag is not an ancestor of main."
               exit 1
             fi
+
+            if git diff --quiet "$latest_release_commit" "$GITHUB_SHA" -- \
+              apps/web \
+              apps/edge-proxy \
+              rust-simulation-service \
+              scripts \
+              Dockerfile \
+              .dockerignore \
+              .gcloudignore \
+              cloudbuild.yaml \
+              package.json \
+              pnpm-lock.yaml \
+              pnpm-workspace.yaml; then
+              echo "created=false" >> "$GITHUB_OUTPUT"
+              echo "No production artifacts changed since $latest_release_tag." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
           fi
 
           release_date="$(TZ="$RELEASE_TIME_ZONE" date +%Y-%m-%d)"
