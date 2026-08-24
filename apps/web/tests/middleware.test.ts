@@ -19,6 +19,26 @@ describe('origin authentication middleware', () => {
     expect(contentSecurityPolicy).not.toContain("'unsafe-eval'");
   });
 
+  it('allows the Google Analytics tag and collection endpoints', async () => {
+    const response = await requestFor('/healthz');
+    const contentSecurityPolicy = response.headers.get('Content-Security-Policy');
+    const directives = new Map(
+      contentSecurityPolicy?.split(';').map((directive) => {
+        const [name, ...sources] = directive.trim().split(/\s+/);
+        return [name, sources] as const;
+      }),
+    );
+
+    expect(directives.get('script-src')).toContain('https://www.googletagmanager.com');
+    expect(directives.get('connect-src')).toEqual(
+      expect.arrayContaining([
+        'https://*.google-analytics.com',
+        'https://*.analytics.google.com',
+        'https://www.googletagmanager.com',
+      ]),
+    );
+  });
+
   it('rejects a missing or incorrect secret when enforcement is configured', async () => {
     vi.stubEnv('ORIGIN_SECRET', 'expected-secret');
 
