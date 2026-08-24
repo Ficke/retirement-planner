@@ -1,5 +1,3 @@
-"use client";
-
 import { useId, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 

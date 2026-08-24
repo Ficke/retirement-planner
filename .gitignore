@@ -5,8 +5,6 @@
 # Node / web build output (recursive for packages/apps)
 node_modules/
 **/node_modules/
-.next/
-**/.next/
 dist/
 **/dist/
 dist-server/
@@ -21,6 +19,7 @@ playwright-report/
 **/playwright-report/
 test-results/
 **/test-results/
+*.tsbuildinfo
 
 # Logs
 *.log
@@ -33,6 +32,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+*.pem
 .dev.vars
 **/.dev.vars
 .wrangler/
@@ -82,6 +82,3 @@ __pycache__/
 # Misc
 *.local
 uploads/
-
-# Test files
-apps/web/test-seedrandom.js

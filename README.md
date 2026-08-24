@@ -31,7 +31,7 @@ plans always keep their stored data in the browser.
 
 ## Quick start
 
-Requires Node.js 22 or newer and pnpm 10. Rust is optional for local development.
+Requires Node.js 24 and pnpm 10. Rust is optional for local development.
 
 ```bash
 git clone https://github.com/Ficke/retirement-planner.git

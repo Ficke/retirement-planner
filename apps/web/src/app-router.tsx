@@ -1,12 +1,13 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
-import Home from '@/app/page';
-import SignInPage from '@/app/auth/signin/page';
-import SignUpPage from '@/app/auth/signup/page';
 import { NotFound } from '@/components/not-found';
 import { useAuth } from '@/lib/firebase';
 import { setAnalyticsUserId, setAnalyticsUserStatus, trackPageView } from '@/lib/analytics';
 import { CLIENT_ROUTES } from '@/lib/client-routes';
+
+const Home = lazy(() => import('@/app/page'));
+const SignInPage = lazy(() => import('@/app/auth/signin/page'));
+const SignUpPage = lazy(() => import('@/app/auth/signup/page'));
 
 export function AppRouter() {
   const location = useLocation();
@@ -26,11 +27,13 @@ export function AppRouter() {
   }, [loading, location.pathname, location.search, user]);
 
   return (
-    <Routes>
-      <Route path={CLIENT_ROUTES.home} element={<Home />} />
-      <Route path={CLIENT_ROUTES.signIn} element={<SignInPage />} />
-      <Route path={CLIENT_ROUTES.signUp} element={<SignUpPage />} />
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">Loading…</div>}>
+      <Routes>
+        <Route path={CLIENT_ROUTES.home} element={<Home />} />
+        <Route path={CLIENT_ROUTES.signIn} element={<SignInPage />} />
+        <Route path={CLIENT_ROUTES.signUp} element={<SignUpPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Suspense>
   );
 }

@@ -5,15 +5,12 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   {
     ignores: [
-      '.next/**',
       'node_modules/**',
       'dist/**',
       'dist-server/**',
       'src/wasm/**',
       'playwright-report/**',
       'test-results/**',
-      'test-seedrandom.js',
-      'next-env.d.ts',
     ],
   },
   eslint.configs.recommended,

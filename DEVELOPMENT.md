@@ -1,5 +1,7 @@
 # Development Setup
 
+Use Node.js 24 and pnpm 10 so local builds match CI and the production image.
+
 ## Quick Start
 
 ```bash

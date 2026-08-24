@@ -11,11 +11,6 @@
 node_modules
 .pnpm-store
 
-# Framework build output
-.next/
-out/
-.vercel
-
 # Build output
 build/
 dist/

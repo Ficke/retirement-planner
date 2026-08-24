@@ -255,4 +255,6 @@ See `SECURITY.md` for the audit history and open items.
 - **Distroless Rust runtime image** — smaller pull, faster cold start.
 - **Region migration** `us-central1` → `us-west1`.
 
-Tracked with rationale and rollout order in `DEPLOYMENT_OPTIMIZATIONS.md`.
+The distroless image still needs local startup and TLS verification. A region
+change requires new Artifact Registry and Cloud Run resources, traffic
+verification, and explicit retirement of the `us-central1` resources.
