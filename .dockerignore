@@ -1,34 +1,32 @@
 # Dependencies
-node_modules
-.pnpm-store
+**/node_modules
+**/.pnpm-store
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
 # Testing
-coverage
-.nyc_output
+**/coverage
+**/.nyc_output
 **/*.test.ts
 **/*.test.tsx
 **/*.spec.ts
 **/*.spec.tsx
 **/tests
 **/__tests__
-playwright-report
-test-results
+**/playwright-report
+**/test-results
 
 # Production
-build
-dist
-dist-server
+**/build
+**/dist
+**/dist-server
+**/target
+**/.terraform
 
 # Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+**/.env*
 
 # IDE
 .vscode
@@ -36,7 +34,7 @@ dist-server
 *.swp
 *.swo
 *~
-.DS_Store
+**/.DS_Store
 
 # Git
 .git
