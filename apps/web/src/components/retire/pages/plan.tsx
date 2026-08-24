@@ -52,10 +52,6 @@ function toPoints<T>(arr: T[] | null | undefined, xKey: keyof T): Point[] {
     .sort((a, b) => a.x - b.x);
 }
 
-/**
- * Displays a plan lever with a slider and a sensitivity curve; the marker
- * identifies the plan's current value.
- */
 function LeverCard({
   lever,
   label,
@@ -269,7 +265,6 @@ export function PagePlan() {
           xTooltipFormat={(v) => v === 0
             ? "No conversions"
             : `Convert up to ${conversionLabelOf(v)}`}
-          note="Converting trades a little success probability for wealth that is already taxed, so this curve alone understates it. Watch the after-tax figure above."
         />
       </div>
 

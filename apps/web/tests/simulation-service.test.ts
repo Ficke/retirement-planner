@@ -1,8 +1,3 @@
-/**
- * Tests for the pure simulation service (no state management)
- * State management is now handled by usePlan store
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildSimulationExport, getSimulationService } from '@/services/simulation';
 import { runMonteCarloSummaries } from '@/engine/mc';
@@ -10,19 +5,6 @@ import type { RetirementPlan, SimulationResult } from '@/domain/types';
 import { batchRequestSchema } from '@/lib/simulation-request';
 import { simulationExportSchema } from '@/domain/simulation-export';
 import { createTestProjectionSettings } from './test-helpers';
-
-// Mock the analysis and mc modules
-// The cloud engine now requires a signed-in user. These tests exercise request
-// shaping, not auth, so the token wrapper delegates straight to the fetch stub.
-vi.mock('@/lib/firebase/api-client', () => ({
-  authenticatedFetch: (url: string, options?: RequestInit) => fetch(url, options),
-}));
-
-vi.mock('@/engine/analysis', () => ({
-  runSocialSecurityAnalysis: vi.fn().mockResolvedValue([]),
-  runSpendingAnalysis: vi.fn().mockResolvedValue([]),
-  runRetirementAgeAnalysis: vi.fn().mockResolvedValue([])
-}));
 
 vi.mock('@/engine/mc', () => ({
   runMonteCarloSimulation: vi.fn().mockResolvedValue({
@@ -264,7 +246,7 @@ describe('SimulationService (Pure)', () => {
 });
 
 describe('simulation export', () => {
-  it('is reproducible, self-describing, and excludes account identity fields', () => {
+  it('is compact and excludes account identity fields', () => {
     const plan: RetirementPlan = {
       ...mockPlan,
       accounts: [{
@@ -295,51 +277,11 @@ describe('simulation export', () => {
     const account = exported.input.accounts[0] as unknown as Record<string, unknown>;
 
     expect(exported).toMatchObject({
-      schema: {
-        id: 'urn:retirement-planner:simulation-export',
-        version: '1.0.0',
-      },
+      version: 1,
       exportedAt: '2026-08-23T12:00:00.000Z',
-      engine: {
-        adapter: 'client',
-        kernelVersion: '0.1.0:chacha12-v1',
-        sourceRevision: 'exact-source-revision',
-        randomStream: 'chacha12-v1',
-      },
-      model: {
-        simulationModel: 'historical',
-        returnGeneration: 'historical-circular-block-bootstrap-with-replacement',
-        annualPortfolioFeeRate: 0.001,
-        healthcarePremiumPolicyYear: 2026,
-        marketData: {
-          historicalBlockYears: 5,
-          statistics: {
-            stockRealArithmeticMean: expect.any(Number),
-            stockRealVolatility: expect.any(Number),
-            bondRealArithmeticMean: expect.any(Number),
-            bondRealVolatility: expect.any(Number),
-            stockBondCorrelation: expect.any(Number),
-            inflationArithmeticMean: expect.any(Number),
-          },
-        },
-        treatments: {
-          cashFlowTiming: 'annual-returns-before-cash-flows',
-          taxableInvestmentIncome: 'withdrawal-gain-ratio-only-no-annual-tax-drag',
-          estateTaxes: 'not-modeled',
-          taxLaw: 'fixed-current-rules-projected-through-horizon',
-          healthcarePremiumPolicy: 'fixed-current-rules-projected-through-horizon',
-          mortality: 'fixed-life-expectancy-horizon',
-          longTermCareTiming: 'disabled',
-        },
-      },
-      run: { paths: 5000, rootSeed: 42 },
-      semantics: {
-        conditionalNature: expect.stringContaining('hypothetical'),
-        percentileRanks: expect.stringContaining('p75'),
-        riskOfRuin: expect.stringContaining('underfunded year'),
-      },
-      units: { monetaryValues: 'real dollars as of 2024-01-01' },
+      paths: 5000,
     });
+    expect(Object.keys(exported)).toEqual(['version', 'exportedAt', 'paths', 'input', 'output']);
     expect(simulationExportSchema.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
     expect(exported.input.profile.retirementSpending).toBe(50_000);
     expect(account).toEqual({
