@@ -215,7 +215,19 @@ function YearlyTable({ data }: { data: Row[] }) {
   );
 }
 
-const OUTCOME_PERCENTILES = [10, 20, 30, 40, 50, 60, 70, 80, 90] as const;
+const OUTCOME_PERCENTILES = [10, 30, 50, 70, 90] as const;
+
+const OUTCOME_LABELS: Record<(typeof OUTCOME_PERCENTILES)[number], string> = {
+  10: "Downside",
+  30: "Unfavorable",
+  50: "Median",
+  70: "Favorable",
+  90: "Strong upside",
+};
+
+function outcomeLabel(percentile: number): string {
+  return OUTCOME_LABELS[percentile as keyof typeof OUTCOME_LABELS] ?? `P${percentile}`;
+}
 
 function OutcomeSelect({
   value,
@@ -232,9 +244,7 @@ function OutcomeSelect({
       <SelectContent>
         {OUTCOME_PERCENTILES.map((percentile) => (
           <SelectItem key={percentile} value={String(percentile)}>
-            {percentile === 50
-              ? "Median · 45th–55th"
-              : `${percentile - 5}th–${percentile + 5}th`}
+            {outcomeLabel(percentile)} · {percentile - 5}th–{percentile + 5}th
           </SelectItem>
         ))}
       </SelectContent>
@@ -295,25 +305,25 @@ export function ProjectionSummary({
         trend="Account balances today"
       />
       <Stat
-        label="Chance of success"
+        label="Modeled plan success"
         value={successProb == null ? "—" : `${(successProb * 100).toFixed(0)}%`}
         trend={successProb == null ? "Simulation pending" : successTone(successProb).label}
         tone={successProb == null ? undefined : successTone(successProb).tone}
         pending={isCalculating}
       />
       <Stat
-        label="Projected wealth at retirement"
+        label="Median wealth at retirement"
         value={retirementWealth == null ? "—" : fmtCurrency(retirementWealth, true)}
         trend={retirementAge == null
-          ? "Median projection"
-          : `Median projection at age ${retirementAge}`}
+          ? "Modeled outcome"
+          : `Modeled outcome at age ${retirementAge}`}
         pending={isCalculating}
       />
       <Stat
-        label={`Projected wealth at age ${(resultPlan ?? plan).profile.lifeExpectancy}`}
+        label={`Median wealth at age ${(resultPlan ?? plan).profile.lifeExpectancy}`}
         value={finalWealth == null ? "—" : fmtCurrency(finalWealth, true)}
         trend={finalWealthAfterTax == null
-          ? "Median projection"
+          ? "Modeled outcome"
           : `${fmtCurrency(finalWealthAfterTax, true)} after tax on pre-tax balances`}
         pending={isCalculating}
       />
@@ -393,7 +403,7 @@ export function ProjectionDetails({
       <DashboardCard
         title="Cash flow"
         description={selectedBucket
-          ? `Average annual money in and money out for outcomes in the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth.`
+          ? `Average annual cash flows for the ${outcomeLabel(selectedBucket.centerPercentile).toLowerCase()} outcome group (${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile of terminal wealth).`
           : undefined}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -426,8 +436,8 @@ export function ProjectionDetails({
       <DashboardCard
         title="Year by year"
         description={selectedBucket
-          ? `Cash flows average the ${selectedBucket.lowerPercentile}th–${selectedBucket.upperPercentile}th percentile outcome cohort. Portfolio is the median; Middle 50% is the 25th–75th percentile range.`
-          : "Cash flows follow one representative path. Portfolio is the median; Middle 50% is the 25th–75th percentile range."}
+          ? `Cash flows use the ${outcomeLabel(selectedBucket.centerPercentile).toLowerCase()} outcome group. Portfolio is the median. Middle 50% spans the 25th–75th percentiles.`
+          : "Portfolio is the median. Middle 50% spans the 25th–75th percentiles."}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {selectedBucket && (

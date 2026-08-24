@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Download } from "lucide-react";
 import {
   cloudComputeEnabled,
   sensitivityAnalysisReady,
@@ -13,11 +14,13 @@ import {
   leverRange,
   type LeverKey,
 } from "@/domain/levers";
-import type { SimulationSummary } from "@/domain/types";
+import type { RetirementPlan, SimulationResult, SimulationSummary } from "@/domain/types";
+import { buildSimulationExport } from "@/services/simulation";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { PageHeader, PageShell } from "@/components/retire/ui";
 import { SensitivityChart } from "@/components/ui/charts";
 import {
@@ -28,6 +31,18 @@ import { fmtCurrency } from "../format";
 import { cn } from "@/lib/utils";
 
 type Point = { x: number; y: number };
+
+function downloadSimulationExport(plan: RetirementPlan, result: SimulationResult) {
+  const contents = JSON.stringify(buildSimulationExport(plan, result), null, 2);
+  const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `retirement-simulation-${plan.profile.asOfDate}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 function toPoints<T>(arr: T[] | null | undefined, xKey: keyof T): Point[] {
   if (!arr) return [];
@@ -169,22 +184,35 @@ export function PagePlan() {
       <PageHeader
         title="Plan"
         actions={result ? (
-          <Badge
-            variant="secondary"
-            className={cn(
-              "gap-1.5",
-              result.source === "server" && "bg-info/15 text-info",
-              usedFallback && "bg-warn/15 text-warn",
-            )}
-          >
-            <span
+          <div className="flex items-center gap-2">
+            <Badge
+              variant="secondary"
               className={cn(
-                "size-1.5 rounded-full",
-                result.source === "server" ? "bg-info" : usedFallback ? "bg-warn" : "bg-muted-foreground",
+                "gap-1.5",
+                result.source === "server" && "bg-info/15 text-info",
+                usedFallback && "bg-warn/15 text-warn",
               )}
-            />
-            {engineLabel}
-          </Badge>
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  result.source === "server" ? "bg-info" : usedFallback ? "bg-warn" : "bg-muted-foreground",
+                )}
+              />
+              {engineLabel}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!resultPlan}
+              onClick={() => {
+                if (resultPlan) downloadSimulationExport(resultPlan, result);
+              }}
+            >
+              <Download className="size-4" />
+              Export simulation
+            </Button>
+          </div>
         ) : undefined}
       />
 

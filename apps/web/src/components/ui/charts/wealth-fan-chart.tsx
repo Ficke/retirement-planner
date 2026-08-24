@@ -26,11 +26,12 @@ import type { YearlyProjection } from "@/domain/types";
 
 type WealthProjection = Pick<
   YearlyProjection,
-  "age" | "p25" | "p50" | "p75" | "isRetired"
+  "age" | "p10" | "p25" | "p50" | "p75" | "p90" | "isRetired"
 >;
 
 const config = {
-  band75: { label: "25th–75th", color: "var(--color-success)" },
+  band90: { label: "Broad range · 10th–90th", color: "var(--color-success)" },
+  band75: { label: "Middle 50% · 25th–75th", color: "var(--color-success)" },
   p50: { label: "Median", color: "var(--color-success)" },
 } as const;
 
@@ -46,6 +47,7 @@ export function WealthFanChart({
   const data = useMemo(() => {
     return projections.map((p) => ({
       age: p.age,
+      band90: [p.p10, p.p90] as [number, number],
       band75: [p.p25, p.p75] as [number, number],
       p50: p.p50,
       isRetired: p.isRetired,
@@ -53,7 +55,7 @@ export function WealthFanChart({
   }, [projections]);
 
   const yScale = useMemo(
-    () => niceLinearScale(Math.max(0, ...data.map((d) => d.band75[1]))),
+    () => niceLinearScale(Math.max(0, ...data.map((d) => d.band90[1]))),
     [data],
   );
   const xTicks = useMemo(
@@ -78,7 +80,7 @@ export function WealthFanChart({
       className="aspect-auto w-full"
       style={{ height }}
       role="img"
-      aria-label="Projected wealth by age, showing the median and 25th to 75th percentile range"
+      aria-label="Modeled wealth by age, showing the median, middle 50%, and 10th to 90th percentile range"
     >
       <ComposedChart accessibilityLayer data={data} margin={{ top: 24, right: 12, left: 8, bottom: 2 }}>
         <CartesianGrid {...chartGridProps} />
@@ -94,6 +96,14 @@ export function WealthFanChart({
           domain={yScale.domain}
           ticks={yScale.ticks}
           tickFormatter={fmtAxisCurrency}
+        />
+        <Area
+          type="monotone"
+          dataKey="band90"
+          stroke="none"
+          fill="var(--color-band90)"
+          fillOpacity={0.09}
+          isAnimationActive={false}
         />
         <Area
           type="monotone"

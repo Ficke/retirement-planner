@@ -183,7 +183,7 @@ export function PageSettings() {
         <DashboardCard>
           <Setting
             label="Returns model"
-            helper={`Historical replays real market years (${DATA_RANGE}) in blocks, keeping runs like 2008 → 2009 intact. Parametric samples a model fit to that history.`}
+            helper={`Historical bootstrap recombines five-year blocks from ${DATA_RANGE}, with replacement. Parametric draws returns from a distribution fit to the same history.`}
           >
             <ToggleGroup
               type="single"
@@ -203,7 +203,7 @@ export function PageSettings() {
 
         <DashboardCard
           title="What the model assumes"
-          description={`A run counts as a success only if every year it models can be paid for, from today through the end of your life. A working year that runs short fails the same way a retirement year does. Every figure here is in today's dollars, and the market figures cover ${DATA_RANGE}. The headline number runs ${MAIN_PATHS.toLocaleString()} paths; each point on a sensitivity curve runs ${SWEEP_PATHS.toLocaleString()}.`}
+          description={`A run succeeds only if every modeled year is fully funded. All figures are in today's dollars. Results are hypothetical and depend on the assumptions below. The headline uses ${MAIN_PATHS.toLocaleString()} paths; each sensitivity point uses ${SWEEP_PATHS.toLocaleString()}.`}
           flush
         >
           <Table>

@@ -228,6 +228,7 @@ describe('Monte Carlo Simulation', () => {
           ? Promise.reject(new Error('Wasm initialization failed'))
           : Promise.resolve({ successProbability: 1 } as SimulationResult),
         runSweepShard: () => Promise.resolve([]),
+        engineVersion: () => Promise.resolve('test-engine'),
       };
 
       constructor() {
@@ -251,6 +252,8 @@ describe('Monte Carlo Simulation', () => {
     expect(workers[0].terminated).toBe(true);
     await expect(runMonteCarloSimulation(testPlan, config)).resolves.toMatchObject({
       successProbability: 1,
+      engineVersion: 'test-engine',
+      sourceRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(workers).toHaveLength(2);
   });
@@ -267,6 +270,7 @@ describe('Monte Carlo Simulation', () => {
             ? Promise.reject(new Error('Wasm initialization failed'))
             : Promise.resolve([end - start])
         ),
+        engineVersion: () => Promise.resolve('test-engine'),
       };
 
       constructor() {
