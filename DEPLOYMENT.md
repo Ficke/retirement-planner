@@ -130,7 +130,18 @@ complete authenticated request path and computation contract.
 
 ## Ongoing deploys
 
-Push to `main`. The Cloud Build trigger runs `cloudbuild.yaml`:
+Production deploys are explicit. After the release commit is on `main`, create
+and push an annotated tag named `deploy-YYYYMMDDTHHMMSSZ-<short-sha>`:
+
+```bash
+git switch main
+git pull --ff-only
+deploy_tag="deploy-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=8 HEAD)"
+git tag -a "$deploy_tag" -m "Production deploy $deploy_tag"
+git push origin "$deploy_tag"
+```
+
+The Terraform-managed trigger matches `deploy-*` and runs `cloudbuild.yaml`:
 
 1. Build both images with Kaniko, in parallel, with layer caching
 2. Deploy the Rust service with `--no-traffic`, tagged `candidate`
@@ -230,7 +241,7 @@ there is no charge between sessions.
 | Cloud Run request-seconds | < $1 |
 | Artifact Registry storage | ~$0.50 |
 | Secret Manager | negligible |
-| Cloud Build | ~$0.003/build-minute, only on push |
+| Cloud Build | ~$0.003/build-minute, only on a deploy tag |
 | GCS Terraform state | < $0.01 |
 | **Total (excluding Neon)** | **< $5** |
 

@@ -61,6 +61,23 @@ Before the first end-to-end run, install Chromium:
 pnpm -C apps/web exec playwright install chromium
 ```
 
+## Production deploy
+
+After the release commit is on `main`, push an annotated tag named
+`deploy-YYYYMMDDTHHMMSSZ-<short-sha>`. The `deploy-*` tag triggers the Cloud
+Build production pipeline defined in `cloudbuild.yaml`.
+
+```bash
+git switch main
+git pull --ff-only
+deploy_tag="deploy-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=8 HEAD)"
+git tag -a "$deploy_tag" -m "Production deploy $deploy_tag"
+git push origin "$deploy_tag"
+```
+
+See [Deployment](DEPLOYMENT.md) for pipeline behavior, initial infrastructure
+setup, verification, and troubleshooting.
+
 ## Architecture
 
 The application is a Vite-built React SPA served by Hono. Firebase provides
