@@ -6,9 +6,12 @@ export default tseslint.config(
   {
     ignores: [
       'node_modules/**',
+      '.next/**',
       'dist/**',
       'dist-server/**',
+      'next-env.d.ts',
       'src/wasm/**',
+      'test-seedrandom.js',
       'playwright-report/**',
       'test-results/**',
     ],
