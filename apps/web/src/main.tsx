@@ -9,9 +9,12 @@ import { AppRouter } from '@/app-router';
 import { AuthProvider } from '@/components/auth-provider';
 import { AppErrorBoundary } from '@/components/error-boundary';
 import { ThemeProvider } from '@/components/theme-provider';
+import { prefetchSimulationEngine } from '@/engine/mc';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Application root element is missing');
+
+prefetchSimulationEngine();
 
 createRoot(root).render(
   <StrictMode>

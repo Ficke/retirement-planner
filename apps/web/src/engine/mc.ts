@@ -3,6 +3,7 @@ import type { SimulationPlan, SimulationResult } from '@/domain/types';
 import type { WorkerAPI, WorkerSweepScenario } from '@/workers/mc.worker';
 import { simulationPlanSchema } from '@/domain/schemas';
 import rustSourceRevision from '@/wasm/source.sha256?raw';
+import wasmBinaryUrl from '@/wasm/retirement_simulation_bg.wasm?url';
 
 /** Browser Worker orchestration for the Rust WebAssembly engine. */
 
@@ -32,6 +33,28 @@ async function initializeWorker(): Promise<Comlink.Remote<WorkerAPI>> {
 
   workerInstance = Comlink.wrap<WorkerAPI>(rawWorkerInstance);
   return workerInstance;
+}
+
+/**
+ * Warm the HTTP cache with the simulation binary during browser idle time.
+ *
+ * Wasm initialization is lazy, so the first local run otherwise waits on a
+ * fresh download of the binary. A prefetch link is fetched at the lowest
+ * priority, so it does not compete with the initial render, and the binary is
+ * the fallback engine for cloud runs as well as the engine for local ones.
+ *
+ * Safe to call more than once; the browser dedupes by URL, and the guard keeps
+ * repeated calls from accumulating link elements.
+ */
+export function prefetchSimulationEngine(): void {
+  if (typeof document === 'undefined') return;
+  if (document.querySelector(`link[rel="prefetch"][href="${wasmBinaryUrl}"]`)) return;
+
+  const link = document.createElement('link');
+  link.rel = 'prefetch';
+  link.as = 'fetch';
+  link.href = wasmBinaryUrl;
+  document.head.append(link);
 }
 
 function cancelMainWorker(): void {
