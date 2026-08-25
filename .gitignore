@@ -13,6 +13,8 @@ build/
 **/build/
 out/
 **/out/
+.next/
+**/.next/
 coverage/
 **/coverage/
 playwright-report/
@@ -20,6 +22,8 @@ playwright-report/
 test-results/
 **/test-results/
 *.tsbuildinfo
+next-env.d.ts
+apps/web/test-seedrandom.js
 
 # Logs
 *.log

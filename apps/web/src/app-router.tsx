@@ -1,8 +1,8 @@
-import { lazy, Suspense, useEffect, useRef } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { Route, Routes } from 'react-router-dom';
 import { NotFound } from '@/components/not-found';
 import { useAuth } from '@/lib/firebase';
-import { setAnalyticsUserId, setAnalyticsUserStatus, trackPageView } from '@/lib/analytics';
+import { setAnalyticsUserId, setAnalyticsUserStatus } from '@/lib/analytics';
 import { CLIENT_ROUTES } from '@/lib/client-routes';
 
 const Home = lazy(() => import('@/app/page'));
@@ -10,21 +10,14 @@ const SignInPage = lazy(() => import('@/app/auth/signin/page'));
 const SignUpPage = lazy(() => import('@/app/auth/signup/page'));
 
 export function AppRouter() {
-  const location = useLocation();
   const { loading, user } = useAuth();
-  const trackedLocation = useRef<string | null>(null);
 
   useEffect(() => {
     if (loading) return;
 
     setAnalyticsUserStatus(user ? 'signed_in' : 'guest');
     setAnalyticsUserId(user?.uid ?? null);
-
-    const locationKey = `${location.pathname}${location.search}`;
-    if (trackedLocation.current === locationKey) return;
-    trackedLocation.current = locationKey;
-    trackPageView();
-  }, [loading, location.pathname, location.search, user]);
+  }, [loading, user]);
 
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center">Loading…</div>}>
