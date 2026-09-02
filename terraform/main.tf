@@ -148,6 +148,27 @@ module "cloud_run" {
   ]
 }
 
+# The Cloudflare Worker's identity for calling the private Rust service. It
+# holds run.invoker on that service and nothing else.
+#
+# Its key is deliberately outside Terraform: google_service_account_key would
+# write the private key into the GCS state bucket in plaintext, where Cloud
+# Build can read it. The key is created with gcloud and installed as Worker
+# secrets in one `wrangler secret bulk` call; see DEPLOYMENT.md.
+resource "google_service_account" "edge_invoker" {
+  account_id   = "edge-invoker"
+  display_name = "Cloudflare Worker invoker for the simulation service"
+
+  depends_on = [google_project_service.required_apis]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "edge_invokes_rust" {
+  name     = module.rust_simulation.service_name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.edge_invoker.email}"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "web_invokes_rust" {
   name     = module.rust_simulation.service_name
   location = var.region
