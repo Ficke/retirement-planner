@@ -1,6 +1,6 @@
 # Edge compute migration plan
 
-Status: approved; ready to begin Phase 0
+Status: approved; Phase 0 complete, ready to begin Phase 1
 Last updated: 2026-09-01
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
@@ -8,12 +8,12 @@ migration operations). Findings folded in; see [Review corrections](#review-corr
 
 ## Resume point
 
-As of 2026-09-01, the branch is rebased onto `origin/main`. Planning and the
-URL-addressable page routing are complete; no migration phase or migration
-cloud-resource change has started. Resume with Phase 0 after fetching and
-confirming the base and rechecking time-sensitive live configuration. The
-page-routing portion of Phase 1 is already implemented and verified on this
-branch; do not rebuild it.
+As of 2026-09-01, Phase 0 is complete and its gate is met: the zone rate-limit
+rule is live and enabled, the Rust service is capped at two instances, the edge
+build has its Firebase configuration, and both Terraform roots have drift
+checks that plan clean. Resume with Phase 1 after fetching and confirming the
+base. The page-routing portion of Phase 1 is already implemented and verified
+on this branch; do not rebuild it.
 
 ## Objective
 
@@ -554,19 +554,19 @@ Document a rollback floor version. Prefer rolling forward.
 
 ## Phases
 
-### Phase 0 — prepare the safeguards
+### Phase 0 — prepare the safeguards — complete
 
-No user-visible change.
+No user-visible change. Gate met on 2026-09-01.
 
-- Apply `enable_rate_limit = true`.
-- Validate the simulation request bounds against real UI batches and choose a
-  deliberate Rust `max_instances` cap from measurements.
-- Add `VITE_FIREBASE_*` to GitHub Actions.
-- Add a `terraform/cloudflare` drift check.
-
-Gate: the WAF rule and reviewed compute ceilings are live, the edge build has its
-Firebase configuration, and both Terraform roots have drift checks. The
-existing Worker deployment pipeline is already proven.
+- `enable_rate_limit = true` applied. The rule blocks an IP after 60 requests
+  to `/api/simulation/*` in 10 seconds, keyed on `cf.colo.id` and `ip.src`.
+- Request bounds validated against a real service-generated batch: the widest
+  sweep is 31 scenarios at 1,000 paths, inside the 40-simulation and
+  40,000-path ceilings, which therefore stay as they are.
+- Rust `max_instances` set to 2 from measured demand.
+- `VITE_FIREBASE_*` added to the edge deploy workflow and to repository
+  variables.
+- `terraform/cloudflare` drift check added to Cloud Build.
 
 ### Phase 1 — SPA and assets from the edge
 
@@ -844,3 +844,11 @@ allowlist is weak for the reason given under Risks, but it is available.
 - 2026-09-01: Give the four primary application pages stable paths under a
   nested layout. Accept the static SPA fallback's HTTP 200 for unknown page
   paths; API routes retain proper 404 responses.
+- 2026-09-01: Cap the Rust service at two instances. Measured worst-envelope
+  warm headline compute is 240-306 ms and a 31,000-path summary batch 1.23-1.29 s,
+  against 30-day demand of 479 requests, a 124/day maximum, and p95 latency of
+  1.05 s. Two concurrent CPU-bound requests exceed observed load while bounding
+  worst-case 8-vCPU fleet spend.
+- 2026-09-01: Reach the Cloudflare zone by ID rather than a `cloudflare_zone`
+  data source, so the drift gate can plan from stored state without giving
+  Cloud Build Cloudflare credentials.
