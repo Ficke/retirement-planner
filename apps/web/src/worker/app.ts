@@ -8,11 +8,11 @@ import {
   SchemaFloorError,
   type UnifiedDatabaseService,
 } from '@/services/server/database';
-import { openDatabase } from '@/services/server/database-client';
+import { openDatabase, type DatabaseSession } from '@/services/server/database-client';
 
 type WorkerEnv = DataRouteEnv & {
   Bindings: Env;
-  Variables: DataRouteEnv['Variables'] & { database: UnifiedDatabaseService };
+  Variables: DataRouteEnv['Variables'] & { databaseSession: DatabaseSession };
 };
 
 /**
@@ -42,19 +42,18 @@ async function assertSchemaFloor(db: UnifiedDatabaseService): Promise<void> {
 }
 
 /**
- * One connection per request, closed after the response.
+ * One connection per request, opened on first use.
  *
- * Hyperdrive's origin connections are a small fixed pool on the free plan, so a
- * client that is never ended exhausts it. waitUntil keeps the close off the
- * response's critical path.
+ * Closing is the closeDatabase middleware's job, not this function's:
+ * waitUntil deferred the awaiting of close(), never its invocation, so calling
+ * it here closed the client before a single query ran.
  */
 async function requestDatabase(c: Context<WorkerEnv>): Promise<UnifiedDatabaseService> {
-  const existing = c.get('database');
-  if (existing) return existing;
+  const existing = c.get('databaseSession');
+  if (existing) return existing.db;
 
   const session = await openDatabase(c.env.HYPERDRIVE.connectionString);
-  c.executionCtx.waitUntil(session.close());
-  c.set('database', session.db);
+  c.set('databaseSession', session);
 
   await assertSchemaFloor(session.db);
   return session.db;
@@ -78,6 +77,18 @@ edgeApp.use('*', async (c, next) => {
   // x-forwarded-for is appended to and carries client-supplied values.
   c.set('clientIp', c.req.header('cf-connecting-ip')?.trim() || 'unknown');
   await next();
+});
+
+// Hyperdrive's origin connections are a small fixed pool on the free plan, so a
+// client that is never ended exhausts it. Every response here is fully
+// materialized JSON, so nothing is still reading from the client by this point.
+edgeApp.use('*', async (c, next) => {
+  try {
+    await next();
+  } finally {
+    const session = c.get('databaseSession');
+    if (session) c.executionCtx.waitUntil(session.close());
+  }
 });
 
 edgeApp.route(
