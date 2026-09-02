@@ -29,11 +29,18 @@
   // round trips to Postgres and one to the origin.
   "placement": { "region": "aws:us-east-1" },
 
+  // Created and owned by Wrangler, not Terraform: the configuration embeds the
+  // database password, and Terraform state lives in a GCS bucket that Cloud
+  // Build can read. Recreate with:
+  //   wrangler hyperdrive create retire-plan-neon --host=<neon-direct-host> \
+  //     --port=5432 --scheme=postgres --database=neondb \
+  //     --user=retire_worker --password=<NEON_WORKER_PASSWORD> --caching-disabled
+  //
   // Caching is disabled on the configuration itself. Hyperdrive caches reads
   // for 60 seconds and does not invalidate on write, and this app saves a
   // profile and reads it back against a revision column, so a stale read would
   // surface as a spurious 409 and an apparent lost write.
-  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-id>" }],
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "20dfe757885c4e62b30897f4b780926e" }],
 
   "durable_objects": {
     "bindings": [{ "name": "QUOTA", "class_name": "QuotaCounter" }]

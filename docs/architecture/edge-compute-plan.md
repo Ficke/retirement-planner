@@ -1,6 +1,6 @@
 # Edge compute migration plan
 
-Status: approved; Phases 0-1 complete, ready to begin Phase 2
+Status: approved; Phases 0-1 complete, Phase 2 code complete and awaiting first deploy
 Last updated: 2026-09-01
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
@@ -8,10 +8,12 @@ migration operations). Findings folded in; see [Review corrections](#review-corr
 
 ## Resume point
 
-As of 2026-09-01, Phases 0 and 1 are complete on this branch but not yet
-deployed: no `deploy-*` tag has been cut since the merge, so production still
-serves the SPA from Cloud Run. Resume with Phase 2 after fetching and
-confirming the base.
+As of 2026-09-01, Phases 0 and 1 are complete and Phase 2's code is written,
+but nothing is deployed: no `deploy-*` tag has been cut, so production still
+serves the SPA and the whole API from Cloud Run. Live resources that already
+exist are the zone rate-limit rule, the Neon role split, and the Hyperdrive
+configuration `20dfe757885c4e62b30897f4b780926e`. Phase 2's gate is not yet
+met — measured CPU time per route needs a deployed Worker.
 
 ## Objective
 
@@ -854,3 +856,15 @@ allowlist is weak for the reason given under Risks, but it is available.
   build's own file list instead of rewriting the smoke check in Phase 1. The
   Firebase smoke user the rewrite needs is a Phase 3 dependency, and the
   end-to-end simulation path is still covered against the Cloud Run origin.
+- 2026-09-01: Create least-privilege database roles with SQL, not Neon's
+  Console, CLI, or API. Every role those interfaces create is granted
+  `neon_superuser`, which carries CREATEDB, CREATEROLE, BYPASSRLS, and
+  `pg_write_all_data` — an API-created Worker role has full DDL and the split
+  buys nothing. The migration role is the exception and is created through the
+  API precisely because it needs those rights.
+- 2026-09-01: Let Wrangler own the Hyperdrive configuration rather than
+  Terraform, reversing the earlier plan. The configuration embeds the database
+  password, and Terraform state lives in a GCS bucket Cloud Build can read, so
+  Terraform ownership would widen the credential's blast radius to buy drift
+  detection on one resource. Recreation is a single documented command in
+  `wrangler.jsonc`.

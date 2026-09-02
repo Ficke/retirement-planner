@@ -67,24 +67,3 @@ variable "enable_tls_hardening" {
   type        = bool
   default     = false
 }
-
-variable "neon_host" {
-  description = "Neon pooled endpoint hostname"
-  type        = string
-}
-
-variable "neon_database" {
-  description = "Neon database name"
-  type        = string
-}
-
-variable "neon_worker_user" {
-  description = "Least-privilege Postgres role the Worker connects as"
-  type        = string
-}
-
-variable "neon_worker_password" {
-  description = "Password for the Worker's Postgres role. Supplied as TF_VAR_neon_worker_password; never written to a tfvars file."
-  type        = string
-  sensitive   = true
-}
