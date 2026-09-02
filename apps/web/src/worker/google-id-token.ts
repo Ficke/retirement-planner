@@ -142,15 +142,16 @@ async function exchangeForIdToken(
   account: ServiceAccount,
   audience: string,
 ): Promise<MintedToken> {
+  // Signed outside the try so a malformed key reports itself rather than
+  // arriving as an unreachable Google.
+  const assertion = await signedAssertion(account, audience);
+
   let response: Response;
   try {
     response = await fetch(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: JWT_BEARER_GRANT,
-        assertion: await signedAssertion(account, audience),
-      }),
+      body: new URLSearchParams({ grant_type: JWT_BEARER_GRANT, assertion }),
     });
   } catch (error) {
     throw new RustServiceUnavailableError('Could not reach Google to mint an identity token', {
@@ -180,8 +181,10 @@ async function exchangeForIdToken(
  *
  * A plan refresh fires the headline simulation and the sensitivity batch at
  * once, so a cold isolate would otherwise mint twice for the same audience.
+ * The key id is part of the identity: a rotation must not be answered from the
+ * memo the retired key filled.
  */
-let current: { audience: string; token: Promise<MintedToken> } | null = null;
+let current: { keyId: string; audience: string; token: Promise<MintedToken> } | null = null;
 
 /**
  * Where the colo-wide copy lives.
@@ -233,13 +236,17 @@ export async function googleIdToken(
   audience: string,
   requestUrl: string,
 ): Promise<string> {
-  const inFlight = current?.audience === audience ? current.token : null;
+  const account = serviceAccount(env);
+
+  const inFlight =
+    current?.audience === audience && current.keyId === account.privateKeyId
+      ? current.token
+      : null;
   if (inFlight) {
     const settled = await inFlight.catch(() => null);
     if (settled && usableToken(settled.token, audience)) return settled.token;
   }
 
-  const account = serviceAccount(env);
   const key = cacheKey(requestUrl, account, audience);
   const mint = (async () => {
     const shared = await cachedToken(key, audience).catch(() => null);
@@ -250,7 +257,7 @@ export async function googleIdToken(
     return minted;
   })();
 
-  current = { audience, token: mint };
+  current = { keyId: account.privateKeyId, audience, token: mint };
   try {
     return (await mint).token;
   } catch (error) {
