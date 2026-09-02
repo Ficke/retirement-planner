@@ -115,7 +115,7 @@ app.route(
   createDataRoutes({
     // The pool outlives the request on Cloud Run, so there is nothing to close.
     getDatabase: async () => getUnifiedDatabaseService(),
-    limitSignup: (key) => rateLimit(key, INVITE_RATE_LIMIT),
+    limitSignup: (_c, key) => rateLimit(key, INVITE_RATE_LIMIT),
   }),
 );
 

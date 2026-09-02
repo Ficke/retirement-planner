@@ -6,6 +6,9 @@
   // Worker under test runs the same semantics it ships with. Raise both
   // together when the pool's workerd catches up.
   "compatibility_date": "2026-08-22",
+  // pg needs Node built-ins. Implied at this date, listed because the code's
+  // dependence on it is not obvious from the imports.
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
 
@@ -22,8 +25,24 @@
   // build's generated wrangler.json from the client build, and setting it here
   // conflicts with build.outDir.
 
+  // Pinned at Neon's region, not Cloud Run's: the data routes make several
+  // round trips to Postgres and one to the origin.
+  "placement": { "region": "aws:us-east-1" },
+
+  // Caching is disabled on the configuration itself. Hyperdrive caches reads
+  // for 60 seconds and does not invalidate on write, and this app saves a
+  // profile and reads it back against a revision column, so a stale read would
+  // surface as a spurious 409 and an apparent lost write.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-id>" }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "QUOTA", "class_name": "QuotaCounter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["QuotaCounter"] }],
+
   "vars": {
-    "ORIGIN_URL": "https://retire-plan-lvs5yigt4a-uc.a.run.app"
+    "ORIGIN_URL": "https://retire-plan-lvs5yigt4a-uc.a.run.app",
+    "FIREBASE_PROJECT_ID": "gen-lang-client-0372385774"
   },
 
   "observability": {

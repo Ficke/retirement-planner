@@ -8,6 +8,18 @@ export interface MigrationOutcome {
   applied: string[];
 }
 
+export interface MigrationOptions {
+  /**
+   * Runtime role to grant table access to after migrating.
+   *
+   * Tables this migration role creates are owned by it, and ALTER DEFAULT
+   * PRIVILEGES can only be set by the creating role, so a new table would
+   * otherwise be invisible to the Worker until someone remembered to grant it.
+   * Granting here keeps a new table usable in the same step that creates it.
+   */
+  grantTo?: string;
+}
+
 /**
  * Bring the schema up to the highest known migration.
  *
@@ -21,6 +33,7 @@ export interface MigrationOutcome {
  */
 export async function applyMigrations(
   runner: { query(sql: string, params: unknown[]): Promise<{ rows: unknown[] }> },
+  options: MigrationOptions = {},
 ): Promise<MigrationOutcome> {
   return runInTransaction(runner, async (transaction) => {
     // Transaction-scoped, so a cancelled CI job releases it, and concurrent
@@ -51,6 +64,18 @@ export async function applyMigrations(
       );
       version = migration.version;
       applied.push(`${migration.version}: ${migration.name}`);
+    }
+
+    if (options.grantTo) {
+      // Identifier, not a value, so it cannot be a bound parameter. Reject
+      // anything that is not a plain role name rather than quote it.
+      if (!/^[a-z_][a-z0-9_]*$/.test(options.grantTo)) {
+        throw new Error(`Invalid role name: ${options.grantTo}`);
+      }
+      await transaction.execute(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON accounts, users, user_profiles TO ${options.grantTo}`,
+      );
+      await transaction.execute(`GRANT SELECT ON schema_migrations TO ${options.grantTo}`);
     }
 
     return { version, applied };

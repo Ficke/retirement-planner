@@ -18,7 +18,9 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString, application_name: 'retirement-planner-migrate' });
   await client.connect();
   try {
-    const { version, applied } = await applyMigrations(client);
+    const { version, applied } = await applyMigrations(client, {
+      grantTo: process.env.MIGRATION_GRANT_ROLE,
+    });
     for (const name of applied) console.log(`Applied migration ${name}`);
     console.log(
       applied.length === 0

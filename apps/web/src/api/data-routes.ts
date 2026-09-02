@@ -33,15 +33,15 @@ export interface SignupLimitResult {
   reset: number;
 }
 
-export interface DataRouteDependencies {
-  getDatabase(c: Context<DataRouteEnv>): Promise<UnifiedDatabaseService>;
-  limitSignup(key: string): Promise<SignupLimitResult>;
+export interface DataRouteDependencies<E extends DataRouteEnv> {
+  getDatabase(c: Context<E>): Promise<UnifiedDatabaseService>;
+  limitSignup(c: Context<E>, key: string): Promise<SignupLimitResult>;
 }
 
 const PROFILE_BODY_LIMIT = 64 * 1024;
 const SYNC_BODY_LIMIT = 16 * 1024;
 
-function bodyError(c: Context<DataRouteEnv>, error: unknown): Response | null {
+function bodyError<E extends DataRouteEnv>(c: Context<E>, error: unknown): Response | null {
   if (error instanceof RangeError) return c.json({ error: error.message }, 413);
   if (error instanceof SyntaxError) {
     return c.json({ error: 'Request body must be valid JSON' }, 400);
@@ -49,8 +49,10 @@ function bodyError(c: Context<DataRouteEnv>, error: unknown): Response | null {
   return null;
 }
 
-export function createDataRoutes(dependencies: DataRouteDependencies): Hono<DataRouteEnv> {
-  const routes = new Hono<DataRouteEnv>();
+export function createDataRoutes<E extends DataRouteEnv>(
+  dependencies: DataRouteDependencies<E>,
+): Hono<E> {
+  const routes = new Hono<E>();
   const { getDatabase, limitSignup } = dependencies;
 
   routes.get('/api/profile', async (c) => {
@@ -224,7 +226,7 @@ export function createDataRoutes(dependencies: DataRouteDependencies): Hono<Data
       );
 
       if (updated.rows.length === 0) {
-        const limited = await limitSignup(`invite:${c.var.clientIp}`);
+        const limited = await limitSignup(c, `invite:${c.var.clientIp}`);
         if (!limited.success) {
           c.header('Retry-After', String(Math.ceil((limited.reset - Date.now()) / 1000)));
           return c.json({ error: 'Too many signup attempts. Try again later.' }, 429);

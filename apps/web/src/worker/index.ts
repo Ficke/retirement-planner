@@ -1,3 +1,5 @@
+import { edgeApp } from './app';
+
 const ORIGIN_SECRET_HEADER = 'x-retire-plan-origin-secret';
 const CLIENT_IP_HEADER = 'x-retire-plan-client-ip';
 const ORIGINAL_HOST_HEADER = 'x-retire-plan-original-host';
@@ -6,6 +8,9 @@ const REQUEST_ID_HEADER = 'x-retire-plan-request-id';
 
 const INTERNAL_PATH_PREFIX = '/api/internal/';
 const NO_STORE = 'no-store';
+
+/** Paths this Worker answers itself. Everything else still proxies to Cloud Run. */
+const PORTED_PATH_PREFIXES = ['/api/profile', '/api/accounts', '/api/auth/sync-user'];
 
 export interface ProxyDependencies {
   originFetch(request: Request): Promise<Response>;
@@ -143,7 +148,7 @@ function structuredError(event: string, request: Request, requestId: string): vo
 
 // The asset store answers every other path, including the SPA shell, without
 // invoking this Worker. Only run_worker_first patterns reach here.
-export async function handleRequest(
+export async function proxyToOrigin(
   request: Request,
   env: Env,
   dependencies?: ProxyDependencies,
@@ -197,8 +202,18 @@ export async function handleRequest(
   return responseWithRequestId(response, requestId);
 }
 
+function isPorted(pathname: string): boolean {
+  return PORTED_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
 export default {
-  fetch(request, env): Promise<Response> {
-    return handleRequest(request, env);
+  async fetch(request, env, ctx): Promise<Response> {
+    const { pathname } = new URL(request.url);
+    if (isPorted(pathname)) return edgeApp.fetch(request, env, ctx);
+    return proxyToOrigin(request, env);
   },
 } satisfies ExportedHandler<Env>;
+
+export { QuotaCounter } from './quota-counter';
