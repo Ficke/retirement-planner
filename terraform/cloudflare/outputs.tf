@@ -1,6 +1,6 @@
 output "zone_id" {
   description = "Cloudflare zone ID"
-  value       = data.cloudflare_zone.site.id
+  value       = var.cloudflare_zone_id
 }
 
 output "worker_name" {

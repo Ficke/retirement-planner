@@ -16,14 +16,6 @@ terraform {
 
 provider "cloudflare" {}
 
-data "cloudflare_zone" "site" {
-  filter = {
-    account = { id = var.cloudflare_account_id }
-    name    = var.zone_name
-    status  = "active"
-  }
-}
-
 # Terraform creates the Worker container. Wrangler owns its code, runtime
 # configuration, versions, observability, subdomain settings, and secrets.
 resource "cloudflare_worker" "edge" {
@@ -48,7 +40,7 @@ resource "cloudflare_worker" "edge" {
 # placeholder instead of the Worker fails closed rather than hitting a live host.
 resource "cloudflare_dns_record" "staging_placeholder" {
   count   = var.enable_staging_worker ? 1 : 0
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   name    = "staging.${var.zone_name}"
   type    = "A"
   content = "192.0.2.0"
@@ -59,7 +51,7 @@ resource "cloudflare_dns_record" "staging_placeholder" {
 
 resource "cloudflare_workers_route" "staging" {
   count   = var.enable_staging_worker ? 1 : 0
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   pattern = "staging.${var.zone_name}/*"
   script  = cloudflare_worker.edge.name
 
@@ -71,7 +63,7 @@ resource "cloudflare_workers_route" "staging" {
 # same name, so two resources could collide if Terraform created the
 # replacement before destroying the original.
 resource "cloudflare_dns_record" "apex" {
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   name    = var.zone_name
   type    = var.enable_apex_worker ? "A" : "CNAME"
   content = var.enable_apex_worker ? "192.0.2.0" : var.legacy_origin_hostname
@@ -82,7 +74,7 @@ resource "cloudflare_dns_record" "apex" {
 
 resource "cloudflare_workers_route" "apex" {
   count   = var.enable_apex_worker ? 1 : 0
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   pattern = "${var.zone_name}/*"
   script  = cloudflare_worker.edge.name
 
@@ -90,7 +82,7 @@ resource "cloudflare_workers_route" "apex" {
 }
 
 resource "cloudflare_dns_record" "www" {
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   name    = "www.${var.zone_name}"
   type    = var.enable_www_redirect ? "A" : "CNAME"
   content = var.enable_www_redirect ? "192.0.2.0" : var.legacy_origin_hostname
@@ -104,7 +96,7 @@ resource "cloudflare_dns_record" "www" {
 # either record breaks that renewal and takes adamficke.com down when the
 # current certificate expires.
 resource "cloudflare_dns_record" "acm_validation_apex" {
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   name    = "_902cd09029d8ad858297874316f62745.${var.zone_name}"
   type    = "CNAME"
   content = "_c1fe8451324bcaa3d03bb6095894da8d.jkddzztszm.acm-validations.aws"
@@ -114,7 +106,7 @@ resource "cloudflare_dns_record" "acm_validation_apex" {
 }
 
 resource "cloudflare_dns_record" "acm_validation_www" {
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   name    = "_08bd04f558179d7741d9e78655159dc0.www.${var.zone_name}"
   type    = "CNAME"
   content = "_817f77192fb91675427c19130022e780.jkddzztszm.acm-validations.aws"
@@ -125,7 +117,7 @@ resource "cloudflare_dns_record" "acm_validation_www" {
 
 resource "cloudflare_ruleset" "www_redirect" {
   count       = var.enable_www_redirect ? 1 : 0
-  zone_id     = data.cloudflare_zone.site.id
+  zone_id     = var.cloudflare_zone_id
   name        = "Canonical hostname redirects"
   description = "Redirect www to the canonical apex hostname"
   kind        = "zone"
@@ -153,7 +145,7 @@ resource "cloudflare_ruleset" "www_redirect" {
 
 resource "cloudflare_ruleset" "simulation_rate_limit" {
   count       = var.enable_rate_limit ? 1 : 0
-  zone_id     = data.cloudflare_zone.site.id
+  zone_id     = var.cloudflare_zone_id
   name        = "Simulation API rate limiting"
   description = "Coarse edge protection for public simulation endpoints"
   kind        = "zone"
@@ -176,20 +168,20 @@ resource "cloudflare_ruleset" "simulation_rate_limit" {
 
 resource "cloudflare_zone_setting" "always_use_https" {
   count      = var.enable_always_use_https ? 1 : 0
-  zone_id    = data.cloudflare_zone.site.id
+  zone_id    = var.cloudflare_zone_id
   setting_id = "always_use_https"
   value      = "on"
 }
 
 resource "cloudflare_zone_setting" "min_tls_version" {
   count      = var.enable_tls_hardening ? 1 : 0
-  zone_id    = data.cloudflare_zone.site.id
+  zone_id    = var.cloudflare_zone_id
   setting_id = "min_tls_version"
   value      = "1.2"
 }
 
 resource "cloudflare_zone_dnssec" "site" {
   count   = var.enable_dnssec ? 1 : 0
-  zone_id = data.cloudflare_zone.site.id
+  zone_id = var.cloudflare_zone_id
   status  = "active"
 }

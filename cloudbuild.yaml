@@ -78,6 +78,33 @@ steps:
         fi
         exit "$$plan_status"
 
+  - name: 'hashicorp/terraform:1.15.3'
+    id: 'verify-cloudflare-terraform-applied'
+    waitFor: ['-']
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        terraform -chdir=terraform/cloudflare init -input=false
+
+        set +e
+        terraform -chdir=terraform/cloudflare plan \
+          -var-file=production.tfvars \
+          -detailed-exitcode \
+          -input=false \
+          -lock=false \
+          -no-color \
+          -refresh=false
+        plan_status=$$?
+        set -e
+
+        if [ "$$plan_status" -eq 2 ]; then
+          echo "Production Cloudflare infrastructure has unapplied Terraform changes. Apply and review Terraform before deploying."
+          exit 1
+        fi
+        exit "$$plan_status"
+
   - name: 'gcr.io/kaniko-project/executor:latest'
     id: 'build-and-push-rust'
     waitFor: ['-']
@@ -131,7 +158,7 @@ steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-rust-candidate'
     entrypoint: gcloud
-    waitFor: ['build-and-push-rust', 'build-and-push', 'verify-terraform-applied']
+    waitFor: ['build-and-push-rust', 'build-and-push', 'verify-terraform-applied', 'verify-cloudflare-terraform-applied']
     args:
       - 'run'
       - 'deploy'
