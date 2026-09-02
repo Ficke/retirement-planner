@@ -14,6 +14,7 @@ import {
   useAuth,
 } from '@/lib/firebase';
 import { setAnalyticsUserId, setAnalyticsUserStatus, trackEvent } from '@/lib/analytics';
+import { CLIENT_ROUTES } from '@/lib/client-routes';
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -36,7 +37,7 @@ export default function SignUpPage() {
   // Redirect to home if already logged in
   useEffect(() => {
     if (!loading && user) {
-      navigate('/');
+      navigate(CLIENT_ROUTES.plan);
     }
   }, [user, loading, navigate]);
 
@@ -192,12 +193,12 @@ export default function SignUpPage() {
 
             <p className="text-muted-foreground text-center text-sm">
               Already have an account?{' '}
-              <Link to="/auth/signin" className="text-primary hover:underline">
+              <Link to={CLIENT_ROUTES.signIn} className="text-primary hover:underline">
                 Sign in
               </Link>
             </p>
             <p className="text-muted-foreground text-center text-sm">
-              <Link to="/" className="hover:underline">
+              <Link to={CLIENT_ROUTES.plan} className="hover:underline">
                 Continue without an account
               </Link>{' '}
               Your data stays in this browser.

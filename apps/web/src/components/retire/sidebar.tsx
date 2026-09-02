@@ -8,10 +8,11 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import { signOut } from "@/lib/firebase";
+import { APP_PAGES, CLIENT_ROUTES, type AppPageId } from "@/lib/client-routes";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -21,28 +22,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export type PageId =
-  | "plan"
-  | "accounts"
-  | "profile"
-  | "settings";
-
-const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
-  { id: "plan", label: "Plan", icon: SlidersHorizontal },
-  { id: "accounts", label: "Accounts", icon: Wallet },
-  { id: "profile", label: "Profile", icon: UserRound },
-  { id: "settings", label: "Settings", icon: Settings },
+const NAV: { id: AppPageId; icon: LucideIcon }[] = [
+  { id: "plan", icon: SlidersHorizontal },
+  { id: "accounts", icon: Wallet },
+  { id: "profile", icon: UserRound },
+  { id: "settings", icon: Settings },
 ];
 
 export function Sidebar({
   active,
-  onNav,
   collapsed,
   onToggleCollapsed,
   user,
 }: {
-  active: PageId;
-  onNav: (id: PageId) => void;
+  active: AppPageId | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   /** null → anonymous (local-only data mode) */
@@ -89,22 +82,24 @@ export function Sidebar({
         <nav className="flex flex-1 flex-col gap-0.5 p-2">
           {NAV.map((item) => {
             const Icon = item.icon;
+            const page = APP_PAGES[item.id];
             const isActive = active === item.id;
             const button = (
               <Button
+                asChild
                 variant="ghost"
                 size={collapsed ? "icon" : "sm"}
                 data-active={isActive}
-                onClick={() => onNav(item.id)}
-                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground w-full",
                   !collapsed && "justify-start gap-2 px-2",
                   "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium",
                 )}
               >
-                <Icon className="size-4 shrink-0" />
-                {!collapsed && <span className="truncate">{item.label}</span>}
+                <NavLink to={page.path} end>
+                  <Icon className="size-4 shrink-0" />
+                  {!collapsed && <span className="truncate">{page.label}</span>}
+                </NavLink>
               </Button>
             );
             if (!collapsed) return <div key={item.id}>{button}</div>;
@@ -112,7 +107,7 @@ export function Sidebar({
               <Tooltip key={item.id}>
                 <TooltipTrigger asChild>{button}</TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
-                  {item.label}
+                  {page.label}
                 </TooltipContent>
               </Tooltip>
             );
@@ -171,7 +166,7 @@ export function Sidebar({
               variant="outline"
               size={collapsed ? "icon" : "sm"}
               className={cn(!collapsed && "w-full justify-start gap-2")}
-              onClick={() => navigate("/auth/signin")}
+              onClick={() => navigate(CLIENT_ROUTES.signIn)}
             >
               <LogIn className="size-4 shrink-0" />
               {!collapsed && "Sign in"}

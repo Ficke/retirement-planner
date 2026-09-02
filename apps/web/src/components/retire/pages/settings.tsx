@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useId } from "react";
 import { LogIn, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { CLIENT_ROUTES } from "@/lib/client-routes";
 
 import { cloudComputeEnabled, usePlan } from "@/state/usePlan";
 import { useAuth } from "@/lib/firebase";
@@ -121,7 +122,7 @@ export function PageSettings() {
                 <ToggleGroupItem value="local">This browser only</ToggleGroupItem>
               </ToggleGroup>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => navigate("/auth/signin")}>
+              <Button variant="outline" size="sm" onClick={() => navigate(CLIENT_ROUTES.signIn)}>
                 <LogIn className="size-4" />
                 Sign in
               </Button>

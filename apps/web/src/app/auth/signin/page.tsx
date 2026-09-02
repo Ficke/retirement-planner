@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { signIn, useAuth } from '@/lib/firebase';
 import { setAnalyticsUserId, setAnalyticsUserStatus, trackEvent } from '@/lib/analytics';
+import { CLIENT_ROUTES } from '@/lib/client-routes';
 
 export default function SignInPage() {
   const navigate = useNavigate();
@@ -19,7 +20,7 @@ export default function SignInPage() {
   // Redirect to home if already logged in
   useEffect(() => {
     if (!loading && user) {
-      navigate('/');
+      navigate(CLIENT_ROUTES.plan);
     }
   }, [user, loading, navigate]);
 
@@ -102,12 +103,12 @@ export default function SignInPage() {
 
             <p className="text-muted-foreground text-center text-sm">
               Don&apos;t have an account?{' '}
-              <Link to="/auth/signup" className="text-primary hover:underline">
+              <Link to={CLIENT_ROUTES.signUp} className="text-primary hover:underline">
                 Sign up
               </Link>
             </p>
             <p className="text-muted-foreground text-center text-sm">
-              <Link to="/" className="hover:underline">
+              <Link to={CLIENT_ROUTES.plan} className="hover:underline">
                 Continue without an account
               </Link>{' '}
               Your data stays in this browser.

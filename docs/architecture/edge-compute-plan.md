@@ -429,7 +429,9 @@ shield before authentication; application quotas use only the verified `uid`.
 
 Invite codes are operator-typed strings (`invite-code.ts:11`) with no entropy
 floor, so "code entropy is the real defense" is an assumption, not a control.
-Require generated codes of at least 128 bits.
+No invite codes have been distributed, so do not preserve the current value.
+Generate a fresh code of at least 128 bits when the Worker secret is installed;
+existing accounts do not use it.
 
 ## What gets deleted, and when
 
@@ -547,6 +549,14 @@ Move the Vite build into the edge deploy. The asset store serves **both** the
 HTML shell and hashed assets; the Worker keeps proxying `/api/*` to Cloud Run
 with the origin secret intact.
 
+Make the four application pages URL-addressable in the same phase: `/plan`,
+`/accounts`, `/profile`, and `/settings`, with `/` redirecting to `/plan`.
+Authentication keeps `/auth/signin` and `/auth/signup`. Use a nested application
+layout and route-driven sidebar links so direct loads, refresh, browser
+Back/Forward, page titles, and `aria-current` all follow the URL. Filters,
+dialogs, expanded panels, and sidebar collapse remain transient UI state rather
+than routes.
+
 Serving HTML and assets from the same deploy is deliberate. The first draft left
 HTML on Cloud Run while assets moved to the edge — two pipelines, both fired by a
 `deploy-*` tag, non-atomic, so Cloud Run's `index.html` could reference hashed
@@ -556,8 +566,10 @@ assets the store did not yet have. Under SPA fallback that failure is a 200
 Add `public/_headers`. Delete the Worker's Cache API code.
 
 Gate: assets and shell serve from the edge with correct types and immutable
-caching; the Wasm MIME assertion passes against the deployed URL, not the Vite
-dev server; a forced asset-manifest mismatch is detected by the smoke check.
+caching; every page route survives direct load and refresh; browser Back/Forward
+tracks sidebar navigation; the Wasm MIME assertion passes against the deployed
+URL, not the Vite dev server; a forced asset-manifest mismatch is detected by
+the smoke check.
 
 ### Phase 2 — data layer at the edge
 
@@ -720,8 +732,9 @@ and Wasm 5,000-path latency are measured side by side, revisit.
 largest CPU input the Worker will see. One plan plus lever deltas would cut it
 substantially and directly relieve the 10 ms risk.
 
-**SPA fallback changes 404 semantics.** Unknown non-API paths return JSON 404
-today (`app.ts:481`); SPA fallback returns the shell at 200.
+**SPA fallback changes 404 semantics.** It enables direct loads of application
+page routes, but unknown non-API paths also return the shell at 200 before React
+renders its Not Found view. `/api/*` keeps real JSON 404 responses.
 
 ## Review corrections
 
@@ -797,3 +810,9 @@ allowlist is weak for the reason given under Risks, but it is available.
 - 2026-09-01: Require Firebase authentication for server simulations. Signed-out
   users always use local Wasm, application quotas key on verified `uid`, and the
   zone WAF remains the coarse IP-based pre-authentication shield.
+- 2026-09-01: No signup invite codes have been distributed. Generate a fresh
+  high-entropy code when installing the Worker secret rather than migrating the
+  current value.
+- 2026-09-01: Give the four primary application pages stable paths under a
+  nested layout. Accept the static SPA fallback's HTTP 200 for unknown page
+  paths; API routes retain proper 404 responses.
