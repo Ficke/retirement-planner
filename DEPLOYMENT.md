@@ -251,9 +251,15 @@ there is no charge between sessions.
 
 - Secret values live in Secret Manager.
 - The Rust service accepts authenticated calls from the web service account.
-- `/api/simulation/*` is deliberately unauthenticated (anonymous users may opt
-  into cloud compute) and therefore rate-limited per IP and clamped on path
-  count, batch size, and horizon — see `lib/simulation-request.ts`
+- `/api/simulation/*` at the edge requires a verified Firebase identity that
+  also has a row in the application `users` table, and meters both a request
+  and a weighted path budget on that identity. The Cloud Run copy of those
+  routes remains unauthenticated and per-IP limited; it is the rollback target
+  and is reachable only with `ORIGIN_SECRET`. Both clamp path count, batch
+  size, and horizon — see `lib/simulation-request.ts`
+- The Worker reaches the private Rust service with an OIDC token it mints from
+  the `edge-invoker` service-account key. Bootstrap and rotation are in
+  `docs/architecture/edge-compute-plan.md`
 - Security headers are set in `apps/web/src/server/app.ts`
 - All SQL uses parameterized queries
 

@@ -63,7 +63,8 @@
 
   // Declared so `wrangler types` generates them and local development warns
   // when one is missing. The GCP_SA_* trio is the edge invoker's key; install
-  // and rotate it with one `wrangler secret bulk` call (see DEPLOYMENT.md).
+  // and rotate it with one `wrangler secret bulk` call; the runbook is in
+  // docs/architecture/edge-compute-plan.md.
   "secrets": {
     "required": [
       "ORIGIN_SECRET",
