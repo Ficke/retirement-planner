@@ -23,7 +23,8 @@
     "deploy:edge:dry-run": "wrangler deploy --dry-run --strict",
     "types:worker": "wrangler types --env-file .dev.vars.example",
     "types:worker:check": "wrangler types --check --env-file .dev.vars.example",
-    "check:worker": "pnpm types:worker:check && pnpm typecheck:worker && pnpm test:worker && pnpm build:edge && pnpm deploy:edge:dry-run"
+    "check:worker": "pnpm types:worker:check && pnpm typecheck:worker && pnpm test:worker && pnpm build:edge && pnpm check:startup && pnpm deploy:edge:dry-run",
+    "check:startup": "node ../../scripts/check-edge-startup.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
