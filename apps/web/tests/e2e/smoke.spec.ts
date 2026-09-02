@@ -57,8 +57,8 @@ test('boots into Plan with outcomes, controls, and projection charts in order', 
 test('Plan includes cash-flow outcome cohorts', async ({ page }) => {
   await gotoApp(page);
 
-  // The E2E server runs only Vite, so the default native request fails at the
-  // proxy and falls back to local Wasm. This verifies the local result shape.
+  // Nobody is signed in, so cloud compute is off and the plan runs on local
+  // Wasm without asking the server. This verifies the local result shape.
 
   const outcomeSelectors = page.getByRole('combobox', { name: 'Outcome percentile' });
   await expect(outcomeSelectors).toHaveCount(2, { timeout: 15_000 });

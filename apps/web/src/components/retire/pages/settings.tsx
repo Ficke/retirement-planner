@@ -175,6 +175,11 @@ export function PageSettings() {
                 <SelectItem value="local">Local (never leaves device)</SelectItem>
               </SelectContent>
             </Select>
+            {useServerSideCalculations && !cloudCompute && (
+              <p className="text-muted-foreground mt-2 max-w-prose text-xs leading-relaxed">
+                Cloud compute needs a signed-in account. Simulations run here until then.
+              </p>
+            )}
           </Setting>
         </DashboardCard>
 
