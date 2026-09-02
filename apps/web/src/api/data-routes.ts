@@ -2,16 +2,9 @@ import { Hono, type Context } from 'hono';
 
 import type { CreateAccountData, UpdateAccountData } from '@/domain/types';
 import type { Budget, QuotaLimiter } from '@/api/quota';
+import { isAccountId } from '@/domain/account-id';
 import { getAuthUser, verifyAuthToken } from '@/lib/firebase/server';
 import { verifyInviteCode } from '@/lib/invite-code';
-import {
-  AccountIdSchema,
-  CreateAccountSchema,
-  SaveProfileSchema,
-  UpdateAccountSchema,
-  readLimitedJson,
-  validateRequest,
-} from '@/lib/validation';
 import {
   AccountLimitError,
   ProfileRevisionConflictError,
@@ -37,6 +30,16 @@ export interface DataRouteDependencies<E extends DataRouteEnv> {
 
 const PROFILE_BODY_LIMIT = 64 * 1024;
 const SYNC_BODY_LIMIT = 16 * 1024;
+
+/**
+ * Request validation, loaded on first use.
+ *
+ * Building the domain schemas costs roughly 8ms of CPU, over half of this
+ * subsystem's startup, and a Worker charges global-scope evaluation to
+ * whichever request warms the isolate. Only the routes that validate a body
+ * need them, so reads no longer pay for schemas they never touch.
+ */
+const validation = () => import('@/lib/validation');
 
 function bodyError<E extends DataRouteEnv>(c: Context<E>, error: unknown): Response | null {
   if (error instanceof RangeError) return c.json({ error: error.message }, 413);
@@ -70,13 +73,14 @@ export function createDataRoutes<E extends DataRouteEnv>(
       const user = await getAuthUser(c.req.raw.headers);
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
+      const { readLimitedJson, validateRequest, SaveProfileSchema } = await validation();
       const body = await readLimitedJson(c.req.raw, PROFILE_BODY_LIMIT);
-      const validation = validateRequest(SaveProfileSchema, body);
-      if (!validation.success) {
-        return c.json({ error: 'Validation failed', errors: validation.errors }, 400);
+      const parsed = validateRequest(SaveProfileSchema, body);
+      if (!parsed.success) {
+        return c.json({ error: 'Validation failed', errors: parsed.errors }, 400);
       }
 
-      const data = validation.data!;
+      const data = parsed.data!;
       const db = await getDatabase(c);
       const revision = await db.saveUserProfile(
         user.id,
@@ -120,14 +124,15 @@ export function createDataRoutes<E extends DataRouteEnv>(
       const user = await getAuthUser(c.req.raw.headers);
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
+      const { readLimitedJson, validateRequest, CreateAccountSchema } = await validation();
       const body = await readLimitedJson(c.req.raw, PROFILE_BODY_LIMIT);
-      const validation = validateRequest(CreateAccountSchema, body);
-      if (!validation.success) {
-        return c.json({ error: 'Validation failed', errors: validation.errors }, 400);
+      const parsed = validateRequest(CreateAccountSchema, body);
+      if (!parsed.success) {
+        return c.json({ error: 'Validation failed', errors: parsed.errors }, 400);
       }
 
       const db = await getDatabase(c);
-      const account = await db.createAccount(validation.data as CreateAccountData, user.id);
+      const account = await db.createAccount(parsed.data as CreateAccountData, user.id);
       return c.json(account, 201);
     } catch (error) {
       if (error instanceof AccountLimitError) return c.json({ error: error.message }, 409);
@@ -144,9 +149,7 @@ export function createDataRoutes<E extends DataRouteEnv>(
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
       const id = c.req.param('id');
-      if (!AccountIdSchema.safeParse(id).success) {
-        return c.json({ error: 'Invalid account ID' }, 400);
-      }
+      if (!isAccountId(id)) return c.json({ error: 'Invalid account ID' }, 400);
       const db = await getDatabase(c);
       const account = await db.getAccount(id, user.id);
       return account ? c.json(account) : c.json({ error: 'Account not found' }, 404);
@@ -162,17 +165,16 @@ export function createDataRoutes<E extends DataRouteEnv>(
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
       const id = c.req.param('id');
-      if (!AccountIdSchema.safeParse(id).success) {
-        return c.json({ error: 'Invalid account ID' }, 400);
-      }
+      if (!isAccountId(id)) return c.json({ error: 'Invalid account ID' }, 400);
+      const { readLimitedJson, validateRequest, UpdateAccountSchema } = await validation();
       const body = await readLimitedJson(c.req.raw, PROFILE_BODY_LIMIT);
-      const validation = validateRequest(UpdateAccountSchema, body);
-      if (!validation.success) {
-        return c.json({ error: 'Validation failed', errors: validation.errors }, 400);
+      const parsed = validateRequest(UpdateAccountSchema, body);
+      if (!parsed.success) {
+        return c.json({ error: 'Validation failed', errors: parsed.errors }, 400);
       }
 
       const db = await getDatabase(c);
-      const account = await db.updateAccount(id, user.id, validation.data as UpdateAccountData);
+      const account = await db.updateAccount(id, user.id, parsed.data as UpdateAccountData);
       return account ? c.json(account) : c.json({ error: 'Account not found' }, 404);
     } catch (error) {
       const known = bodyError(c, error);
@@ -188,9 +190,7 @@ export function createDataRoutes<E extends DataRouteEnv>(
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
       const id = c.req.param('id');
-      if (!AccountIdSchema.safeParse(id).success) {
-        return c.json({ error: 'Invalid account ID' }, 400);
-      }
+      if (!isAccountId(id)) return c.json({ error: 'Invalid account ID' }, 400);
       const db = await getDatabase(c);
       return (await db.deleteAccount(id, user.id))
         ? c.body(null, 204)
@@ -209,6 +209,7 @@ export function createDataRoutes<E extends DataRouteEnv>(
         return c.json({ error: 'Authenticated account has no email claim' }, 400);
       }
 
+      const { readLimitedJson } = await validation();
       const body = c.req.raw.body ? await readLimitedJson(c.req.raw, SYNC_BODY_LIMIT) : undefined;
       const inviteCode =
         typeof body === 'object' && body !== null

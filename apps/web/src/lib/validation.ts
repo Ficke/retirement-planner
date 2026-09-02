@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { isAccountId } from '@/domain/account-id';
 import {
   legacyStoredProfileSchema,
   projectionSettingsSchema,
@@ -41,7 +42,7 @@ export const UpdateAccountSchema = z.object({
   assetWeights: updateAssetWeightsSchema.optional(),
 }).strict();
 
-export const AccountIdSchema = z.string().uuid();
+export const AccountIdSchema = z.string().refine(isAccountId, 'Invalid account ID');
 
 // Profile validation
 export const SaveProfileSchema = z.object({
