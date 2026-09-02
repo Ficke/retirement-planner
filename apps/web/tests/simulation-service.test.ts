@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildSimulationExport, getSimulationService } from '@/services/simulation';
 import { runMonteCarloSummaries } from '@/engine/mc';
 import type { RetirementPlan, SimulationResult } from '@/domain/types';
-import { batchRequestSchema } from '@/lib/simulation-request';
+import {
+  batchRequestSchema,
+  MAX_BATCH_SIMULATIONS,
+  MAX_BATCH_TOTAL_PATHS,
+} from '@/lib/simulation-request';
 import { simulationExportSchema } from '@/domain/simulation-export';
 import { createTestProjectionSettings } from './test-helpers';
 
@@ -226,6 +230,43 @@ describe('SimulationService (Pure)', () => {
       && result.source === 'server'
       && !('yearlyProjections' in result)
     ))).toBe(true);
+  });
+
+  it('keeps the widest UI sensitivity batch within the public request bounds', async () => {
+    let requestBody: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body));
+      const simulations = (requestBody as { simulations: Array<{ id: string }> }).simulations;
+      return {
+        ok: true,
+        json: async () => ({
+          results: simulations.map(({ id }) => ({ id, successProbability: 0.95 })),
+        }),
+      } as Response;
+    }));
+
+    await service.runSensitivityAnalyses({
+      ...mockPlan,
+      profile: {
+        ...mockPlan.profile,
+        retirementAge: 76,
+        currentSpending: 45_000,
+      },
+      socialSecurity: { ...mockPlan.socialSecurity, claimAge: 63 },
+    }, true);
+
+    const simulations = (requestBody as {
+      simulations: Array<{ config: { paths: number } }>;
+    }).simulations;
+    const totalPaths = simulations.reduce((total, simulation) => (
+      total + simulation.config.paths
+    ), 0);
+
+    expect(simulations).toHaveLength(31);
+    expect(simulations.length).toBeLessThanOrEqual(MAX_BATCH_SIMULATIONS);
+    expect(totalPaths).toBe(31_000);
+    expect(totalPaths).toBeLessThanOrEqual(MAX_BATCH_TOTAL_PATHS);
+    expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
   });
 
   it('should handle concurrent simulations independently', async () => {

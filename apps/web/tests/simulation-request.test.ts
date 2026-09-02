@@ -166,10 +166,10 @@ describe('simulation request limits', () => {
   });
 
   it('accepts the sweep batches the UI actually sends', () => {
-    const sims = Array.from({ length: 17 }, (_, i) => ({
+    const sims = Array.from({ length: 31 }, (_, i) => ({
       id: `sweep-${i}`,
       plan: validPlan,
-      config: { paths: 300, seed: 42 },
+      config: { paths: 1000, seed: 42 },
     }));
     const summary = batchRequestSchema.safeParse({ responseMode: 'summary', simulations: sims });
     expect(summary.success).toBe(true);
