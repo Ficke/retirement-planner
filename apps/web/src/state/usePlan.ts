@@ -369,10 +369,18 @@ function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
   return state.authUser?.id ?? null;
 }
 
+/**
+ * Whether this session may run simulations on the server.
+ *
+ * The engine preference alone is not enough: the edge requires a verified
+ * Firebase identity that also has a row in this app's users table, so a
+ * signed-out or unregistered session would spend a 401 round trip before
+ * falling back. It runs local Wasm from the start instead.
+ */
 export function cloudComputeEnabled(
-  state: Pick<PlanState, 'useServerSideCalculations'>,
+  state: Pick<PlanState, 'useServerSideCalculations' | 'authUser' | 'cloudAccountReady'>,
 ): boolean {
-  return state.useServerSideCalculations;
+  return state.useServerSideCalculations && state.authUser != null && state.cloudAccountReady;
 }
 
 export function sensitivityAnalysisReady(

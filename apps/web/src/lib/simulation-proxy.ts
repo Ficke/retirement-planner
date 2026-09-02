@@ -1,10 +1,22 @@
-import { fetchRustService, RustServiceUnavailableError } from '@/lib/rust-service-client';
+import { RustServiceUnavailableError } from '@/lib/rust-service-error';
+
+/**
+ * Send an authenticated request to the Rust service.
+ *
+ * Injected rather than imported: Cloud Run mints its token from the metadata
+ * server through google-auth-library, and the Worker signs one itself with
+ * WebCrypto. Neither dependency may reach the other's runtime.
+ */
+export interface RustServiceFetch {
+  (path: string, init: RequestInit): Promise<Response>;
+}
 
 /**
  * Forward a validated simulation payload to the Rust service and stream the
  * answer back untouched.
  */
 export async function proxyToRustService(
+  fetchRustService: RustServiceFetch,
   path: string,
   payload: unknown,
   timeoutMs: number,
@@ -55,16 +67,20 @@ export function simulationProxyError(error: unknown, timeoutLabel: string): Resp
   if (error instanceof SyntaxError) {
     return Response.json({ error: 'Request body must be valid JSON' }, { status: 400 });
   }
-  if (error.name === 'AbortError' || error.message.includes('timeout')) {
-    return Response.json(
-      { error: timeoutLabel, details: 'Request took too long' },
-      { status: 504 }
-    );
-  }
+  // Ahead of the timeout test below: a failed token mint reports the transport
+  // error it wrapped, whose message may itself contain "timeout", and answering
+  // 504 for an unreachable service tells the smoke check the opposite of what
+  // happened.
   if (error instanceof RustServiceUnavailableError) {
     return Response.json(
       { error: 'Service unavailable', details: 'Cannot connect to simulation service' },
       { status: 503 }
+    );
+  }
+  if (error.name === 'AbortError' || error.message.includes('timeout')) {
+    return Response.json(
+      { error: timeoutLabel, details: 'Request took too long' },
+      { status: 504 }
     );
   }
   return null;

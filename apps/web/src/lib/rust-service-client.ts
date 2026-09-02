@@ -1,16 +1,12 @@
 import { GoogleAuth, type IdTokenClient } from 'google-auth-library';
 
+import { RustServiceUnavailableError } from '@/lib/rust-service-error';
+
 const DEFAULT_RUST_SERVICE_URL = 'http://localhost:8081';
 const googleAuth = new GoogleAuth();
 const idTokenClients = new Map<string, Promise<IdTokenClient>>();
 
-/** The Rust service could not be reached or authenticated to. */
-export class RustServiceUnavailableError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'RustServiceUnavailableError';
-  }
-}
+export { RustServiceUnavailableError };
 
 function getServiceUrl(): string {
   return (process.env.RUST_SERVICE_URL || DEFAULT_RUST_SERVICE_URL).replace(/\/+$/, '');

@@ -17,10 +17,13 @@
     },
     "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-pool-workers/types"]
   },
+  // vitest.worker.config.ts is deliberately absent, and typechecked by the
+  // default project instead: it pulls in Vitest's optional jsdom types, whose
+  // `/// <reference lib="dom" />` replaces workerd's globals with the browser's
+  // in a program that exists to model workerd.
   "include": [
     "src/worker/**/*.ts",
     "tests/worker/**/*.ts",
-    "vitest.worker.config.ts",
     "worker-configuration.d.ts"
   ]
 }

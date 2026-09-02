@@ -15,6 +15,7 @@ import {
   verifyOriginSecret,
 } from '@/lib/origin-auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { fetchRustService } from '@/lib/rust-service-client';
 import { proxyToRustService, simulationProxyError } from '@/lib/simulation-proxy';
 import {
   SIMULATION_PATH_RATE_LIMIT,
@@ -152,6 +153,7 @@ async function handleSimulation(c: Context<AppEnvironment>) {
     return c.json({ error: 'Simulation compute quota exceeded. Retry shortly.' }, 429);
   }
   return proxyToRustService(
+    fetchRustService,
     '/api/simulate',
     validation.data,
     30_000,
@@ -203,6 +205,7 @@ app.post('/api/simulation/batch', async (c) => {
       return c.json({ error: 'Simulation compute quota exceeded. Retry shortly.' }, 429);
     }
     return await proxyToRustService(
+      fetchRustService,
       '/api/batch',
       validation.data,
       60_000,
@@ -235,6 +238,7 @@ app.post('/api/internal/simulation-probe', async (c) => {
       );
     }
     return await proxyToRustService(
+      fetchRustService,
       '/api/simulate',
       validation.data,
       30_000,

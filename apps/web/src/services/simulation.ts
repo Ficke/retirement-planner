@@ -8,6 +8,7 @@
  */
 
 import { runMonteCarloSimulation, runMonteCarloSummaries } from '@/engine/mc';
+import { authenticatedFetch } from '@/lib/firebase/api-client';
 import { retirementSpendingOf } from '@/domain/age';
 import {
   SIMULATION_EXPORT_VERSION,
@@ -210,7 +211,10 @@ async function runOnServer(
     })),
   };
 
-  const response = await fetch('/api/simulation/batch', {
+  // Cloud compute is for signed-in accounts only, so the ID token goes with
+  // every request. Without one the edge answers 401, and the caller falls back
+  // to local Wasm exactly as it does for any other server failure.
+  const response = await authenticatedFetch('/api/simulation/batch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -291,7 +295,7 @@ class SimulationServiceImpl implements SimulationService {
 
     if (useServerSide) {
       try {
-        const response = await fetch('/api/simulation/monte-carlo', {
+        const response = await authenticatedFetch('/api/simulation/monte-carlo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal,

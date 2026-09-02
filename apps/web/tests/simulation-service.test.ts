@@ -10,6 +10,12 @@ import {
 import { simulationExportSchema } from '@/domain/simulation-export';
 import { createTestProjectionSettings } from './test-helpers';
 
+// The server path signs every request with a Firebase ID token; these tests
+// assert what is sent, not how it is authenticated.
+vi.mock('@/lib/firebase/api-client', () => ({
+  authenticatedFetch: (url: string, options?: RequestInit) => fetch(url, options),
+}));
+
 vi.mock('@/engine/mc', () => ({
   runMonteCarloSimulation: vi.fn().mockResolvedValue({
     successProbability: 0.95,

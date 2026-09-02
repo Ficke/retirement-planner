@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
   class AccountLimitError extends Error {}
   class ProfileRevisionConflictError extends Error {}
-  class RustServiceUnavailableError extends Error {}
   const db = {
     initialize: vi.fn(),
     getAccountsForUser: vi.fn(),
@@ -24,7 +23,6 @@ const mocks = vi.hoisted(() => {
     getUnifiedDatabaseService: vi.fn(() => db),
     rateLimit: vi.fn(),
     fetchRustService: vi.fn(),
-    RustServiceUnavailableError,
   };
 });
 
@@ -44,10 +42,10 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 vi.mock('@/lib/rust-service-client', () => ({
   fetchRustService: mocks.fetchRustService,
-  RustServiceUnavailableError: mocks.RustServiceUnavailableError,
 }));
 
 import { app } from '@/server/app';
+import { RustServiceUnavailableError } from '@/lib/rust-service-error';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ORIGIN_SECRET_HEADER, TRUSTED_CLIENT_IP_HEADER } from '@/lib/origin-auth';
 import { proxyToRustService } from '@/lib/simulation-proxy';
@@ -356,7 +354,7 @@ describe('simulation proxy response streaming', () => {
 
   it('reports an unreachable Rust service as 503 rather than a generic 500', async () => {
     mocks.fetchRustService.mockRejectedValue(
-      new mocks.RustServiceUnavailableError('Could not reach the simulation service'),
+      new RustServiceUnavailableError('Could not reach the simulation service'),
     );
 
     const response = await runMonteCarlo(simulationRequest('monte-carlo', monteCarloBody));
@@ -390,6 +388,7 @@ describe('simulation proxy response streaming', () => {
     const controller = new AbortController();
 
     const responsePromise = proxyToRustService(
+      mocks.fetchRustService,
       '/api/simulate',
       monteCarloBody,
       30_000,

@@ -8,7 +8,12 @@
   "compatibility_date": "2026-08-22",
   // pg needs Node built-ins. Implied at this date, listed because the code's
   // dependence on it is not obvious from the imports.
-  "compatibility_flags": ["nodejs_compat"],
+  //
+  // The request-signal flags are not defaults. Without them `c.req.raw.signal`
+  // never fires, so a client that navigates away from a 60-second sensitivity
+  // batch leaves an 8-vCPU container busy for the full window and the 499
+  // branches in the simulation routes are dead code.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal", "request_signal_passthrough"],
   "workers_dev": false,
   "preview_urls": false,
 
@@ -49,7 +54,24 @@
 
   "vars": {
     "ORIGIN_URL": "https://retire-plan-lvs5yigt4a-uc.a.run.app",
-    "FIREBASE_PROJECT_ID": "gen-lang-client-0372385774"
+    "FIREBASE_PROJECT_ID": "gen-lang-client-0372385774",
+    // Private: allow_unauthenticated is false, so Google's front end rejects an
+    // unsigned request before a container starts. Also the OIDC audience, which
+    // must match with no trailing slash.
+    "RUST_SERVICE_URL": "https://rust-simulation-service-lvs5yigt4a-uc.a.run.app"
+  },
+
+  // Declared so `wrangler types` generates them and local development warns
+  // when one is missing. The GCP_SA_* trio is the edge invoker's key; install
+  // and rotate it with one `wrangler secret bulk` call (see DEPLOYMENT.md).
+  "secrets": {
+    "required": [
+      "ORIGIN_SECRET",
+      "SIGNUP_INVITE_CODES",
+      "GCP_SA_CLIENT_EMAIL",
+      "GCP_SA_PRIVATE_KEY",
+      "GCP_SA_PRIVATE_KEY_ID"
+    ]
   },
 
   "observability": {

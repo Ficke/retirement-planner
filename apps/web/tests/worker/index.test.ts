@@ -94,7 +94,7 @@ describe('edge worker', () => {
   it('streams non-GET request bodies and performs exactly one manual origin fetch', async () => {
     let calls = 0;
     let method = '';
-    let redirect: RequestRedirect | undefined;
+    let redirect: Request['redirect'] | undefined;
     let body = '';
     const deps = dependencies(async (request) => {
       calls += 1;
