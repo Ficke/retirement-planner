@@ -617,10 +617,22 @@ loads on first use, taking the entry to ~0 ms and a cold read to ~7.6 ms.
 
 Still true after the change: a cold *write* pays schema construction on top and
 sits near the ceiling. Cloudflare tolerates infrequent overage and terminates
-consistent overage, so this needs watching rather than action today. The lever
-if it becomes consistent is making the domain schemas cheaper to construct —
-splitting them, or `zod/mini` — which touches client code and was left as a
-deliberate decision rather than taken unattended.
+consistent overage, so this needs watching.
+
+Both levers the plan originally named for that remaining cost were measured and
+rejected:
+
+- **`zod/mini` is not cheaper to construct.** On a schema of comparable shape it
+  measured 3.1 ms against zod's 3.1 ms, inside the noise. It is a bundle-size
+  optimization, not a startup one.
+- **Splitting the schemas buys nothing.** Importing any single profile schema
+  costs ~7 ms, essentially the whole module, because they share
+  `profileBaseShape`. Tree-shaking already works; the shared base is the cost.
+
+Neither `@/data/tax-brackets-2025` nor `@/domain/age` contributes measurably, so
+the cost is the profile schema itself. Reducing it further means changing the
+schema or the validation approach, not repackaging either. Do not spend time on
+`zod/mini` for this.
 
 Also unchanged and still the real ceiling: Hyperdrive's 100,000 queries/day on
 the free plan, which binds well before the Worker request limit.
