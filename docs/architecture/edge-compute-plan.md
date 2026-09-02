@@ -823,6 +823,19 @@ and Wasm 5,000-path latency are measured side by side, revisit.
 largest CPU input the Worker will see. One plan plus lever deltas would cut it
 substantially and directly relieve the 10 ms risk.
 
+**Two Durable Object round trips per simulation.** The request budget and the
+path budget are separate `consume` calls, and the second cannot be made until
+the body has been validated for its path count. Both are wall time, not CPU, so
+neither counts against the free plan's ceiling; at this traffic the exactness is
+worth more than the hop. Combining them would mean a batched `consume` on the
+shared limiter interface, which the signup path does not need.
+
+**The Firebase JWKS is cached only in jose's per-isolate memory.** No KV, which
+is the property that mattered — a JWKS anyone with an account API token could
+overwrite is universal ID-token forgery. But a cold isolate refetches it, so
+every cold authenticated request pays one extra subrequest. A Cache API entry
+would make that per-colo instead of per-isolate.
+
 **SPA fallback changes 404 semantics.** It enables direct loads of application
 page routes, but unknown non-API paths also return the shell at 200 before React
 renders its Not Found view. `/api/*` keeps real JSON 404 responses.
