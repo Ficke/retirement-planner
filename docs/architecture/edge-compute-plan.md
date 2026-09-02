@@ -1,6 +1,6 @@
 # Edge compute migration plan
 
-Status: approved; Phase 0 complete, ready to begin Phase 1
+Status: approved; Phases 0-1 complete, ready to begin Phase 2
 Last updated: 2026-09-01
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
@@ -8,12 +8,10 @@ migration operations). Findings folded in; see [Review corrections](#review-corr
 
 ## Resume point
 
-As of 2026-09-01, Phase 0 is complete and its gate is met: the zone rate-limit
-rule is live and enabled, the Rust service is capped at two instances, the edge
-build has its Firebase configuration, and both Terraform roots have drift
-checks that plan clean. Resume with Phase 1 after fetching and confirming the
-base. The page-routing portion of Phase 1 is already implemented and verified
-on this branch; do not rebuild it.
+As of 2026-09-01, Phases 0 and 1 are complete on this branch but not yet
+deployed: no `deploy-*` tag has been cut since the merge, so production still
+serves the SPA from Cloud Run. Resume with Phase 2 after fetching and
+confirming the base.
 
 ## Objective
 
@@ -568,33 +566,29 @@ No user-visible change. Gate met on 2026-09-01.
   variables.
 - `terraform/cloudflare` drift check added to Cloud Build.
 
-### Phase 1 — SPA and assets from the edge
+### Phase 1 — SPA and assets from the edge — complete
 
-Move the Vite build into the edge deploy. The asset store serves **both** the
-HTML shell and hashed assets; the Worker keeps proxying `/api/*` to Cloud Run
-with the origin secret intact.
+`apps/edge-proxy` merged into `apps/web` behind `@cloudflare/vite-plugin`. The
+asset store serves the shell and hashed assets; `run_worker_first` lists only
+`/api/*`, which still proxies to Cloud Run with the origin secret intact.
 
-The four application pages are already URL-addressable on this branch: `/plan`,
-`/accounts`, `/profile`, and `/settings`, with `/` redirecting to `/plan`.
-Authentication keeps `/auth/signin` and `/auth/signup`. The nested application
-layout and route-driven sidebar links make direct loads, refresh, browser
-Back/Forward, page titles, and `aria-current` follow the URL. Filters, dialogs,
-expanded panels, and sidebar collapse remain transient UI state rather than
-routes. Retain and verify this behavior when the asset deployment changes.
+The four application pages were already URL-addressable and were retained:
+`/plan`, `/accounts`, `/profile`, and `/settings`, with `/` redirecting to
+`/plan`, plus `/auth/signin` and `/auth/signup`.
 
-Serving HTML and assets from the same deploy is deliberate. The first draft left
-HTML on Cloud Run while assets moved to the edge — two pipelines, both fired by a
-`deploy-*` tag, non-atomic, so Cloud Run's `index.html` could reference hashed
-assets the store did not yet have. Under SPA fallback that failure is a 200
-`text/html` for a missing `.js`: blank page, no error.
+Decisions taken during implementation:
 
-Add `public/_headers`. Delete the Worker's Cache API code.
-
-Gate: assets and shell serve from the edge with correct types and immutable
-caching; every page route survives direct load and refresh; browser Back/Forward
-tracks sidebar navigation; the Wasm MIME assertion passes against the deployed
-URL, not the Vite dev server; a forced asset-manifest mismatch is detected by
-the smoke check.
+- The Cloudflare plugin is gated behind `EDGE_BUILD`. It owns the Vite output
+  layout, and the plain `dist/` the Cloud Run container serves must keep
+  working as the rollback target until Phase 4.
+- `scripts/verify-edge-assets.sh` replaces the planned smoke-check rewrite for
+  this phase. It needs no credentials and fetches every file in the build
+  against the deployed URL, so an asset the store does not have fails on its
+  content type rather than passing as a 200. The end-to-end simulation path
+  stays covered by `scripts/smoke-check.sh` against the Cloud Run origin, which
+  Phase 1 does not disturb. The Firebase smoke user is a Phase 3 dependency.
+- The compatibility date is held at the newest the vitest-pool-workers runtime
+  supports, so the Worker under test runs the same semantics it ships with.
 
 ### Phase 2 — data layer at the edge
 
@@ -852,3 +846,11 @@ allowlist is weak for the reason given under Risks, but it is available.
 - 2026-09-01: Reach the Cloudflare zone by ID rather than a `cloudflare_zone`
   data source, so the drift gate can plan from stored state without giving
   Cloud Build Cloudflare credentials.
+- 2026-09-01: Gate the Cloudflare Vite plugin behind `EDGE_BUILD` rather than
+  letting it own every build. The Cloud Run container serves the flat `dist/`
+  and is the DNS rollback target until Phase 4, so it must keep serving a
+  working SPA.
+- 2026-09-01: Verify deployed assets with a credential-free check over the
+  build's own file list instead of rewriting the smoke check in Phase 1. The
+  Firebase smoke user the rewrite needs is a Phase 3 dependency, and the
+  end-to-end simulation path is still covered against the Cloud Run origin.
