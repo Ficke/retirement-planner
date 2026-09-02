@@ -13,7 +13,14 @@
 #
 # It deliberately needs no credentials. The end-to-end simulation path is still
 # covered by scripts/smoke-check.sh against the Cloud Run origin.
+#
+# Assets propagate asynchronously after wrangler returns, so a miss is retried
+# for a bounded window before it counts. Without that, running straight after a
+# deploy reports a failure that fixes itself seconds later.
 set -eu
+
+ATTEMPTS="${VERIFY_ATTEMPTS:-8}"
+RETRY_DELAY="${VERIFY_RETRY_DELAY:-5}"
 
 BASE_URL="${1:?usage: verify-edge-assets.sh <base-url> [client-dir]}"
 CLIENT_DIR="${2:-apps/web/dist/client}"
@@ -31,11 +38,26 @@ header() {
         'BEGIN { IGNORECASE = 1 } tolower($1) == want ":" { $1 = ""; sub(/^ /, ""); v = $0 } END { print tolower(v) }'
 }
 
-status() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$1"; }
+status() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$1" || echo 000; }
+
+# Poll until the URL serves something other than a miss, or the window closes.
+# Prints the final status.
+settled_status() {
+  attempt=1
+  while :; do
+    code=$(status "$1")
+    case "$code" in
+      200) echo "$code"; return ;;
+    esac
+    [ "$attempt" -ge "$ATTEMPTS" ] && { echo "$code"; return; }
+    attempt=$((attempt + 1))
+    sleep "$RETRY_DELAY"
+  done
+}
 
 echo "Verifying $BASE_URL against $CLIENT_DIR"
 
-shell_status=$(status "$BASE_URL/")
+shell_status=$(settled_status "$BASE_URL/")
 [ "$shell_status" = "200" ] || fail "shell returned HTTP $shell_status"
 shell_type=$(header "$BASE_URL/" content-type)
 case "$shell_type" in
@@ -54,8 +76,8 @@ for asset in "$CLIENT_DIR"/assets/*; do
   path="/assets/$(basename "$asset")"
   url="$BASE_URL$path"
 
-  asset_status=$(status "$url")
-  [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status"
+  asset_status=$(settled_status "$url")
+  [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status after $ATTEMPTS attempts"
 
   type=$(header "$url" content-type)
   case "$type" in
