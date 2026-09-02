@@ -1,10 +1,12 @@
+import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   AccountLimitError,
-  getUnifiedDatabaseService,
   ProfileRevisionConflictError,
   type UnifiedDatabaseService,
 } from '@/services/server/database';
+import { getUnifiedDatabaseService } from '@/services/server/database-pool';
+import { applyMigrations } from '@/services/server/migrate';
 
 const enabled = process.env.RUN_DATABASE_INTEGRATION === 'true'
   && Boolean(process.env.DATABASE_URL);
@@ -19,8 +21,14 @@ describe.skipIf(!enabled)('Postgres cloud persistence', () => {
   let db: UnifiedDatabaseService;
 
   beforeAll(async () => {
+    // Migrations no longer run on first use, so the suite applies them the
+    // way CI does before the Worker deploys.
+    const migrator = new Client({ connectionString: process.env.DATABASE_URL });
+    await migrator.connect();
+    await applyMigrations(migrator);
+    await migrator.end();
+
     db = getUnifiedDatabaseService();
-    await db.initialize();
     await db.query('DELETE FROM users WHERE id = ANY($1::text[])', [Object.values(users)]);
     for (const id of Object.values(users)) {
       await db.query(
@@ -32,7 +40,6 @@ describe.skipIf(!enabled)('Postgres cloud persistence', () => {
 
   afterAll(async () => {
     await db.query('DELETE FROM users WHERE id = ANY($1::text[])', [Object.values(users)]);
-    await db.close();
   });
 
   it('applies the complete migration chain on a fresh database', async () => {
