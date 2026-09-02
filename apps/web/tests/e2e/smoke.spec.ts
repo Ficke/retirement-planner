@@ -12,16 +12,18 @@ import { readFile } from 'node:fs/promises';
  */
 
 const PAGES = ['Plan', 'Accounts', 'Profile', 'Settings'] as const;
+const PAGE_PATHS = ['/plan', '/accounts', '/profile', '/settings'] as const;
 
 /** Navigates to the app and waits for bootstrap to finish. */
 async function gotoApp(page: Page) {
   await page.goto('/');
+  await expect(page).toHaveURL(/\/plan$/);
   await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible();
 }
 
-/** Returns a sidebar button without matching duplicate text in page content. */
+/** Returns a sidebar link without matching duplicate text in page content. */
 function navItem(page: Page, name: string) {
-  return page.getByRole('complementary').getByRole('button', { name, exact: true });
+  return page.getByRole('complementary').getByRole('link', { name, exact: true });
 }
 
 test('boots into Plan with outcomes, controls, and projection charts in order', async ({ page }) => {
@@ -122,7 +124,8 @@ test('local simulation loads the Rust Wasm module without runtime errors', async
   });
 
   const wasmResponsePromise = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith('.wasm'),
+    response.request().resourceType() === 'fetch'
+      && new URL(response.url()).pathname.endsWith('.wasm'),
   );
   await gotoApp(page);
 
@@ -153,10 +156,35 @@ test('Plan labels sensitivity axes without repeating age in every tick', async (
 test('every sidebar page is reachable', async ({ page }) => {
   await gotoApp(page);
 
-  for (const name of PAGES) {
+  for (const [index, name] of PAGES.entries()) {
     await navItem(page, name).click();
+    await expect(page).toHaveURL(new RegExp(`${PAGE_PATHS[index]}$`));
     await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+    await expect(page).toHaveTitle(`${name} · RetirePlan`);
   }
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page.getByRole('heading', { name: 'Profile', level: 1 })).toBeVisible();
+});
+
+test('a page route survives a direct load and refresh', async ({ page }) => {
+  await page.goto('/accounts');
+  await expect(page.getByRole('heading', { name: 'Accounts', level: 1 })).toBeVisible();
+  await expect(page).toHaveTitle('Accounts · RetirePlan');
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/accounts$/);
+  await expect(page.getByRole('heading', { name: 'Accounts', level: 1 })).toBeVisible();
+});
+
+test('an unknown page route renders the application not-found view', async ({ page }) => {
+  await page.goto('/does-not-exist');
+
+  await expect(page).toHaveURL(/\/does-not-exist$/);
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  await expect(page).toHaveTitle('Page not found · RetirePlan');
+  await expect(page.getByRole('link', { name: 'Go to plan' })).toHaveAttribute('href', '/plan');
 });
 
 test('growth fields sharing a label are told apart by their group', async ({ page }) => {
@@ -177,7 +205,7 @@ test('signed out, data stays local while compute remains selectable', async ({ p
   await gotoApp(page);
 
   await expect(page.getByText('Guest. Data stays in this browser.')).toBeVisible();
-  await expect(navItem(page, 'Sign in')).toBeVisible();
+  await expect(page.getByRole('complementary').getByRole('button', { name: 'Sign in' })).toBeVisible();
 
   await navItem(page, 'Settings').click();
   // The storage badge reflects LOCAL mode when there is no auth user.

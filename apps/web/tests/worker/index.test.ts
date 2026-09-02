@@ -1,48 +1,28 @@
-import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleRequest, type EdgeCache, type ProxyDependencies } from '../src/index';
+import { proxyToOrigin, type ProxyDependencies } from '@/worker/proxy';
 
+// Only the proxy's own bindings matter here; the data routes are exercised
+// against their dependencies in tests/api.
 const testEnv = {
   ORIGIN_URL: 'https://retire-plan-lvs5yigt4a-uc.a.run.app',
-  CANONICAL_ORIGIN: 'https://adamficke.dev',
   ORIGIN_SECRET: 'local-test-origin-secret',
-} satisfies Env;
+} as unknown as Env;
 
-class MemoryCache implements EdgeCache {
-  readonly entries = new Map<string, Response>();
-  matchCalls = 0;
-  putCalls = 0;
-
-  async match(request: Request): Promise<Response | undefined> {
-    this.matchCalls += 1;
-    return this.entries.get(request.url)?.clone();
-  }
-
-  async put(request: Request, response: Response): Promise<void> {
-    this.putCalls += 1;
-    this.entries.set(request.url, response.clone());
-  }
-}
-
-function dependencies(
-  originFetch: ProxyDependencies['originFetch'],
-  cache = new MemoryCache(),
-): ProxyDependencies & { cache: MemoryCache } {
-  return { originFetch, cache };
+function dependencies(originFetch: ProxyDependencies['originFetch']): ProxyDependencies {
+  return { originFetch };
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('edge proxy', () => {
-  it('fails closed and disables caching when required configuration is missing', async () => {
+describe('edge worker', () => {
+  it('fails closed when required configuration is missing', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const missingSecretEnv = { ...testEnv, ORIGIN_SECRET: '' } satisfies Env;
-    const response = await handleRequest(
-      new Request('https://adamficke.dev/'),
+    const missingSecretEnv = { ...testEnv, ORIGIN_SECRET: '' } as Env;
+    const response = await proxyToOrigin(
+      new Request('https://adamficke.dev/api/profile'),
       missingSecretEnv,
-      createExecutionContext(),
       dependencies(async () => new Response('must not be called')),
     );
 
@@ -59,9 +39,8 @@ describe('edge proxy', () => {
       observedHeaders = new Headers(request.headers);
       return new Response('ok');
     });
-    const ctx = createExecutionContext();
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://staging.adamficke.dev/api/profile?view=full', {
         headers: {
           'cf-connecting-ip': '203.0.113.9',
@@ -73,7 +52,6 @@ describe('edge proxy', () => {
         },
       }),
       testEnv,
-      ctx,
       deps,
     );
 
@@ -101,12 +79,10 @@ describe('edge proxy', () => {
           },
         }),
     );
-    const ctx = createExecutionContext();
 
-    const response = await handleRequest(
-      new Request('https://staging.adamficke.dev/'),
+    const response = await proxyToOrigin(
+      new Request('https://staging.adamficke.dev/api/profile'),
       testEnv,
-      ctx,
       deps,
     );
 
@@ -128,13 +104,12 @@ describe('edge proxy', () => {
       return new Response('streamed response');
     });
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/monte-carlo', {
         method: 'POST',
         body: 'request-stream',
       }),
       testEnv,
-      createExecutionContext(),
       deps,
     );
 
@@ -148,10 +123,9 @@ describe('edge proxy', () => {
   it('returns the upstream response before its body stream closes', async () => {
     const stream = new TransformStream<Uint8Array, Uint8Array>();
     const writer = stream.writable.getWriter();
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/batch'),
       testEnv,
-      createExecutionContext(),
       dependencies(async () => new Response(stream.readable)),
     );
 
@@ -169,10 +143,9 @@ describe('edge proxy', () => {
         headers: { location: `${testEnv.ORIGIN_URL}/auth/signin?next=%2Fplan` },
       }),
     );
-    const response = await handleRequest(
-      new Request('https://staging.adamficke.dev/private'),
+    const response = await proxyToOrigin(
+      new Request('https://staging.adamficke.dev/api/private'),
       testEnv,
-      createExecutionContext(),
       originRedirect,
     );
     expect(response.headers.get('location')).toBe(
@@ -182,10 +155,9 @@ describe('edge proxy', () => {
     const externalRedirect = dependencies(async () =>
       new Response(null, { status: 302, headers: { location: 'https://accounts.google.com/' } }),
     );
-    const external = await handleRequest(
-      new Request('https://adamficke.dev/auth'),
+    const external = await proxyToOrigin(
+      new Request('https://adamficke.dev/api/auth'),
       testEnv,
-      createExecutionContext(),
       externalRedirect,
     );
     expect(external.headers.get('location')).toBe('https://accounts.google.com/');
@@ -193,15 +165,12 @@ describe('edge proxy', () => {
 
   it('refuses to forward internal paths, so the deploy probe stays unreachable', async () => {
     const originFetch = vi.fn(async () => new Response('should never be reached'));
-    const ctx = createExecutionContext();
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/internal/simulation-probe', { method: 'POST', body: '{}' }),
       testEnv,
-      ctx,
       dependencies(originFetch),
     );
-    await waitOnExecutionContext(ctx);
 
     expect(response.status).toBe(404);
     expect(originFetch).not.toHaveBeenCalled();
@@ -210,77 +179,49 @@ describe('edge proxy', () => {
 
   it('still forwards the public simulation routes', async () => {
     const originFetch = vi.fn(async () => new Response('{}', { status: 401 }));
-    const ctx = createExecutionContext();
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/monte-carlo', { method: 'POST', body: '{}' }),
       testEnv,
-      ctx,
       dependencies(originFetch),
     );
-    await waitOnExecutionContext(ctx);
 
     expect(originFetch).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(401);
   });
 
-  it('caches only successful immutable Vite asset GET responses', async () => {
-    let originCalls = 0;
-    const deps = dependencies(async () => {
-      originCalls += 1;
-      return new Response('asset', {
-        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
-      });
-    });
-    const request = new Request('https://staging.adamficke.dev/assets/app.abc.js');
-    const firstCtx = createExecutionContext();
-    const first = await handleRequest(request, testEnv, firstCtx, deps);
-    await waitOnExecutionContext(firstCtx);
-    expect(first.headers.get('Cloudflare-CDN-Cache-Control')).toContain('immutable');
-    expect(deps.cache.putCalls).toBe(1);
-
-    const second = await handleRequest(request, testEnv, createExecutionContext(), deps);
-    expect(await second.text()).toBe('asset');
-    expect(originCalls).toBe(1);
-    expect(deps.cache.matchCalls).toBe(2);
-    expect(
-      deps.cache.entries.has(`${testEnv.CANONICAL_ORIGIN}/assets/app.abc.js`),
-    ).toBe(
-      true,
-    );
-  });
-
-  it('marks HTML, APIs, redirects, errors, HEAD, and non-immutable assets no-store', async () => {
+  // Assets are served by the asset store and never reach the Worker, so every
+  // response it produces is a dynamic origin response.
+  it('marks every proxied response no-store', async () => {
     const cases: Array<[string, RequestInit | undefined, number, HeadersInit | undefined]> = [
-      ['https://adamficke.dev/', undefined, 200, undefined],
       ['https://adamficke.dev/api/profile', undefined, 200, undefined],
-      ['https://adamficke.dev/redirect', undefined, 302, { location: '/target' }],
-      ['https://adamficke.dev/error', undefined, 500, undefined],
-      ['https://adamficke.dev/assets/app.js', { method: 'HEAD' }, 200, undefined],
-      ['https://adamficke.dev/assets/app.js', undefined, 200, { 'cache-control': 'max-age=60' }],
+      ['https://adamficke.dev/api/redirect', undefined, 302, { location: '/target' }],
+      ['https://adamficke.dev/api/error', undefined, 500, undefined],
+      ['https://adamficke.dev/api/accounts', { method: 'HEAD' }, 200, undefined],
+      [
+        'https://adamficke.dev/api/profile',
+        undefined,
+        200,
+        { 'cache-control': 'public, max-age=31536000, immutable' },
+      ],
     ];
 
     for (const [url, init, status, headers] of cases) {
-      const deps = dependencies(async () => new Response(status === 302 ? null : 'body', { status, headers }));
-      const response = await handleRequest(
-        new Request(url, init),
-        testEnv,
-        createExecutionContext(),
-        deps,
+      const deps = dependencies(async () =>
+        new Response(status === 302 ? null : 'body', { status, headers }),
       );
+      const response = await proxyToOrigin(new Request(url, init), testEnv, deps);
       expect(response.headers.get('Cloudflare-CDN-Cache-Control'), url).toBe('no-store');
-      expect(deps.cache.putCalls, url).toBe(0);
     }
   });
 
   it('returns a generic 502 and logs no origin, IP, or secret on transport failure', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/profile', {
         headers: { 'cf-connecting-ip': '203.0.113.9' },
       }),
       testEnv,
-      createExecutionContext(),
       dependencies(async () => {
         throw new Error('connection to secret origin failed');
       }),

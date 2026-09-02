@@ -51,6 +51,10 @@ variable "secrets" {
     SIGNUP_INVITE_CODES = {
       description = "Comma-separated invite codes required to create an account"
     }
+    # Read by Cloud Build to plan the Cloudflare root, never mounted on Cloud Run.
+    NEON_WORKER_PASSWORD = {
+      description = "Password for the least-privilege Postgres role the Worker connects as"
+    }
   }
 }
 

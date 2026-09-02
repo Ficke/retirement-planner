@@ -1,0 +1,66 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "retire-plan-edge",
+  "main": "./src/worker/index.ts",
+  // Held at the newest date the vitest-pool-workers runtime supports, so the
+  // Worker under test runs the same semantics it ships with. Raise both
+  // together when the pool's workerd catches up.
+  "compatibility_date": "2026-08-22",
+  // pg needs Node built-ins. Implied at this date, listed because the code's
+  // dependence on it is not obvious from the imports.
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+
+  "assets": {
+    "not_found_handling": "single-page-application",
+    // Everything outside this list is answered by the asset store without
+    // invoking the Worker. Setting it to true instead routes every request
+    // through the Worker, and past the free daily limit those requests return
+    // 429 rather than falling back to asset serving.
+    "run_worker_first": ["/api/*"]
+  },
+
+  // assets.directory is deliberately absent. The Vite plugin writes it into the
+  // build's generated wrangler.json from the client build, and setting it here
+  // conflicts with build.outDir.
+
+  // Pinned at Neon's region, not Cloud Run's: the data routes make several
+  // round trips to Postgres and one to the origin.
+  "placement": { "region": "aws:us-east-1" },
+
+  // Created and owned by Wrangler, not Terraform: the configuration embeds the
+  // database password, and Terraform state lives in a GCS bucket that Cloud
+  // Build can read. Recreate with:
+  //   wrangler hyperdrive create retire-plan-neon --host=<neon-direct-host> \
+  //     --port=5432 --scheme=postgres --database=neondb \
+  //     --user=retire_worker --password=<NEON_WORKER_PASSWORD> --caching-disabled
+  //
+  // Caching is disabled on the configuration itself. Hyperdrive caches reads
+  // for 60 seconds and does not invalidate on write, and this app saves a
+  // profile and reads it back against a revision column, so a stale read would
+  // surface as a spurious 409 and an apparent lost write.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "20dfe757885c4e62b30897f4b780926e" }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "QUOTA", "class_name": "QuotaCounter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["QuotaCounter"] }],
+
+  "vars": {
+    "ORIGIN_URL": "https://retire-plan-lvs5yigt4a-uc.a.run.app",
+    "FIREBASE_PROJECT_ID": "gen-lang-client-0372385774"
+  },
+
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  }
+}

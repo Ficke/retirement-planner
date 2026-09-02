@@ -25,8 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  edge-proxy:
-    name: Edge Proxy Checks
+  edge-worker:
+    name: Edge Worker Checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -46,7 +46,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Validate Worker
-        run: pnpm -C apps/edge-proxy check
+        run: pnpm -C apps/web check:worker
 
   test-typescript:
     name: Run Tests

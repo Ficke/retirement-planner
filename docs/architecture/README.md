@@ -12,6 +12,11 @@ Reference for the Monte Carlo simulation architecture, including:
 - Rolling-deployment compatibility
 - Correctness invariants
 
+### [Edge Compute Plan](./edge-compute-plan.md)
+Proposed migration of the web tier from Cloud Run into the Cloudflare Worker:
+static assets at the edge, Hono on Workers, Neon through Hyperdrive, and a
+Worker-minted OIDC token for the retained Rust simulation service.
+
 ## Runtime properties
 
 - **Parallelization**: Rayon in the native service; bounded ordinary Workers in the browser

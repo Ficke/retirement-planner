@@ -43,6 +43,8 @@ timeout_seconds = 300
 
 allow_unauthenticated = true
 
+rust_max_instances = 2
+
 enable_cloud_build_trigger  = true
 cloud_build_trigger_name    = "deploy-production"
 cloud_build_service_account = "projects/gen-lang-client-0372385774/serviceAccounts/789638662967-compute@developer.gserviceaccount.com"

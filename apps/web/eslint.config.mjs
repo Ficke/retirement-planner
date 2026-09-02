@@ -11,6 +11,7 @@ export default tseslint.config(
       'dist-server/**',
       'next-env.d.ts',
       'src/wasm/**',
+      'worker-configuration.d.ts',
       'test-seedrandom.js',
       'playwright-report/**',
       'test-results/**',

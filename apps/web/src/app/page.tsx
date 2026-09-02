@@ -1,31 +1,13 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Moon, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
+import { Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/firebase";
 import { usePlan } from "@/state/usePlan";
-import { Sidebar, type PageId } from "@/components/retire/sidebar";
+import { Sidebar } from "@/components/retire/sidebar";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
-const PagePlan = lazy(() =>
-  import("@/components/retire/pages/plan").then(({ PagePlan }) => ({ default: PagePlan }))
-);
-const PageProfile = lazy(() =>
-  import("@/components/retire/pages/profile").then(({ PageProfile }) => ({ default: PageProfile }))
-);
-const PageAccounts = lazy(() =>
-  import("@/components/retire/pages/accounts").then(({ PageAccounts }) => ({ default: PageAccounts }))
-);
-const PageSettings = lazy(() =>
-  import("@/components/retire/pages/settings").then(({ PageSettings }) => ({ default: PageSettings }))
-);
-
-const PAGES: Record<PageId, { label: string; Comp: React.ElementType }> = {
-  plan:        { label: "Plan",        Comp: PagePlan },
-  accounts:    { label: "Accounts",    Comp: PageAccounts },
-  profile:     { label: "Profile",     Comp: PageProfile },
-  settings:    { label: "Settings",    Comp: PageSettings },
-};
+import { APP_PAGES, appPageForPath } from "@/lib/client-routes";
 
 export default function Home() {
   const { user, cloudReady, loading, error: authError } = useAuth();
@@ -35,8 +17,8 @@ export default function Home() {
   const planError = usePlan((s) => s.error);
   const clearError = usePlan((s) => s.clearError);
   const { resolvedTheme, setTheme } = useTheme();
+  const location = useLocation();
 
-  const [page, setPage] = useState<PageId>("plan");
   const [collapsed, setCollapsed] = useState(false);
 
   // Preserve usable chart width on phones. The sidebar can still be expanded
@@ -71,14 +53,13 @@ export default function Home() {
     );
   }
 
-  const Page = PAGES[page].Comp;
+  const page = appPageForPath(location.pathname);
   const isDark = resolvedTheme === "dark";
 
   return (
     <div className="bg-background text-foreground flex h-screen min-h-screen">
       <Sidebar
         active={page}
-        onNav={setPage}
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((c) => !c)}
         user={user ? { name: user.displayName || user.email?.split("@")[0] || "You", email: user.email || "" } : null}
@@ -88,7 +69,9 @@ export default function Home() {
           <div className="text-muted-foreground flex items-center gap-2 text-xs">
             <span>Retire</span>
             <span className="opacity-40">/</span>
-            <b className="text-foreground font-semibold">{PAGES[page].label}</b>
+            <b className="text-foreground font-semibold">
+              {page ? APP_PAGES[page].label : "Page not found"}
+            </b>
           </div>
           <Button
             variant="ghost"
@@ -124,9 +107,7 @@ export default function Home() {
                 </AlertDescription>
               </Alert>
             )}
-            <Suspense fallback={<div className="text-muted-foreground py-8 text-center">Loading…</div>}>
-              <Page />
-            </Suspense>
+            <Outlet />
           </div>
         </main>
       </div>

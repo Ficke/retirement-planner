@@ -24,6 +24,8 @@ vi.mock('@/lib/firebase/server', () => ({
 vi.mock('@/services/server/database', () => ({
   AccountLimitError: mocks.AccountLimitError,
   ProfileRevisionConflictError: mocks.ProfileRevisionConflictError,
+}));
+vi.mock('@/services/server/database-pool', () => ({
   getUnifiedDatabaseService: mocks.getUnifiedDatabaseService,
 }));
 vi.mock('@/lib/rate-limit', () => ({

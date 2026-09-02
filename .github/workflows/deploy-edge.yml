@@ -19,6 +19,13 @@ jobs:
     if: vars.EDGE_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
 
     steps:
       - name: Checkout code
@@ -35,12 +42,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Before the Worker deploys, never from a request. The Worker refuses to
+      # serve below REQUIRED_SCHEMA_VERSION, so a skipped migration fails closed
+      # rather than writing against a schema the code does not expect.
+      - name: Apply database migrations
+        run: pnpm -C apps/web exec tsx scripts/migrate.ts
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          MIGRATION_GRANT_ROLE: retire_worker
+
+      - name: Build client and Worker
+        run: pnpm -C apps/web build:edge
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/edge-proxy
-          wranglerVersion: '4.123.0'
+          workingDirectory: apps/web
+          wranglerVersion: '4.128.0'
           packageManager: pnpm
           command: deploy --strict
+
+      # The SPA fallback answers a missing asset with the shell at status 200,
+      # so a mismatched upload has no error signal of its own.
+      - name: Verify deployed assets
+        run: ./scripts/verify-edge-assets.sh https://adamficke.dev
