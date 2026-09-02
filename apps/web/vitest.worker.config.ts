@@ -3,9 +3,8 @@ import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
 import { defineConfig } from 'vitest/config';
 
 // Miniflare refuses to start a Hyperdrive binding without a local origin, even
-// for tests that never open a connection. These exercise the proxy and the
-// request plumbing; the data routes are tested against their dependencies in
-// tests/api.
+// for tests that never open a connection. The Postgres driver is loaded on
+// first use, so nothing here reaches it.
 process.env.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE ??=
   'postgresql://retire_worker:local-only@127.0.0.1:5432/neondb';
 

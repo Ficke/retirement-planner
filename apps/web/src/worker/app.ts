@@ -1,64 +1,16 @@
-import { Hono, type Context } from 'hono';
+import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 
 import { createDataRoutes, type DataRouteEnv } from '@/api/data-routes';
 import { INVITE_RATE_LIMIT } from '@/lib/invite-code';
-import {
-  REQUIRED_SCHEMA_VERSION,
-  SchemaFloorError,
-  type UnifiedDatabaseService,
-} from '@/services/server/database';
-import { openDatabase } from '@/services/server/database-client';
+import { SchemaFloorError } from '@/services/server/database';
+import { durableObjectQuota } from './quota-counter';
+import { withDatabase, type DatabaseEnv } from './request-database';
 
-type WorkerEnv = DataRouteEnv & {
+type WorkerEnv = {
   Bindings: Env;
-  Variables: DataRouteEnv['Variables'] & { database: UnifiedDatabaseService };
+  Variables: DataRouteEnv['Variables'] & DatabaseEnv['Variables'];
 };
-
-/**
- * Checked once per isolate rather than once per request. A deploy that skipped
- * the migration step in CI fails closed here instead of writing against a
- * schema the code does not expect.
- */
-let schemaCheck: Promise<void> | null = null;
-
-async function assertSchemaFloor(db: UnifiedDatabaseService): Promise<void> {
-  schemaCheck ??= (async () => {
-    const { rows } = await db.query<{ version: number | null }>(
-      'SELECT MAX(version) AS version FROM schema_migrations',
-    );
-    const deployed = Number(rows[0]?.version ?? 0);
-    if (deployed < REQUIRED_SCHEMA_VERSION) throw new SchemaFloorError(deployed);
-  })();
-
-  try {
-    await schemaCheck;
-  } catch (error) {
-    // A failed check must not poison the isolate for a database that has since
-    // been migrated.
-    schemaCheck = null;
-    throw error;
-  }
-}
-
-/**
- * One connection per request, closed after the response.
- *
- * Hyperdrive's origin connections are a small fixed pool on the free plan, so a
- * client that is never ended exhausts it. waitUntil keeps the close off the
- * response's critical path.
- */
-async function requestDatabase(c: Context<WorkerEnv>): Promise<UnifiedDatabaseService> {
-  const existing = c.get('database');
-  if (existing) return existing;
-
-  const session = await openDatabase(c.env.HYPERDRIVE.connectionString);
-  c.executionCtx.waitUntil(session.close());
-  c.set('database', session.db);
-
-  await assertSchemaFloor(session.db);
-  return session.db;
-}
 
 export const edgeApp = new Hono<WorkerEnv>();
 
@@ -80,20 +32,14 @@ edgeApp.use('*', async (c, next) => {
   await next();
 });
 
+edgeApp.use('*', withDatabase());
+
 edgeApp.route(
   '/',
   createDataRoutes<WorkerEnv>({
-    getDatabase: requestDatabase,
-    async limitSignup(c, key) {
-      const counter = c.env.QUOTA.get(c.env.QUOTA.idFromName('signup'));
-      const decision = await counter.consume(
-        key,
-        1,
-        INVITE_RATE_LIMIT.limit,
-        INVITE_RATE_LIMIT.windowMs,
-      );
-      return { success: decision.success, reset: decision.reset };
-    },
+    getDatabase: (c) => c.var.database(),
+    signupQuota: (c) => durableObjectQuota(c.env.QUOTA, 'signup'),
+    signupBudget: INVITE_RATE_LIMIT,
   }),
 );
 

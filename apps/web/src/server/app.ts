@@ -22,6 +22,7 @@ import {
   batchRequestSchema,
   monteCarloRequestSchema,
 } from '@/lib/simulation-request';
+import type { Budget, QuotaLimiter } from '@/api/quota';
 import { readLimitedJson } from '@/lib/validation';
 import { getUnifiedDatabaseService } from '@/services/server/database-pool';
 
@@ -110,12 +111,19 @@ app.use('*', async (c, next) => {
 
 app.get('/healthz', (c) => c.json({ status: 'ok' }));
 
+const inProcessQuota: QuotaLimiter = {
+  consume: (key: string, cost: number, budget: Budget) => rateLimit(key, budget, cost),
+};
+
 app.route(
   '/',
   createDataRoutes({
     // The pool outlives the request on Cloud Run, so there is nothing to close.
     getDatabase: async () => getUnifiedDatabaseService(),
-    limitSignup: (_c, key) => rateLimit(key, INVITE_RATE_LIMIT),
+    // One process, one counter. The edge needs a Durable Object for the same
+    // guarantee because its isolates share nothing.
+    signupQuota: () => inProcessQuota,
+    signupBudget: INVITE_RATE_LIMIT,
   }),
 );
 

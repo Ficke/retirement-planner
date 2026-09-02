@@ -1,59 +1,65 @@
 import { DurableObject } from 'cloudflare:workers';
-
-/**
- * An exact, globally consistent counter over a fixed window.
- *
- * The Workers rate-limit binding is per-colo, eventually consistent, and has no
- * weighted cost — Cloudflare describes it as intentionally not an accounting
- * system. That is fine for a request count and useless for a path budget, where
- * one request may cost a thousand times another. This object carries the cost.
- *
- * Keyed on a verified Firebase uid, never an IP: the zone WAF rule is the coarse
- * pre-authentication shield, and application quotas only run after identity.
- */
-export interface QuotaDecision {
-  success: boolean;
-  /** Epoch milliseconds at which the window resets. */
-  reset: number;
-  remaining: number;
-}
+import type { Budget, QuotaDecision } from '@/api/quota';
 
 interface WindowState {
   used: number;
   reset: number;
 }
 
+/**
+ * An exact, globally consistent quota over a fixed window.
+ *
+ * The Workers rate-limit binding cannot do this job: it is per-colo, eventually
+ * consistent, and has no weighted cost, which Cloudflare states plainly. That
+ * is adequate for counting requests and useless for a path budget, where one
+ * request can cost a thousand times another.
+ *
+ * Callers key on a verified identity, never an IP. The zone WAF rule is the
+ * coarse pre-authentication shield; this runs after identity is established.
+ */
 export class QuotaCounter extends DurableObject {
-  async consume(key: string, cost: number, limit: number, windowMs: number): Promise<QuotaDecision> {
+  async consume(key: string, cost: number, budget: Budget): Promise<QuotaDecision> {
     const now = Date.now();
     const stored = await this.ctx.storage.get<WindowState>(key);
     const window: WindowState = stored && stored.reset > now
       ? stored
-      : { used: 0, reset: now + windowMs };
+      : { used: 0, reset: now + budget.windowMs };
 
-    // A single request larger than the whole budget can never succeed; reject
-    // it without consuming the window, so it cannot starve smaller requests.
-    if (cost > limit) {
-      return { success: false, reset: window.reset, remaining: limit - window.used };
+    // A request larger than the entire budget can never succeed. Refusing it
+    // without spending the window keeps it from starving smaller ones.
+    const refused = cost > budget.limit || window.used + cost > budget.limit;
+    if (refused) {
+      return { success: false, reset: window.reset, remaining: budget.limit - window.used };
     }
 
-    if (window.used + cost > limit) {
-      return { success: false, reset: window.reset, remaining: limit - window.used };
-    }
-
-    window.used += cost;
-    await this.ctx.storage.put(key, window);
-    // Storage is durable but the window is disposable; let it expire rather
-    // than accumulate a row per key forever.
-    await this.ctx.storage.setAlarm(window.reset);
-    return { success: true, reset: window.reset, remaining: limit - window.used };
+    const next: WindowState = { used: window.used + cost, reset: window.reset };
+    await this.ctx.storage.put(key, next);
+    // Windows are disposable; expire them rather than keep a row per key.
+    await this.ctx.storage.setAlarm(next.reset);
+    return { success: true, reset: next.reset, remaining: budget.limit - next.used };
   }
 
   async alarm(): Promise<void> {
     const now = Date.now();
-    const entries = await this.ctx.storage.list<WindowState>();
-    for (const [key, window] of entries) {
+    for (const [key, window] of await this.ctx.storage.list<WindowState>()) {
       if (window.reset <= now) await this.ctx.storage.delete(key);
     }
   }
+}
+
+/**
+ * Adapt a QuotaCounter namespace to the shared limiter interface.
+ *
+ * `shard` selects the object, so unrelated budgets do not serialize behind one
+ * another; keys within a shard stay independent.
+ */
+export function durableObjectQuota(
+  namespace: DurableObjectNamespace<QuotaCounter>,
+  shard: string,
+) {
+  return {
+    consume(key: string, cost: number, budget: Budget): Promise<QuotaDecision> {
+      return namespace.get(namespace.idFromName(shard)).consume(key, cost, budget);
+    },
+  };
 }
