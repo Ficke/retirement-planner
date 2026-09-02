@@ -1,10 +1,19 @@
 # Edge compute migration plan
 
-Status: reviewed, awaiting approval
+Status: approved; ready to begin Phase 0
 Last updated: 2026-09-01
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
 migration operations). Findings folded in; see [Review corrections](#review-corrections).
+
+## Resume point
+
+As of 2026-09-01, the branch is rebased onto `origin/main`. Planning and the
+URL-addressable page routing are complete; no migration phase or migration
+cloud-resource change has started. Resume with Phase 0 after fetching and
+confirming the base and rechecking time-sensitive live configuration. The
+page-routing portion of Phase 1 is already implemented and verified on this
+branch; do not rebuild it.
 
 ## Objective
 
@@ -57,7 +66,8 @@ into `apps/web`.
 
 ```text
 apps/web/
-  src/client/          React SPA, unchanged
+  src/app/             React pages, retained
+  src/components/      React UI, retained
   src/worker/          Hono app, moved from src/server
   src/wasm/            generated Wasm package, unchanged
   public/_headers      static-asset response headers
@@ -95,6 +105,11 @@ half of `cloudbuild.yaml`.
 
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<id>" }],
 
+  "vars": {
+    "FIREBASE_PROJECT_ID": "<project-id>",
+    "RUST_SERVICE_URL": "<private-cloud-run-service-url>"
+  },
+
   "ratelimits": [
     { "name": "SIMULATION_LIMIT", "namespace_id": "1001",
       "simple": { "limit": 300, "period": 60 } }
@@ -112,7 +127,6 @@ half of `cloudbuild.yaml`.
       "GCP_SA_CLIENT_EMAIL",
       "GCP_SA_PRIVATE_KEY",
       "GCP_SA_PRIVATE_KEY_ID",
-      "FIREBASE_PROJECT_ID",
       "SIGNUP_INVITE_CODES"
     ]
   },
@@ -421,11 +435,16 @@ Plus three configuration checks that are cheap and independently worthwhile:
 - Choose a deliberate Cloud Run `max_instances` cap after measuring the Rust
   service, so worst-case spend is bounded without guessing at a value here.
 
-Require a verified Firebase token before either simulation handler or limiter
-runs. Signed-out sessions use local Wasm and never call the server simulation
-routes. `cloudComputeEnabled` must include authenticated account readiness, not
-only the stored engine preference. The zone WAF remains an IP-based coarse
-shield before authentication; application quotas use only the verified `uid`.
+Require a verified Firebase token and a matching row in the application
+`users` table before either simulation handler or limiter runs. A Firebase
+identity alone is insufficient: Firebase's public signup API can create an
+identity without passing this app's invite check. A short-lived Cache API entry
+may avoid repeating the membership query, but it must be keyed by verified
+`uid` and have a bounded revocation delay. Signed-out or unregistered sessions
+use local Wasm and never call the Rust service. `cloudComputeEnabled` must
+include authenticated application-account readiness, not only the stored
+engine preference. The zone WAF remains an IP-based coarse shield before
+authentication; application quotas use only the verified `uid`.
 
 Invite codes are operator-typed strings (`invite-code.ts:11`) with no entropy
 floor, so "code entropy is the real defense" is an assumption, not a control.
@@ -497,10 +516,16 @@ check.
 `--no-traffic` candidate, and `promote-web` (`:218-229`) only runs on success.
 Deleting it leaves nothing proving the Worker → Rust → wire-contract path.
 
-Replacement: deploy directly with Wrangler, then run `scripts/smoke-check.sh`
-against `https://adamficke.dev`. On failure, roll back to the preceding Worker
-version before continuing. The site has effectively no traffic, so a separate
-preview or gradual-deployment path is unnecessary.
+Replacement: rewrite `scripts/smoke-check.sh` to call the authenticated public
+simulation route, then deploy directly with Wrangler and run it against
+`https://adamficke.dev`. Use a dedicated Firebase smoke user that has a row in
+the application `users` table; store its email and password only as GitHub
+Actions secrets, obtain a short-lived ID token through Firebase's password
+sign-in REST endpoint, and never print either credential or token. The smoke
+user needs no plan data because simulation inputs are transient. On failure,
+roll back to the preceding Worker version before continuing. The site has
+effectively no traffic, so a separate preview or gradual-deployment path is
+unnecessary.
 
 ### The deploy pipeline is active
 
@@ -549,13 +574,13 @@ Move the Vite build into the edge deploy. The asset store serves **both** the
 HTML shell and hashed assets; the Worker keeps proxying `/api/*` to Cloud Run
 with the origin secret intact.
 
-Make the four application pages URL-addressable in the same phase: `/plan`,
+The four application pages are already URL-addressable on this branch: `/plan`,
 `/accounts`, `/profile`, and `/settings`, with `/` redirecting to `/plan`.
-Authentication keeps `/auth/signin` and `/auth/signup`. Use a nested application
-layout and route-driven sidebar links so direct loads, refresh, browser
-Back/Forward, page titles, and `aria-current` all follow the URL. Filters,
-dialogs, expanded panels, and sidebar collapse remain transient UI state rather
-than routes.
+Authentication keeps `/auth/signin` and `/auth/signup`. The nested application
+layout and route-driven sidebar links make direct loads, refresh, browser
+Back/Forward, page titles, and `aria-current` follow the URL. Filters, dialogs,
+expanded panels, and sidebar collapse remain transient UI state rather than
+routes. Retain and verify this behavior when the asset deployment changes.
 
 Serving HTML and assets from the same deploy is deliberate. The first draft left
 HTML on Cloud Run while assets moved to the edge — two pipelines, both fired by a
@@ -589,14 +614,16 @@ may upgrade the Workers plan.
 ### Phase 3 — simulation at the edge
 
 Token minting with Cache API caching. Compatibility flags for request signals.
-Port the simulation routes, require Firebase authentication, and make
-`cloudComputeEnabled` route signed-out sessions to local Wasm. Fix
-`requiresIdToken` and `simulationProxyError`.
+Port the simulation routes, require both Firebase authentication and a matching
+application user, and make `cloudComputeEnabled` route signed-out or
+unregistered sessions to local Wasm. Fix `requiresIdToken` and
+`simulationProxyError`.
 
 Gate: simulations succeed through the edge; the Rust service still refuses
 unauthenticated callers; an aborted request actually cancels the upstream call;
-signed-out requests never reach server simulation; no key or token appears in
-logs or traces.
+signed-out and unregistered requests never reach server simulation; the
+dedicated smoke account verifies the production path; no key or token appears
+in logs or traces.
 
 ### Phase 4 — retire the origin
 
@@ -627,7 +654,7 @@ behaviors below.
   connection-string entry point — another reason for the factory shape.
 - `tests/contracts/wasm-native-parity.test.ts` is **unaffected**: it fetches
   `RUST_SERVICE_URL` directly and loads the Wasm from disk. Do not port it.
-- `tests/e2e/smoke.spec.ts:130` asserts the Wasm MIME type against the Vite dev
+- `tests/e2e/smoke.spec.ts` asserts the Wasm MIME type against the Vite dev
   server, so it cannot guard `_headers`. Add a second Playwright project with a
   deployed baseURL.
 - `smoke.spec.ts:57` relies on `/api/*` failing at the proxy so the client falls
@@ -697,11 +724,13 @@ limits, not triggers for a billing change.
 - Log `cloud_fallback_activated` once per transition, plus
   `cloud_reconnect_succeeded` or `cloud_reconnect_conflict` after an explicit
   recovery attempt through the existing Google Analytics event wrapper. Include
-  only a coarse reason category; never include plan fields, account data,
-  Firebase IDs, email addresses, or request contents. Do not build a deferred
-  telemetry queue: if Analytics is blocked or the browser is offline, losing a
-  diagnostic event is acceptable. Local storage holds only the sticky fallback
-  state needed for application behavior.
+  only a coarse reason category; never add plan fields, account data, Firebase
+  IDs, email addresses, or request contents as event parameters. The existing
+  Analytics setup associates signed-in events with its configured user ID; this
+  decision does not change that behavior. Do not build a deferred telemetry
+  queue: if Analytics is blocked or the browser is offline, losing a diagnostic
+  event is acceptable. Local storage holds only the sticky fallback state
+  needed for application behavior.
 - Worker request, error, CPU, and Hyperdrive query counts are available through
   Cloudflare analytics and the GraphQL API. Review their daily totals before
   retiring Cloud Run and document the query in the operations runbook.
@@ -713,17 +742,13 @@ limits, not triggers for a billing change.
 
 **Cross-origin isolation and Wasm threads.** `simulation-architecture.md`
 rejected shared-memory threads because isolation would break authentication
-popups. The app has no popups — `lib/firebase/auth.ts` uses email and password
-only — and no cross-origin subresources: fonts and the Firebase SDK are bundled,
-`index.html` loads no external script, `getAnalytics()` is never called. So
-`COOP: same-origin` with `COEP: require-corp` appears satisfiable today, giving
-`crossOriginIsolated` and unlocking `wasm-bindgen-rayon` for the 5,000-path run.
-Ship the headers report-only first. This forecloses popup-based OAuth: `COOP:
-restrict-properties` was put on hold by Chrome in April 2025 and ships nowhere.
-The exit is redirect sign-in with `/__/auth/*` proxied through the Worker to
-`<project>.firebaseapp.com` — Google's own recommendation for browsers that
-partition storage. Note that such a route is neither `/api/*` nor an asset, so it
-needs its own header coverage.
+popups. Authentication currently uses email and password, but
+`public/analytics-bootstrap.js` injects Google Analytics from
+`googletagmanager.com`, so the earlier claim that the app has no cross-origin
+subresources is false. Treat Analytics compatibility as an unresolved blocker
+before adding `COEP: require-corp`; do not fold isolation into this migration.
+If revisited, ship headers report-only first and separately account for future
+popup-based OAuth.
 
 **Compute default.** `useServerSideCalculations` defaults to `true`. Once native
 and Wasm 5,000-path latency are measured side by side, revisit.
@@ -806,10 +831,13 @@ allowlist is weak for the reason given under Risks, but it is available.
 - 2026-09-01: Explicit cloud reconnection uses the local plan as the proposed
   source, but stops on a changed cloud revision. Log each fallback transition
   and reconciliation outcome once through the existing Google Analytics event
-  wrapper, without a retry queue or user or plan data.
-- 2026-09-01: Require Firebase authentication for server simulations. Signed-out
-  users always use local Wasm, application quotas key on verified `uid`, and the
-  zone WAF remains the coarse IP-based pre-authentication shield.
+  wrapper, without a retry queue or sensitive event parameters; existing
+  Analytics user association is unchanged.
+- 2026-09-01: Require a registered application account, not only a valid
+  Firebase identity, for server simulations. Signed-out or unregistered users
+  always use local Wasm, application quotas key on a verified application
+  user's `uid`, and the zone WAF remains the coarse IP-based pre-authentication
+  shield.
 - 2026-09-01: No signup invite codes have been distributed. Generate a fresh
   high-entropy code when installing the Worker secret rather than migrating the
   current value.
