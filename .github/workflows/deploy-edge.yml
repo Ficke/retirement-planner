@@ -42,6 +42,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Before the Worker deploys, never from a request. The Worker refuses to
+      # serve below REQUIRED_SCHEMA_VERSION, so a skipped migration fails closed
+      # rather than writing against a schema the code does not expect.
+      - name: Apply database migrations
+        run: pnpm -C apps/web exec tsx scripts/migrate.ts
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          MIGRATION_GRANT_ROLE: retire_worker
+
       - name: Build client and Worker
         run: pnpm -C apps/web build:edge
 

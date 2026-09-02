@@ -82,10 +82,14 @@ steps:
     id: 'verify-cloudflare-terraform-applied'
     waitFor: ['-']
     entrypoint: 'sh'
+    secretEnv: ['NEON_WORKER_PASSWORD']
     args:
       - '-c'
       - |
         set -eu
+        # The Hyperdrive origin password is the one Cloudflare variable with no
+        # value in the repository, and a plan cannot run without it.
+        export TF_VAR_neon_worker_password="$$NEON_WORKER_PASSWORD"
         terraform -chdir=terraform/cloudflare init -input=false
 
         set +e
@@ -270,3 +274,5 @@ availableSecrets:
   secretManager:
     - versionName: 'projects/$PROJECT_ID/secrets/ORIGIN_SECRET/versions/${_ORIGIN_SECRET_VERSION}'
       env: 'ORIGIN_SECRET'
+    - versionName: 'projects/$PROJECT_ID/secrets/NEON_WORKER_PASSWORD/versions/latest'
+      env: 'NEON_WORKER_PASSWORD'

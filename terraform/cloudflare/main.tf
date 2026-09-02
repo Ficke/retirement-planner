@@ -185,3 +185,32 @@ resource "cloudflare_zone_dnssec" "site" {
   zone_id = var.cloudflare_zone_id
   status  = "active"
 }
+
+# Hyperdrive pools Neon connections for the Worker, which cannot hold a pool of
+# its own across isolates.
+#
+# Caching is disabled deliberately. Hyperdrive caches read queries for 60
+# seconds and does not invalidate on write; this app saves a profile and reads
+# it back against a revision column, so a stale read would surface as a
+# spurious 409 and an apparent lost write. Disabling it also means every
+# statement reaches the free plan's 100,000 queries/day meter, which is the
+# binding constraint on this design and needs watching.
+resource "cloudflare_hyperdrive_config" "neon" {
+  account_id = var.cloudflare_account_id
+  name       = "retire-plan-neon"
+
+  origin = {
+    scheme               = "postgres"
+    host                 = var.neon_host
+    port                 = 5432
+    database             = var.neon_database
+    user                 = var.neon_worker_user
+    password             = var.neon_worker_password
+    access_client_id     = null
+    access_client_secret = null
+  }
+
+  caching = {
+    disabled = true
+  }
+}

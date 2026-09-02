@@ -12,3 +12,9 @@ enable_rate_limit       = true
 enable_always_use_https = true
 enable_tls_hardening    = true
 enable_dnssec           = true
+
+# Hyperdrive targets Neon's direct endpoint, not its pooler: Hyperdrive does the
+# pooling, and stacking two transaction poolers buys nothing.
+neon_host        = "ep-snowy-breeze-adx0azc5.c-2.us-east-1.aws.neon.tech"
+neon_database    = "neondb"
+neon_worker_user = "retire_worker"

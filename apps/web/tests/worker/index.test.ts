@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleRequest, type ProxyDependencies } from '@/worker/index';
+import { proxyToOrigin, type ProxyDependencies } from '@/worker/proxy';
 
+// Only the proxy's own bindings matter here; the data routes are exercised
+// against their dependencies in tests/api.
 const testEnv = {
   ORIGIN_URL: 'https://retire-plan-lvs5yigt4a-uc.a.run.app',
   ORIGIN_SECRET: 'local-test-origin-secret',
-} satisfies Env;
+} as unknown as Env;
 
 function dependencies(originFetch: ProxyDependencies['originFetch']): ProxyDependencies {
   return { originFetch };
@@ -17,8 +19,8 @@ afterEach(() => {
 describe('edge worker', () => {
   it('fails closed when required configuration is missing', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const missingSecretEnv = { ...testEnv, ORIGIN_SECRET: '' } satisfies Env;
-    const response = await handleRequest(
+    const missingSecretEnv = { ...testEnv, ORIGIN_SECRET: '' } as Env;
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/profile'),
       missingSecretEnv,
       dependencies(async () => new Response('must not be called')),
@@ -38,7 +40,7 @@ describe('edge worker', () => {
       return new Response('ok');
     });
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://staging.adamficke.dev/api/profile?view=full', {
         headers: {
           'cf-connecting-ip': '203.0.113.9',
@@ -78,7 +80,7 @@ describe('edge worker', () => {
         }),
     );
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://staging.adamficke.dev/api/profile'),
       testEnv,
       deps,
@@ -102,7 +104,7 @@ describe('edge worker', () => {
       return new Response('streamed response');
     });
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/monte-carlo', {
         method: 'POST',
         body: 'request-stream',
@@ -121,7 +123,7 @@ describe('edge worker', () => {
   it('returns the upstream response before its body stream closes', async () => {
     const stream = new TransformStream<Uint8Array, Uint8Array>();
     const writer = stream.writable.getWriter();
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/batch'),
       testEnv,
       dependencies(async () => new Response(stream.readable)),
@@ -141,7 +143,7 @@ describe('edge worker', () => {
         headers: { location: `${testEnv.ORIGIN_URL}/auth/signin?next=%2Fplan` },
       }),
     );
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://staging.adamficke.dev/api/private'),
       testEnv,
       originRedirect,
@@ -153,7 +155,7 @@ describe('edge worker', () => {
     const externalRedirect = dependencies(async () =>
       new Response(null, { status: 302, headers: { location: 'https://accounts.google.com/' } }),
     );
-    const external = await handleRequest(
+    const external = await proxyToOrigin(
       new Request('https://adamficke.dev/api/auth'),
       testEnv,
       externalRedirect,
@@ -164,7 +166,7 @@ describe('edge worker', () => {
   it('refuses to forward internal paths, so the deploy probe stays unreachable', async () => {
     const originFetch = vi.fn(async () => new Response('should never be reached'));
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/internal/simulation-probe', { method: 'POST', body: '{}' }),
       testEnv,
       dependencies(originFetch),
@@ -178,7 +180,7 @@ describe('edge worker', () => {
   it('still forwards the public simulation routes', async () => {
     const originFetch = vi.fn(async () => new Response('{}', { status: 401 }));
 
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/simulation/monte-carlo', { method: 'POST', body: '{}' }),
       testEnv,
       dependencies(originFetch),
@@ -208,14 +210,14 @@ describe('edge worker', () => {
       const deps = dependencies(async () =>
         new Response(status === 302 ? null : 'body', { status, headers }),
       );
-      const response = await handleRequest(new Request(url, init), testEnv, deps);
+      const response = await proxyToOrigin(new Request(url, init), testEnv, deps);
       expect(response.headers.get('Cloudflare-CDN-Cache-Control'), url).toBe('no-store');
     }
   });
 
   it('returns a generic 502 and logs no origin, IP, or secret on transport failure', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const response = await handleRequest(
+    const response = await proxyToOrigin(
       new Request('https://adamficke.dev/api/profile', {
         headers: { 'cf-connecting-ip': '203.0.113.9' },
       }),
