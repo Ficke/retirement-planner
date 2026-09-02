@@ -19,5 +19,5 @@
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "vite.config.ts", "tsup.config.ts", "vitest.config.ts", "vitest.contract.config.ts", "playwright.config.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "src/worker/**/*", "tests/worker/**/*"]
 }

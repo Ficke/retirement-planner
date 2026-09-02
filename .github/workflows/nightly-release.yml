@@ -57,7 +57,6 @@ jobs:
 
             if git diff --quiet "$latest_release_commit" "$GITHUB_SHA" -- \
               apps/web \
-              apps/edge-proxy \
               rust-simulation-service \
               scripts \
               Dockerfile \

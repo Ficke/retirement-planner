@@ -42,12 +42,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build client and Worker
+        run: pnpm -C apps/web build:edge
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/edge-proxy
-          wranglerVersion: '4.123.0'
+          workingDirectory: apps/web
+          wranglerVersion: '4.128.0'
           packageManager: pnpm
           command: deploy --strict
+
+      # The SPA fallback answers a missing asset with the shell at status 200,
+      # so a mismatched upload has no error signal of its own.
+      - name: Verify deployed assets
+        run: ./scripts/verify-edge-assets.sh https://adamficke.dev

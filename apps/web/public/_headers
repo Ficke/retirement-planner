@@ -1,0 +1,17 @@
+# Static-asset response headers. These apply only to responses the asset store
+# serves; Worker responses carry the origin's own secureHeaders() output.
+#
+# The policy below mirrors apps/web/src/server/app.ts. When one changes, change
+# the other, or the SPA shell and the API will disagree until Cloud Run retires.
+
+/*
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com wss://*.firebaseio.com; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; frame-src 'self' https://*.firebaseapp.com; img-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

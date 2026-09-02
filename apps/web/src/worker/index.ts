@@ -4,19 +4,11 @@ const ORIGINAL_HOST_HEADER = 'x-retire-plan-original-host';
 const ORIGINAL_PROTO_HEADER = 'x-retire-plan-original-proto';
 const REQUEST_ID_HEADER = 'x-retire-plan-request-id';
 
-const STATIC_PATH_PREFIX = '/assets/';
 const INTERNAL_PATH_PREFIX = '/api/internal/';
 const NO_STORE = 'no-store';
-const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
-
-export interface EdgeCache {
-  match(request: Request): Promise<Response | undefined>;
-  put(request: Request, response: Response): Promise<void>;
-}
 
 export interface ProxyDependencies {
   originFetch(request: Request): Promise<Response>;
-  cache: EdgeCache;
 }
 
 function protectedRequestHeader(name: string): boolean {
@@ -42,6 +34,8 @@ function originRequestHeaders(request: Request, env: Env, requestId: string): He
   }
 
   const publicUrl = new URL(request.url);
+  // Only cf-connecting-ip is read. Cloudflare overwrites it, while
+  // x-forwarded-for is appended to and so carries client-supplied values.
   const clientIp = request.headers.get('cf-connecting-ip')?.trim();
   headers.set(ORIGIN_SECRET_HEADER, env.ORIGIN_SECRET);
   headers.set(ORIGINAL_HOST_HEADER, publicUrl.host);
@@ -51,13 +45,12 @@ function originRequestHeaders(request: Request, env: Env, requestId: string): He
   return headers;
 }
 
-function configuredOrigins(env: Env): { origin: URL; canonical: URL } {
+function configuredOrigin(env: Env): URL {
   const origin = new URL(env.ORIGIN_URL);
-  const canonical = new URL(env.CANONICAL_ORIGIN);
-  if (origin.protocol !== 'https:' || canonical.protocol !== 'https:' || !env.ORIGIN_SECRET) {
+  if (origin.protocol !== 'https:' || !env.ORIGIN_SECRET) {
     throw new Error('Invalid edge proxy configuration');
   }
-  return { origin, canonical };
+  return origin;
 }
 
 function originUrlFor(request: Request, origin: URL): URL {
@@ -126,26 +119,6 @@ function safeResponseHeaders(
   return headers;
 }
 
-function isStaticGet(request: Request): boolean {
-  return request.method === 'GET' && new URL(request.url).pathname.startsWith(STATIC_PATH_PREFIX);
-}
-
-function cacheKey(request: Request, canonical: URL): Request {
-  const incoming = new URL(request.url);
-  const key = new URL(canonical);
-  key.pathname = incoming.pathname;
-  key.search = incoming.search;
-  return new Request(key, { method: 'GET' });
-}
-
-function immutable(upstream: Response): boolean {
-  return (
-    upstream.status === 200 &&
-    !upstream.headers.has('set-cookie') &&
-    /(?:^|,)\s*immutable(?:\s*(?:,|$))/i.test(upstream.headers.get('cache-control') ?? '')
-  );
-}
-
 function responseWithRequestId(response: Response, requestId: string): Response {
   const headers = new Headers(response.headers);
   headers.set(REQUEST_ID_HEADER, requestId);
@@ -168,16 +141,17 @@ function structuredError(event: string, request: Request, requestId: string): vo
   );
 }
 
+// The asset store answers every other path, including the SPA shell, without
+// invoking this Worker. Only run_worker_first patterns reach here.
 export async function handleRequest(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
   dependencies?: ProxyDependencies,
 ): Promise<Response> {
   const requestId = crypto.randomUUID();
-  let origins: { origin: URL; canonical: URL };
+  let origin: URL;
   try {
-    origins = configuredOrigins(env);
+    origin = configuredOrigin(env);
   } catch {
     structuredError('edge_configuration_error', request, requestId);
     const failure = new Response('Internal server error', {
@@ -198,23 +172,11 @@ export async function handleRequest(
     return responseWithRequestId(blocked, requestId);
   }
 
-  const originFetch = dependencies?.originFetch ?? ((originRequest) => fetch(originRequest));
-  const cache = dependencies?.cache ?? (await caches.open('retire-plan-edge-static'));
-  const eligibleForCache = isStaticGet(request);
-  const key = eligibleForCache ? cacheKey(request, origins.canonical) : null;
-
-  if (key) {
-    try {
-      const cached = await cache.match(key);
-      if (cached) return responseWithRequestId(cached, requestId);
-    } catch {
-      structuredError('edge_cache_read_error', request, requestId);
-    }
-  }
+  const originFetch = dependencies?.originFetch ?? ((proxied) => fetch(proxied));
 
   let upstream: Response;
   try {
-    upstream = await originFetch(originRequest(request, env, origins.origin, requestId));
+    upstream = await originFetch(originRequest(request, env, origin, requestId));
   } catch {
     structuredError('origin_transport_error', request, requestId);
     const failure = new Response('Bad gateway', {
@@ -224,28 +186,19 @@ export async function handleRequest(
     return responseWithRequestId(failure, requestId);
   }
 
-  const headers = safeResponseHeaders(upstream, origins.origin, new URL(request.url));
-  const cacheable = key !== null && immutable(upstream);
-  headers.set('Cloudflare-CDN-Cache-Control', cacheable ? IMMUTABLE_CACHE : NO_STORE);
+  const headers = safeResponseHeaders(upstream, origin, new URL(request.url));
+  headers.set('Cloudflare-CDN-Cache-Control', NO_STORE);
   const response = new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers,
   });
 
-  if (key && cacheable) {
-    ctx.waitUntil(
-      cache.put(key, response.clone()).catch(() => {
-        structuredError('edge_cache_write_error', request, requestId);
-      }),
-    );
-  }
-
   return responseWithRequestId(response, requestId);
 }
 
 export default {
-  fetch(request, env, ctx): Promise<Response> {
-    return handleRequest(request, env, ctx);
+  fetch(request, env): Promise<Response> {
+    return handleRequest(request, env);
   },
 } satisfies ExportedHandler<Env>;
