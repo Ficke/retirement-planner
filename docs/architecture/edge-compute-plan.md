@@ -1,6 +1,6 @@
 # Edge compute migration plan
 
-Status: approved; Phases 0-1 complete, Phase 2 code complete and awaiting first deploy
+Status: approved; Phases 0-2 complete and deployed, ready to begin Phase 3
 Last updated: 2026-09-01
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
@@ -592,20 +592,38 @@ Decisions taken during implementation:
 - The compatibility date is held at the newest the vitest-pool-workers runtime
   supports, so the Worker under test runs the same semantics it ships with.
 
-### Phase 2 — data layer at the edge
+### Phase 2 — data layer at the edge — complete
 
-Hyperdrive with caching disabled. `scripts/migrate.ts` in CI. The `database.ts`
-rewrite in full. Rate-limit bindings and the `QuotaCounter` Durable Object.
-Port `/api/profile`, `/api/accounts`, `/api/auth/sync-user`. Unported paths keep
-proxying.
+Hyperdrive with caching disabled, `scripts/migrate.ts` in CI, the `database.ts`
+rewrite, the `QuotaCounter` Durable Object, and `/api/profile`,
+`/api/accounts`, `/api/auth/sync-user` served at the edge. Unported paths still
+proxy to Cloud Run.
 
-Gate: every ported route matches Cloud Run behavior including error codes; no
-`initialize()` in any request path; the schema floor check fails closed when
-forced; **measured CPU time per route is recorded** — this is the decision point
-for whether the route can move. If optimized production requests consistently
-exceed the Free CPU allowance, leave that route on the Cloud Run proxy and stop
-for an explicit architecture and billing decision. No deployment or automation
-may upgrade the Workers plan.
+Gate results:
+
+- Ported routes match Cloud Run behavior by construction: both mount the same
+  `src/api/data-routes.ts`.
+- No `initialize()` on any request path.
+- Schema floor checked once per isolate; the deployed schema is version 14.
+- **Measured CPU per route.** `PUT /api/profile` in production: 3, 5, 6, 7 ms
+  warm, and 20 ms on the first request into a cold isolate. Against the Workers
+  Free ceiling of 10 ms per request, the cold path failed the gate.
+
+The cold cost was entry-module evaluation, not request work. `wrangler check
+startup` attributed it: the whole data subsystem ~15 ms, of which building the
+domain schemas is ~8 ms and the schema library itself ~0. Each subsystem now
+loads on first use, taking the entry to ~0 ms and a cold read to ~7.6 ms.
+`scripts/check-edge-startup.mjs` keeps it that way.
+
+Still true after the change: a cold *write* pays schema construction on top and
+sits near the ceiling. Cloudflare tolerates infrequent overage and terminates
+consistent overage, so this needs watching rather than action today. The lever
+if it becomes consistent is making the domain schemas cheaper to construct —
+splitting them, or `zod/mini` — which touches client code and was left as a
+deliberate decision rather than taken unattended.
+
+Also unchanged and still the real ceiling: Hyperdrive's 100,000 queries/day on
+the free plan, which binds well before the Worker request limit.
 
 ### Phase 3 — simulation at the edge
 
@@ -868,3 +886,9 @@ allowlist is weak for the reason given under Risks, but it is available.
   Terraform ownership would widen the credential's blast radius to buy drift
   detection on one resource. Recreation is a single documented command in
   `wrangler.jsonc`.
+- 2026-09-01: Load each Worker subsystem on first use rather than at startup.
+  A Worker charges global-scope evaluation to whichever request warms the
+  isolate, and on the free plan that request has 10 ms of CPU. Measurement, not
+  intuition, chose the target: schema construction costs ~8 ms while RS256
+  token verification costs 0.033 ms, so the planned verified-token cache was
+  discarded and the module graph was split instead.
