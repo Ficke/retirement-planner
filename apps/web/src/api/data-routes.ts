@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 
 import type { CreateAccountData, UpdateAccountData } from '@/domain/types';
+import type { Budget, QuotaLimiter } from '@/api/quota';
 import { getAuthUser, verifyAuthToken } from '@/lib/firebase/server';
 import { verifyInviteCode } from '@/lib/invite-code';
 import {
@@ -27,15 +28,11 @@ import {
  */
 export type DataRouteEnv = { Variables: { clientIp: string } };
 
-export interface SignupLimitResult {
-  success: boolean;
-  /** Epoch milliseconds at which the caller may retry. */
-  reset: number;
-}
-
 export interface DataRouteDependencies<E extends DataRouteEnv> {
   getDatabase(c: Context<E>): Promise<UnifiedDatabaseService>;
-  limitSignup(c: Context<E>, key: string): Promise<SignupLimitResult>;
+  /** Brute-force budget for signups that must present an invite code. */
+  signupQuota(c: Context<E>): QuotaLimiter;
+  signupBudget: Budget;
 }
 
 const PROFILE_BODY_LIMIT = 64 * 1024;
@@ -53,7 +50,7 @@ export function createDataRoutes<E extends DataRouteEnv>(
   dependencies: DataRouteDependencies<E>,
 ): Hono<E> {
   const routes = new Hono<E>();
-  const { getDatabase, limitSignup } = dependencies;
+  const { getDatabase, signupQuota, signupBudget } = dependencies;
 
   routes.get('/api/profile', async (c) => {
     try {
@@ -226,7 +223,11 @@ export function createDataRoutes<E extends DataRouteEnv>(
       );
 
       if (updated.rows.length === 0) {
-        const limited = await limitSignup(c, `invite:${c.var.clientIp}`);
+        const limited = await signupQuota(c).consume(
+          `invite:${c.var.clientIp}`,
+          1,
+          signupBudget,
+        );
         if (!limited.success) {
           c.header('Retry-After', String(Math.ceil((limited.reset - Date.now()) / 1000)));
           return c.json({ error: 'Too many signup attempts. Try again later.' }, 429);
