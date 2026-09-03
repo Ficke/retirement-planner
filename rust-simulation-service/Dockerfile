@@ -15,6 +15,11 @@ COPY Cargo.toml Cargo.lock ./
 # Copy source code
 COPY src ./src
 
+# Cargo.toml declares the bench target, so the manifest fails to parse without
+# it even though the release build never compiles it. Builder stage only; the
+# runtime stage below copies just the binary.
+COPY benches ./benches
+
 # Build for release
 RUN cargo build --release
 

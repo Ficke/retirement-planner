@@ -599,16 +599,83 @@ pub fn project_scenario(plan: &RetirementPlan, config: ProjectionConfig) -> Resu
     project_scenario_internal(plan, config, true)
 }
 
+/// `project_scenario` for a plan whose invariants are already derived.
+pub fn project_scenario_prepared(
+    prepared: &PreparedPlan<'_>,
+    config: ProjectionConfig,
+) -> Result<PathResult> {
+    project_scenario_internal_prepared(prepared, config, true)
+}
+
 /// Run the exact projection loop without retaining yearly cash-flow rows.
 pub fn project_scenario_summary(
     plan: &RetirementPlan,
     config: ProjectionConfig,
 ) -> Result<PathSummary> {
-    let result = project_scenario_internal(plan, config, false)?;
+    project_scenario_summary_prepared(&PreparedPlan::new(plan)?, config)
+}
+
+/// `project_scenario_summary` for a plan whose invariants are already derived.
+///
+/// A sweep runs thousands of paths against one plan; preparing once and reusing
+/// keeps the date parsing and bucket collapse out of the per-path loop.
+pub fn project_scenario_summary_prepared(
+    prepared: &PreparedPlan<'_>,
+    config: ProjectionConfig,
+) -> Result<PathSummary> {
+    let result = project_scenario_internal_prepared(prepared, config, false)?;
     Ok(PathSummary {
         terminal_wealth: result.terminal_wealth,
         success: result.success,
     })
+}
+
+/// Everything a projection needs that depends on the plan but not the path.
+///
+/// Deriving these per path re-parses two date strings four times and rebuilds
+/// the account buckets, work that is identical for every path of a scenario.
+pub struct PreparedPlan<'a> {
+    plan: &'a RetirementPlan,
+    buckets: Vec<Account>,
+    current_year: i32,
+    birth_year: i32,
+    age: u32,
+    rmd_start_age: u32,
+    remaining_year_fraction: f64,
+    total_years: u32,
+}
+
+impl<'a> PreparedPlan<'a> {
+    pub fn new(plan: &'a RetirementPlan) -> Result<Self> {
+        let profile = &plan.profile;
+        let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
+        let current_year = as_of_date.year();
+        let birth_year = birth_year_of(&profile.birth_date)?;
+        let age = age_on(&profile.birth_date, &profile.as_of_date)?;
+
+        let start_of_year = chrono::NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap();
+        let days_in_year = if is_leap_year(current_year) {
+            366.0
+        } else {
+            365.0
+        };
+        let day_of_year = (as_of_date - start_of_year).num_days() as f64 + 1.0;
+
+        Ok(Self {
+            plan,
+            buckets: to_buckets(&plan.accounts),
+            current_year,
+            birth_year,
+            age,
+            rmd_start_age: get_rmd_start_age(birth_year),
+            remaining_year_fraction: ((days_in_year - day_of_year + 1.0) / days_in_year)
+                .clamp(0.0, 1.0),
+            // Simulate current age through life expectancy, inclusive. Deriving
+            // the horizon directly also avoids unsigned underflow for
+            // already-retired plans.
+            total_years: profile.life_expectancy - age + 1,
+        })
+    }
 }
 
 fn project_scenario_internal(
@@ -616,8 +683,17 @@ fn project_scenario_internal(
     config: ProjectionConfig,
     record_projections: bool,
 ) -> Result<PathResult> {
+    project_scenario_internal_prepared(&PreparedPlan::new(plan)?, config, record_projections)
+}
+
+fn project_scenario_internal_prepared(
+    prepared: &PreparedPlan<'_>,
+    config: ProjectionConfig,
+    record_projections: bool,
+) -> Result<PathResult> {
+    let plan = prepared.plan;
     let profile = &plan.profile;
-    let mut accounts = to_buckets(&plan.accounts);
+    let mut accounts = prepared.buckets.clone();
     let mut roth_basis = RothBasisState {
         enabled: plan.assumptions.roth_conversion.enabled
             && profile.retirement_age < TRADITIONAL_PENALTY_AGE,
@@ -626,24 +702,15 @@ fn project_scenario_internal(
         unseasoned_principal: 0.0,
     };
 
-    let as_of_date = chrono::NaiveDate::parse_from_str(&profile.as_of_date, "%Y-%m-%d")?;
-    let current_year = as_of_date.year();
-    let birth_year = birth_year_of(&profile.birth_date)?;
-    let age = age_on(&profile.birth_date, &profile.as_of_date)?;
-    let rmd_start_age = get_rmd_start_age(birth_year);
-    let start_of_year = chrono::NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap();
-    let days_in_year = if is_leap_year(current_year) {
-        366.0
-    } else {
-        365.0
-    };
-    let day_of_year = (as_of_date - start_of_year).num_days() as f64 + 1.0;
-    let remaining_year_fraction =
-        ((days_in_year - day_of_year + 1.0) / days_in_year).clamp(0.0, 1.0);
-
-    // Simulate current age through life expectancy, inclusive. Deriving the
-    // horizon directly also avoids unsigned underflow for already-retired plans.
-    let total_years = profile.life_expectancy - age + 1;
+    let PreparedPlan {
+        current_year,
+        birth_year,
+        age,
+        rmd_start_age,
+        remaining_year_fraction,
+        total_years,
+        ..
+    } = *prepared;
 
     let mut projections = Vec::with_capacity(if record_projections {
         total_years as usize

@@ -30,7 +30,12 @@ serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 tokio-test = "0.4"
+
+[[bench]]
+name = "projection"
+harness = false
 
 [[bin]]
 name = "simulation-server"
