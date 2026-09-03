@@ -16,6 +16,10 @@ if (!root) throw new Error('Application root element is missing');
 
 prefetchSimulationEngine();
 
+// Loaded on its own so the measurement stays out of the bundle whose load it
+// measures.
+void import('@/lib/web-vitals').then(({ reportWebVitals }) => reportWebVitals());
+
 createRoot(root).render(
   <StrictMode>
     <AppErrorBoundary>
