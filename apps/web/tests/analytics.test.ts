@@ -92,3 +92,84 @@ describe('Analytics events', () => {
     ]);
   });
 });
+
+describe('Web Vitals reporting', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete window.gtag;
+    delete window.dataLayer;
+  });
+
+  async function collectMetric(metric: Record<string, unknown>) {
+    const gtag = vi.fn();
+    window.gtag = gtag;
+
+    const listeners: Array<(value: unknown) => void> = [];
+    const capture = (listener: (value: unknown) => void) => listeners.push(listener);
+    vi.doMock('web-vitals', () => ({
+      onCLS: capture,
+      onFCP: capture,
+      onINP: capture,
+      onLCP: capture,
+      onTTFB: capture,
+    }));
+
+    const { reportWebVitals } = await import('@/lib/web-vitals');
+    reportWebVitals();
+    expect(listeners).toHaveLength(5);
+
+    listeners[0]?.(metric);
+    return gtag.mock.calls;
+  }
+
+  it('sends a metric as a named event with an integer value', async () => {
+    const calls = await collectMetric({
+      name: 'LCP',
+      value: 1843.7,
+      id: 'v5-1',
+      rating: 'good',
+      navigationType: 'navigate',
+    });
+
+    expect(calls).toEqual([
+      [
+        'event',
+        'LCP',
+        {
+          value: 1844,
+          metric_id: 'v5-1',
+          metric_rating: 'good',
+          metric_navigation_type: 'navigate',
+        },
+      ],
+    ]);
+  });
+
+  // CLS below 1 would round to 0 and every session would look perfect.
+  it('scales CLS to thousandths so it survives integer rounding', async () => {
+    const calls = await collectMetric({
+      name: 'CLS',
+      value: 0.0834,
+      id: 'v5-2',
+      rating: 'needs-improvement',
+      navigationType: 'navigate',
+    });
+
+    expect(calls[0]?.[2]).toMatchObject({ value: 83 });
+  });
+
+  it('stays silent when the Analytics tag never loaded', async () => {
+    const listeners: Array<(value: unknown) => void> = [];
+    vi.doMock('web-vitals', () => {
+      const capture = (listener: (value: unknown) => void) => listeners.push(listener);
+      return { onCLS: capture, onFCP: capture, onINP: capture, onLCP: capture, onTTFB: capture };
+    });
+
+    const { reportWebVitals } = await import('@/lib/web-vitals');
+    reportWebVitals();
+
+    expect(() =>
+      listeners[0]?.({ name: 'LCP', value: 1, id: 'v5-3', rating: 'good', navigationType: 'navigate' }),
+    ).not.toThrow();
+  });
+});
