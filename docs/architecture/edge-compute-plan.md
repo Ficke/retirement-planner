@@ -1,7 +1,7 @@
 # Edge compute migration plan
 
 Status: approved; Phases 0-2 complete and deployed, Phase 3 written and
-awaiting its two operator steps
+provisioned, awaiting its deploy tag
 Last updated: 2026-09-02
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
@@ -9,22 +9,32 @@ migration operations). Findings folded in; see [Review corrections](#review-corr
 
 ## Resume point
 
-As of 2026-09-02, Phases 0-2 are complete and deployed, and Phase 3's code is
-merged but not deployed. Two operator steps stand between here and cutting the
-tag, both requiring credentials this repository does not hold:
+As of 2026-09-02, Phases 0-2 are complete and deployed, Phase 3's code is on
+`edge-compute` in PR #65 with CI green, and every credential it needs is
+installed. The Worker holds all five names in `secrets.required`, and the
+`edge-invoker` account has exactly one user-managed key, the one behind the
+`GCP_SA_*` trio.
 
-1. **Install the edge invoker key.** The `edge-invoker` service account and its
-   `run.invoker` binding are applied; the key is not created. Run [Key
-   bootstrap](#key-bootstrap). Until then `/api/simulation/*` answers 503 at
-   the edge, and the client falls back to local Wasm — degraded, not broken.
-2. **Create the Firebase smoke account**, give it a row in the application
-   `users` table, store `SMOKE_USER_EMAIL` and `SMOKE_USER_PASSWORD` as
-   repository secrets, and set the `EDGE_SMOKE_ENABLED` variable to `true`.
-   The deploy workflow skips the simulation smoke check until then.
+What remains needs no credentials, only a deploy:
 
-Also unset: `SIGNUP_INVITE_CODES` and `ORIGIN_SECRET` are declared in
-`secrets.required` but have never been verified against what the Worker
-actually holds. `wrangler secret list` answers that.
+1. **Prove the minted token reaches the Rust service before tagging.** Run
+   `scripts/smoke-check-edge.sh https://adamficke.dev` with `FIREBASE_API_KEY`,
+   `SMOKE_USER_EMAIL` and `SMOKE_USER_PASSWORD` in the environment. Failing
+   here costs a shell prompt; failing after the tag rolls the Worker back.
+2. **Merge PR #65 and push a `deploy-*` tag**, which fires
+   `.github/workflows/deploy-edge.yml`.
+3. **Re-run the smoke check against the new deployment**, then
+   `gh variable set EDGE_SMOKE_ENABLED --body true` to hand it to CI. Setting
+   that variable any earlier only means the first tagged deploy fails its own
+   smoke check.
+
+The smoke account is `edge-smoke@adamficke.dev`. Its password is a repository
+secret and a login-keychain item; it is not in this repository, and its `users`
+row is what the simulation routes actually gate on.
+
+`SIGNUP_INVITE_CODES` is copied from Secret Manager version 1, the same
+immutable version `terraform/production.tfvars` pins Cloud Run to, so the edge
+and the origin cannot drift onto different codes.
 
 ## Objective
 
@@ -351,6 +361,9 @@ deletes, and is not optional:
 2. Verify a simulation succeeds through the edge.
 3. Delete the old key in GCP.
 4. Confirm `wrangler secret list` shows the expected names.
+
+`gcloud` issues these keys with no expiry, so nothing in the system will ever
+force this runbook to run. It needs a calendar reminder to happen at all.
 
 ### Token minting
 
