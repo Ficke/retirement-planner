@@ -265,10 +265,49 @@ async function runOnClient(
 }
 
 /**
+ * Scenarios that would compute the same answer, keyed by what the engine reads.
+ *
+ * Every lever's sweep includes the plan's current value, so a four-lever
+ * refresh dispatches the unchanged plan four times. Identical inputs at the
+ * same paths and seed give an identical result — path `i` is path `i` — so the
+ * duplicates are dispatched once and the answer is copied to each id.
+ */
+function distinctScenarios(scenarios: Scenario[]): Map<string, Scenario[]> {
+  const groups = new Map<string, Scenario[]>();
+  for (const scenario of scenarios) {
+    const key = JSON.stringify([toSimulationPlan(scenario.plan), scenario.paths, scenario.seed]);
+    const group = groups.get(key);
+    if (group) group.push(scenario);
+    else groups.set(key, [scenario]);
+  }
+  return groups;
+}
+
+/**
  * Run scenarios through the requested adapter, falling back to local Wasm when
  * the native service is unavailable.
  */
 async function runScenarios(
+  scenarios: Scenario[],
+  plan: RetirementPlan,
+  useServerSide: boolean,
+  signal?: AbortSignal,
+): Promise<Map<string, SimulationSummary>> {
+  const groups = distinctScenarios(scenarios);
+  const distinct = Array.from(groups.values(), (group) => group[0]);
+
+  const computed = await runDistinctScenarios(distinct, plan, useServerSide, signal);
+
+  const results = new Map<string, SimulationSummary>();
+  for (const group of groups.values()) {
+    const summary = computed.get(group[0].id);
+    if (!summary) throw new Error(`Missing result for scenario '${group[0].id}'`);
+    for (const scenario of group) results.set(scenario.id, summary);
+  }
+  return results;
+}
+
+async function runDistinctScenarios(
   scenarios: Scenario[],
   plan: RetirementPlan,
   useServerSide: boolean,

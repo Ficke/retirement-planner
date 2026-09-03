@@ -251,7 +251,7 @@ describe('SimulationService (Pure)', () => {
       } as Response;
     }));
 
-    await service.runSensitivityAnalyses({
+    const results = await service.runSensitivityAnalyses({
       ...mockPlan,
       profile: {
         ...mockPlan.profile,
@@ -267,10 +267,17 @@ describe('SimulationService (Pure)', () => {
     const totalPaths = simulations.reduce((total, simulation) => (
       total + simulation.config.paths
     ), 0);
+    const curvePoints = results.socialSecurity.length
+      + results.spending.length
+      + results.retirementAge.length
+      + results.rothConversion.length;
 
-    expect(simulations).toHaveLength(31);
+    // Every lever's sweep includes the plan's current value, so four of the 31
+    // curve points are the unchanged plan. They are dispatched once.
+    expect(curvePoints).toBe(31);
+    expect(simulations).toHaveLength(28);
     expect(simulations.length).toBeLessThanOrEqual(MAX_BATCH_SIMULATIONS);
-    expect(totalPaths).toBe(31_000);
+    expect(totalPaths).toBe(28_000);
     expect(totalPaths).toBeLessThanOrEqual(MAX_BATCH_TOTAL_PATHS);
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
   });
