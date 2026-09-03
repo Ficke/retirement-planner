@@ -55,6 +55,7 @@ jobs:
         run: pnpm -C apps/web build:edge
 
       - name: Deploy Worker
+        id: deploy
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -68,3 +69,28 @@ jobs:
       # so a mismatched upload has no error signal of its own.
       - name: Verify deployed assets
         run: ./scripts/verify-edge-assets.sh https://adamficke.dev
+
+      # The only check that covers Worker -> minted OIDC token -> private Rust
+      # service. It needs a dedicated Firebase account that also has a row in
+      # the application users table; set EDGE_SMOKE_ENABLED once that exists.
+      - name: Smoke check the simulation path
+        if: vars.EDGE_SMOKE_ENABLED == 'true'
+        run: ./scripts/smoke-check-edge.sh https://adamficke.dev
+        env:
+          FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          SMOKE_USER_EMAIL: ${{ secrets.SMOKE_USER_EMAIL }}
+          SMOKE_USER_PASSWORD: ${{ secrets.SMOKE_USER_PASSWORD }}
+
+      # A Worker that cannot serve its own assets or a simulation must not stay
+      # live while it is investigated. Conditioned on the deploy having
+      # succeeded, so a failed build never reverts a healthy Worker.
+      - name: Roll back the Worker
+        if: failure() && steps.deploy.outcome == 'success'
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          wranglerVersion: '4.128.0'
+          packageManager: pnpm
+          command: rollback --yes --message "Post-deploy verification failed for ${{ github.ref_name }}"

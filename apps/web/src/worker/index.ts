@@ -1,34 +1,51 @@
 import { proxyToOrigin } from './proxy';
 
-/** Paths this Worker answers itself. Everything else still proxies to Cloud Run. */
-const PORTED_PATH_PREFIXES = ['/api/profile', '/api/accounts', '/api/auth/sync-user'];
+/**
+ * Paths this Worker answers itself, and the subsystem that answers each.
+ * Everything else still proxies to Cloud Run.
+ *
+ * Each subsystem is loaded on first use, not at startup. Its module graph — the
+ * Hono app, jose, and every zod schema the API validates against — costs real
+ * CPU to evaluate, and a Worker's global scope is charged to whichever request
+ * happens to warm the isolate. Most traffic here touches neither, so paying for
+ * them on those requests is waste that the free plan's per-request CPU ceiling
+ * makes expensive. Keeping the two apart means a profile read never builds the
+ * simulation schemas, and a simulation never builds the profile ones.
+ */
+const SUBSYSTEMS = [
+  {
+    prefixes: ['/api/profile', '/api/accounts', '/api/auth/sync-user'],
+    load: async () => (await import('./app')).edgeApp,
+  },
+  {
+    prefixes: ['/api/simulation'],
+    load: async () => (await import('./simulation-app')).simulationApp,
+  },
+] as const;
 
-function isPorted(pathname: string): boolean {
-  return PORTED_PATH_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+type EdgeApp = {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response>;
+};
+
+const loaded = new Map<number, Promise<EdgeApp>>();
+
+function subsystemFor(pathname: string): number {
+  return SUBSYSTEMS.findIndex(({ prefixes }) =>
+    prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)),
   );
 }
 
-/**
- * The data subsystem is loaded on first use, not at startup.
- *
- * Its module graph — the Hono app, jose, and every zod schema the API
- * validates against — costs real CPU to evaluate, and a Worker's global scope
- * is charged to whichever request happens to warm the isolate. Most traffic
- * here is proxied and never touches any of it, so paying for it on those
- * requests is waste that the free plan's per-request CPU ceiling makes
- * expensive.
- */
-let dataApp: Promise<typeof import('./app')> | null = null;
-
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    const { pathname } = new URL(request.url);
-    if (!isPorted(pathname)) return proxyToOrigin(request, env);
+    const index = subsystemFor(new URL(request.url).pathname);
+    if (index < 0) return proxyToOrigin(request, env);
 
-    dataApp ??= import('./app');
-    const { edgeApp } = await dataApp;
-    return edgeApp.fetch(request, env, ctx);
+    let app = loaded.get(index);
+    if (!app) {
+      app = SUBSYSTEMS[index].load();
+      loaded.set(index, app);
+    }
+    return (await app).fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
 

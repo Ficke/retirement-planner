@@ -177,9 +177,22 @@ describe('State Management - Simple Invalidation Logic', () => {
 });
 
 describe('cloud compute gating', () => {
-  it('uses the compute preference independently of the persistence mode', () => {
-    expect(cloudComputeEnabled({ useServerSideCalculations: true })).toBe(true);
-    expect(cloudComputeEnabled({ useServerSideCalculations: false })).toBe(false);
+  const registered = {
+    useServerSideCalculations: true,
+    authUser: { id: 'firebase-owner' },
+    cloudAccountReady: true,
+  };
+
+  it('follows the compute preference for a registered account', () => {
+    expect(cloudComputeEnabled(registered)).toBe(true);
+    expect(cloudComputeEnabled({ ...registered, useServerSideCalculations: false })).toBe(false);
+  });
+
+  // The edge refuses both, so asking would cost a 401 before the local engine
+  // ran anyway.
+  it('stays local for a signed-out or unregistered session', () => {
+    expect(cloudComputeEnabled({ ...registered, authUser: null })).toBe(false);
+    expect(cloudComputeEnabled({ ...registered, cloudAccountReady: false })).toBe(false);
   });
 });
 

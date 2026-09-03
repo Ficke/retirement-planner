@@ -1,19 +1,40 @@
 # Edge compute migration plan
 
-Status: approved; Phases 0-2 complete and deployed, ready to begin Phase 3
-Last updated: 2026-09-01
+Status: approved; Phases 0-2 complete and deployed, Phase 3 written and
+provisioned, awaiting its deploy tag
+Last updated: 2026-09-02
 Working branch: `edge-compute`
 Review: four-lane red team (Cloudflare platform, security, application port,
 migration operations). Findings folded in; see [Review corrections](#review-corrections).
 
 ## Resume point
 
-As of 2026-09-01, Phases 0 and 1 are complete and Phase 2's code is written,
-but nothing is deployed: no `deploy-*` tag has been cut, so production still
-serves the SPA and the whole API from Cloud Run. Live resources that already
-exist are the zone rate-limit rule, the Neon role split, and the Hyperdrive
-configuration `20dfe757885c4e62b30897f4b780926e`. Phase 2's gate is not yet
-met — measured CPU time per route needs a deployed Worker.
+As of 2026-09-02, Phases 0-2 are complete and deployed, Phase 3's code is on
+`edge-compute` in PR #65 with CI green, and every credential it needs is
+installed. The Worker holds all five names in `secrets.required`, and the
+`edge-invoker` account has exactly one user-managed key, the one behind the
+`GCP_SA_*` trio.
+
+What remains needs no credentials, only a deploy:
+
+1. **Prove the minted token reaches the Rust service before tagging.** Run
+   `scripts/smoke-check-edge.sh https://adamficke.dev` with `FIREBASE_API_KEY`,
+   `SMOKE_USER_EMAIL` and `SMOKE_USER_PASSWORD` in the environment. Failing
+   here costs a shell prompt; failing after the tag rolls the Worker back.
+2. **Merge PR #65 and push a `deploy-*` tag**, which fires
+   `.github/workflows/deploy-edge.yml`.
+3. **Re-run the smoke check against the new deployment**, then
+   `gh variable set EDGE_SMOKE_ENABLED --body true` to hand it to CI. Setting
+   that variable any earlier only means the first tagged deploy fails its own
+   smoke check.
+
+The smoke account is `edge-smoke@adamficke.dev`. Its password is a repository
+secret and a login-keychain item; it is not in this repository, and its `users`
+row is what the simulation routes actually gate on.
+
+`SIGNUP_INVITE_CODES` is copied from Secret Manager version 1, the same
+immutable version `terraform/production.tfvars` pins Cloud Run to, so the edge
+and the origin cannot drift onto different codes.
 
 ## Objective
 
@@ -106,14 +127,10 @@ half of `cloudbuild.yaml`.
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<id>" }],
 
   "vars": {
+    "ORIGIN_URL": "<web-cloud-run-service-url>",
     "FIREBASE_PROJECT_ID": "<project-id>",
     "RUST_SERVICE_URL": "<private-cloud-run-service-url>"
   },
-
-  "ratelimits": [
-    { "name": "SIMULATION_LIMIT", "namespace_id": "1001",
-      "simple": { "limit": 300, "period": 60 } }
-  ],
 
   "durable_objects": {
     "bindings": [{ "name": "QUOTA", "class_name": "QuotaCounter" }]
@@ -124,10 +141,11 @@ half of `cloudbuild.yaml`.
 
   "secrets": {
     "required": [
+      "ORIGIN_SECRET",
+      "SIGNUP_INVITE_CODES",
       "GCP_SA_CLIENT_EMAIL",
       "GCP_SA_PRIVATE_KEY",
-      "GCP_SA_PRIVATE_KEY_ID",
-      "SIGNUP_INVITE_CODES"
+      "GCP_SA_PRIVATE_KEY_ID"
     ]
   },
 
@@ -344,6 +362,9 @@ deletes, and is not optional:
 3. Delete the old key in GCP.
 4. Confirm `wrangler secret list` shows the expected names.
 
+`gcloud` issues these keys with no expiry, so nothing in the system will ever
+force this runbook to run. It needs a calendar reminder to happen at all.
+
 ### Token minting
 
 ```text
@@ -402,15 +423,17 @@ in global scope. The file is deleted, not ported. Every `rateLimit()` call in
 
 | Today | Replacement | Guarantee |
 |---|---|---|
-| 300 req/min per IP | `SIMULATION_LIMIT`, keyed on Firebase `uid`, 300/60s | Per-colo, eventually consistent |
+| 300 req/min per IP | `QuotaCounter`, keyed on Firebase `uid`, 300/60s | Global, exact |
 | 2,000,000 paths/min per IP | `QuotaCounter`, keyed on Firebase `uid`, weighted | Global, exact |
 | 10 signups/hour per IP | `QuotaCounter`, keyed on Firebase `uid` | Global, exact |
 | Zone WAF rule on `/api/simulation/*` | **Must be enabled** | Per-colo |
 
-The binding accepts periods of 10 or 60 seconds only, is enforced per Cloudflare
-location, has no weighted cost, and Cloudflare describes it as "permissive,
-eventually consistent, and intentionally designed to not be used as an accurate
-accounting system."
+The rate-limit binding was the original choice for the request count and is not
+configured: it accepts periods of 10 or 60 seconds only, is enforced per
+Cloudflare location, has no weighted cost, and Cloudflare describes it as
+"permissive, eventually consistent, and intentionally designed to not be used as
+an accurate accounting system." The Durable Object already had to exist for the
+path budget, and counting requests in it costs nothing extra.
 
 **The weighted path quota cannot be dropped.** The first draft proposed dropping
 it on the theory that per-request clamps plus the zone WAF rule were sufficient.
@@ -516,16 +539,18 @@ check.
 `--no-traffic` candidate, and `promote-web` (`:218-229`) only runs on success.
 Deleting it leaves nothing proving the Worker → Rust → wire-contract path.
 
-Replacement: rewrite `scripts/smoke-check.sh` to call the authenticated public
-simulation route, then deploy directly with Wrangler and run it against
-`https://adamficke.dev`. Use a dedicated Firebase smoke user that has a row in
-the application `users` table; store its email and password only as GitHub
-Actions secrets, obtain a short-lived ID token through Firebase's password
-sign-in REST endpoint, and never print either credential or token. The smoke
-user needs no plan data because simulation inputs are transient. On failure,
-roll back to the preceding Worker version before continuing. The site has
-effectively no traffic, so a separate preview or gradual-deployment path is
-unnecessary.
+Replacement: `scripts/smoke-check-edge.sh` calls the authenticated public
+simulation route against `https://adamficke.dev` after the Wrangler deploy, and
+the workflow rolls the Worker back when it or the asset verification fails.
+`scripts/smoke-check.sh` stays as it is, covering the origin until Phase 4
+deletes it.
+
+It signs in a dedicated Firebase smoke user that has a row in the application
+`users` table, through Firebase's password sign-in REST endpoint, and prints
+neither the credentials nor the token. Store the email and password only as
+repository secrets. The smoke user needs no plan data because simulation inputs
+are transient. The site has effectively no traffic, so a separate preview or
+gradual-deployment path is unnecessary.
 
 ### The deploy pipeline is active
 
@@ -637,19 +662,47 @@ schema or the validation approach, not repackaging either. Do not spend time on
 Also unchanged and still the real ceiling: Hyperdrive's 100,000 queries/day on
 the free plan, which binds well before the Worker request limit.
 
-### Phase 3 — simulation at the edge
+### Phase 3 — simulation at the edge — written, not deployed
 
-Token minting with Cache API caching. Compatibility flags for request signals.
-Port the simulation routes, require both Firebase authentication and a matching
-application user, and make `cloudComputeEnabled` route signed-out or
-unregistered sessions to local Wasm. Fix `requiresIdToken` and
-`simulationProxyError`.
+Token minting with Cache API caching, the request-signal compatibility flags,
+`/api/simulation/*` served at the edge behind a verified Firebase identity that
+also has a row in the application `users` table, `cloudComputeEnabled` gated on
+the same, and both client fixes.
 
-Gate: simulations succeed through the edge; the Rust service still refuses
-unauthenticated callers; an aborted request actually cancels the upstream call;
-signed-out and unregistered requests never reach server simulation; the
-dedicated smoke account verifies the production path; no key or token appears
-in logs or traces.
+Decisions taken during implementation:
+
+- **The simulation routes are not shared with Cloud Run**, unlike the data
+  routes. Phase 2 shared its routes because both mounts answer the same clients
+  at the same time; here only one does. The origin's copy stays unauthenticated
+  because it is the rollback target for browser bundles that predate this
+  change, which send no token.
+- **The Durable Object counts requests as well as paths**, so the planned
+  `SIMULATION_LIMIT` rate-limit binding is not configured. The binding is
+  per-colo, eventually consistent, and unweighted; using it for the request
+  count and the Durable Object for paths would have meant two mechanisms and
+  the weaker guarantee on one of them, for no saving.
+- **The membership answer is cached per colo for 60 seconds**, keyed on the
+  verified `uid`, and only when it is affirmative. The simulation path opens no
+  database connection otherwise, and a plan refresh sends two requests; caching
+  a miss would lock a new account out for the window after it signs up.
+- **The token cache key carries the private key id and the audience**, so
+  rotation invalidates without a purge. The audience is url-encoded into the
+  key rather than hashed: it is not a secret, and encoding cannot collide.
+- **`vitest.worker.config.ts` moved to the default TypeScript project.** It
+  pulls in Vitest's optional jsdom types, whose `/// <reference lib="dom" />`
+  was replacing workerd's globals in the one program that exists to model
+  workerd — which is why `caches.default` did not typecheck.
+
+Gate, and where each stands:
+
+| | |
+|---|---|
+| the Rust service still refuses unauthenticated callers | unchanged; `allow_unauthenticated = false` |
+| an aborted request cancels the upstream call | covered by test, needs the deployed flags to confirm |
+| signed-out and unregistered requests never reach server simulation | covered by test |
+| no key or token appears in logs or traces | by construction: the exchange reports status only |
+| simulations succeed through the edge | **blocked on the key install** |
+| the dedicated smoke account verifies the production path | **blocked on the smoke account** |
 
 ### Phase 4 — retire the origin
 
@@ -783,6 +836,19 @@ and Wasm 5,000-path latency are measured side by side, revisit.
 largest CPU input the Worker will see. One plan plus lever deltas would cut it
 substantially and directly relieve the 10 ms risk.
 
+**Two Durable Object round trips per simulation.** The request budget and the
+path budget are separate `consume` calls, and the second cannot be made until
+the body has been validated for its path count. Both are wall time, not CPU, so
+neither counts against the free plan's ceiling; at this traffic the exactness is
+worth more than the hop. Combining them would mean a batched `consume` on the
+shared limiter interface, which the signup path does not need.
+
+**The Firebase JWKS is cached only in jose's per-isolate memory.** No KV, which
+is the property that mattered — a JWKS anyone with an account API token could
+overwrite is universal ID-token forgery. But a cold isolate refetches it, so
+every cold authenticated request pays one extra subrequest. A Cache API entry
+would make that per-colo instead of per-isolate.
+
 **SPA fallback changes 404 semantics.** It enables direct loads of application
 page routes, but unknown non-API paths also return the shell at 200 before React
 renders its Not Found view. `/api/*` keeps real JSON 404 responses.
@@ -898,6 +964,20 @@ allowlist is weak for the reason given under Risks, but it is available.
   Terraform ownership would widen the credential's blast radius to buy drift
   detection on one resource. Recreation is a single documented command in
   `wrangler.jsonc`.
+- 2026-09-02: Do not share the simulation routes between the Worker and Cloud
+  Run. Only one of them answers a given deployment, and the origin's copy must
+  stay unauthenticated to remain a rollback target for browser bundles that
+  send no token.
+- 2026-09-02: Count simulation requests in the Durable Object too, and do not
+  configure the `SIMULATION_LIMIT` rate-limit binding. Two mechanisms, one of
+  them per-colo and eventually consistent, buys nothing over the one that is
+  already exact and global.
+- 2026-09-02: Cache the membership answer per colo for 60 seconds, affirmative
+  answers only. The simulation path opens no database connection otherwise, and
+  caching a miss would lock a new account out for the window after signup.
+- 2026-09-02: Hold the production simulation smoke check behind
+  `EDGE_SMOKE_ENABLED` until the Firebase smoke account exists, rather than
+  shipping a deploy step that fails on a secret nobody has set.
 - 2026-09-01: Load each Worker subsystem on first use rather than at startup.
   A Worker charges global-scope evaluation to whichever request warms the
   isolate, and on the free plan that request has 10 ms of CPU. Measurement, not

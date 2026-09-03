@@ -1,3 +1,8 @@
-# Wrangler uses this non-secret placeholder to generate the ORIGIN_SECRET type.
-# Copy it to .dev.vars and replace the value for local end-to-end development.
+# Copy to .dev.vars for local end-to-end development and replace every value.
+# wrangler.jsonc's secrets.required is what generates the Env types; this file
+# only supplies values to `wrangler dev`.
 ORIGIN_SECRET=local-development-only
+SIGNUP_INVITE_CODES=local-development-only
+GCP_SA_CLIENT_EMAIL=edge-invoker@example.iam.gserviceaccount.com
+GCP_SA_PRIVATE_KEY_ID=local-development-only
+GCP_SA_PRIVATE_KEY=local-development-only
