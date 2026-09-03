@@ -8,6 +8,7 @@ import {
   MAX_PATHS,
   MAX_BATCH_SIMULATIONS,
 } from '@/lib/simulation-request';
+import { MAIN_PATHS, SWEEP_PATHS } from '@/services/simulation';
 import { PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { readLimitedJson } from '@/lib/validation';
 
@@ -132,6 +133,21 @@ describe('simulation request limits', () => {
       plan: { ...validPlan, schemaVersion: PLAN_SCHEMA_VERSION + 1 },
       config: validConfig,
     }).success).toBe(false);
+  });
+
+  // What the client asks for and what the server accepts are set in different
+  // modules. If the request outgrows the clamp, every simulation 400s and the
+  // client falls back to local Wasm with only a console warning — the cloud
+  // engine goes dark while the app still answers.
+  it('accepts the path counts the client actually requests', () => {
+    expect(MAIN_PATHS).toBeLessThanOrEqual(MAX_PATHS);
+    expect(SWEEP_PATHS).toBeLessThanOrEqual(MAX_PATHS);
+    expect(
+      monteCarloRequestSchema.safeParse({
+        plan: validPlan,
+        config: { ...validConfig, paths: MAIN_PATHS },
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects inflated path counts', () => {
