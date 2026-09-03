@@ -1,40 +1,31 @@
 # Edge compute migration plan
 
-Status: approved; Phases 0-2 complete and deployed, Phase 3 written and
-provisioned, awaiting its deploy tag
+Status: complete; Phases 0-3 deployed
 Last updated: 2026-09-02
-Working branch: `edge-compute`
+Merged to `main` in PR #65
 Review: four-lane red team (Cloudflare platform, security, application port,
 migration operations). Findings folded in; see [Review corrections](#review-corrections).
 
-## Resume point
+## Where this landed
 
-As of 2026-09-02, Phases 0-2 are complete and deployed, Phase 3's code is on
-`edge-compute` in PR #65 with CI green, and every credential it needs is
-installed. The Worker holds all five names in `secrets.required`, and the
-`edge-invoker` account has exactly one user-managed key, the one behind the
-`GCP_SA_*` trio.
+Phase 3 deployed on 2026-09-02 as tag `deploy-2026-09-02.1`. The authenticated
+simulation path — browser to Worker to minted OIDC token to the private Rust
+service — passed its smoke check against the live deployment, and
+`EDGE_SMOKE_ENABLED` is on, so every subsequent deploy runs that check and
+rolls the Worker back if it fails.
 
-What remains needs no credentials, only a deploy:
+Three facts outlive the migration:
 
-1. **Prove the minted token reaches the Rust service before tagging.** Run
-   `scripts/smoke-check-edge.sh https://adamficke.dev` with `FIREBASE_API_KEY`,
-   `SMOKE_USER_EMAIL` and `SMOKE_USER_PASSWORD` in the environment. Failing
-   here costs a shell prompt; failing after the tag rolls the Worker back.
-2. **Merge PR #65 and push a `deploy-*` tag**, which fires
-   `.github/workflows/deploy-edge.yml`.
-3. **Re-run the smoke check against the new deployment**, then
-   `gh variable set EDGE_SMOKE_ENABLED --body true` to hand it to CI. Setting
-   that variable any earlier only means the first tagged deploy fails its own
-   smoke check.
-
-The smoke account is `edge-smoke@adamficke.dev`. Its password is a repository
-secret and a login-keychain item; it is not in this repository, and its `users`
-row is what the simulation routes actually gate on.
-
-`SIGNUP_INVITE_CODES` is copied from Secret Manager version 1, the same
-immutable version `terraform/production.tfvars` pins Cloud Run to, so the edge
-and the origin cannot drift onto different codes.
+- The smoke account is `edge-smoke@adamficke.dev`. Its password is a repository
+  secret and a login-keychain item, never in this repository. The simulation
+  routes gate on its row in `users`, not on the Firebase identity alone, so
+  dropping that row breaks every deploy.
+- `SIGNUP_INVITE_CODES` on the Worker comes from Secret Manager version 1, the
+  same immutable version `terraform/production.tfvars` pins Cloud Run to.
+  Copying from `latest` instead would let the edge and the origin drift onto
+  different codes.
+- The invoker key has no expiry. See [Key bootstrap](#key-bootstrap) for why
+  rotation needs a calendar reminder.
 
 ## Objective
 
