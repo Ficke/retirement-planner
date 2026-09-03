@@ -8,7 +8,9 @@ use std::sync::{
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
-use crate::simulation::projection::{project_scenario, project_scenario_summary, ProjectionConfig};
+use crate::simulation::projection::{
+    project_scenario_prepared, project_scenario_summary_prepared, PreparedPlan, ProjectionConfig,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::types::BatchSimulationSummaryResponse;
 use crate::types::{
@@ -70,11 +72,12 @@ pub fn run_simulation_cancellable(
         config.paths
     );
 
+    let prepared = PreparedPlan::new(&plan)?;
     let path_summaries = (0..config.paths)
         .into_par_iter()
         .map(|path_index| {
             cancellation.ensure_active()?;
-            summarize_path(&plan, &config, path_index)
+            summarize_path(&prepared, &config, path_index)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -97,19 +100,20 @@ pub fn run_simulation_sequential(
     config: MCConfig,
 ) -> Result<SimulationResult> {
     let cancellation = CancellationToken::default();
+    let prepared = PreparedPlan::new(&plan)?;
     let path_summaries = (0..config.paths)
-        .map(|path_index| summarize_path(&plan, &config, path_index))
+        .map(|path_index| summarize_path(&prepared, &config, path_index))
         .collect::<Result<Vec<_>>>()?;
     aggregate_results(&plan, &config, path_summaries, &cancellation)
 }
 
 fn summarize_path(
-    plan: &RetirementPlan,
+    prepared: &PreparedPlan<'_>,
     config: &MCConfig,
     path_index: u32,
 ) -> Result<PathSummary> {
     let result = run_single_path(
-        plan,
+        prepared,
         u64::from(config.seed).wrapping_add(u64::from(path_index)),
         config.use_historical_bootstrap,
         config.block_size,
@@ -170,6 +174,13 @@ pub fn run_sweep_cancellable(
         .max()
         .unwrap_or(0);
 
+    // Prepared once per scenario rather than once per path: the derivation is
+    // plan-invariant, and the path loop runs it `paths` times otherwise.
+    let prepared = simulations
+        .iter()
+        .map(|simulation| PreparedPlan::new(&simulation.plan))
+        .collect::<Result<Vec<_>>>()?;
+
     let success_counts = (0..max_paths)
         .into_par_iter()
         .try_fold(
@@ -181,8 +192,8 @@ pub fn run_sweep_cancellable(
                     if path_index >= simulation.config.paths {
                         continue;
                     }
-                    let summary = project_scenario_summary(
-                        &simulation.plan,
+                    let summary = project_scenario_summary_prepared(
+                        &prepared[scenario_index],
                         ProjectionConfig {
                             seed: u64::from(simulation.config.seed)
                                 .wrapping_add(u64::from(path_index)),
@@ -232,11 +243,16 @@ pub fn count_sweep_shard_sequential(
             "Sweep path range is outside a scenario's path count"
         ));
     }
+    let prepared = simulations
+        .iter()
+        .map(|simulation| PreparedPlan::new(&simulation.plan))
+        .collect::<Result<Vec<_>>>()?;
+
     let mut counts = vec![0_u32; simulations.len()];
     for path_index in start_path..end_path {
         for (scenario_index, simulation) in simulations.iter().enumerate() {
-            let summary = project_scenario_summary(
-                &simulation.plan,
+            let summary = project_scenario_summary_prepared(
+                &prepared[scenario_index],
                 ProjectionConfig {
                     seed: u64::from(simulation.config.seed).wrapping_add(u64::from(path_index)),
                     use_historical_bootstrap: simulation.config.use_historical_bootstrap,
@@ -269,13 +285,13 @@ fn sweep_summaries(
 }
 
 fn run_single_path(
-    plan: &RetirementPlan,
+    prepared: &PreparedPlan<'_>,
     seed: u64,
     use_historical_bootstrap: bool,
     block_size: usize,
 ) -> Result<PathResult> {
-    project_scenario(
-        plan,
+    project_scenario_prepared(
+        prepared,
         ProjectionConfig {
             seed,
             use_historical_bootstrap,
@@ -331,7 +347,7 @@ fn aggregate_results(
     let representative_path_index = terminal_outcomes[p50_index].1;
     cancellation.ensure_active()?;
     let representative = run_single_path(
-        plan,
+        &PreparedPlan::new(plan)?,
         u64::from(config.seed).wrapping_add(representative_path_index as u64),
         config.use_historical_bootstrap,
         config.block_size,
