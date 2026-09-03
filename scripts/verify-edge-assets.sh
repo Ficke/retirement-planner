@@ -11,8 +11,8 @@
 # content type, not the shell's. Checking the build output rather than parsing
 # the shell also reaches assets the HTML never names, the Wasm module included.
 #
-# It deliberately needs no credentials. The end-to-end simulation path is still
-# covered by scripts/smoke-check.sh against the Cloud Run origin.
+# It deliberately needs no credentials. The end-to-end simulation path needs
+# them, and is covered by scripts/smoke-check-edge.sh.
 #
 # Assets propagate asynchronously after wrangler returns, so a miss is retried
 # for a bounded window before it counts. Without that, running straight after a
@@ -34,7 +34,7 @@ header() {
   # $1 url, $2 header name. Prints the last value, lowercased.
   curl -sS -I --max-time 30 "$1" \
     | tr -d '\r' \
-    | awk -v want="$(echo "$2" | tr 'A-Z' 'a-z')" \
+    | awk -v want="$(echo "$2" | tr '[:upper:]' '[:lower:]')" \
         'BEGIN { IGNORECASE = 1 } tolower($1) == want ":" { $1 = ""; sub(/^ /, ""); v = $0 } END { print tolower(v) }'
 }
 
