@@ -653,7 +653,7 @@ schema or the validation approach, not repackaging either. Do not spend time on
 Also unchanged and still the real ceiling: Hyperdrive's 100,000 queries/day on
 the free plan, which binds well before the Worker request limit.
 
-### Phase 3 — simulation at the edge — written, not deployed
+### Phase 3 — simulation at the edge — complete
 
 Token minting with Cache API caching, the request-signal compatibility flags,
 `/api/simulation/*` served at the edge behind a verified Firebase identity that
@@ -689,11 +689,11 @@ Gate, and where each stands:
 | | |
 |---|---|
 | the Rust service still refuses unauthenticated callers | unchanged; `allow_unauthenticated = false` |
-| an aborted request cancels the upstream call | covered by test, needs the deployed flags to confirm |
+| an aborted request cancels the upstream call | covered by test; unverified against the deployed flags |
 | signed-out and unregistered requests never reach server simulation | covered by test |
 | no key or token appears in logs or traces | by construction: the exchange reports status only |
-| simulations succeed through the edge | **blocked on the key install** |
-| the dedicated smoke account verifies the production path | **blocked on the smoke account** |
+| simulations succeed through the edge | passed against the deployed Worker |
+| the dedicated smoke account verifies the production path | passed; `EDGE_SMOKE_ENABLED` now runs it on every deploy |
 
 ### Phase 4 — retire the origin
 

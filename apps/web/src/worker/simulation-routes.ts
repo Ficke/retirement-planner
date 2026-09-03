@@ -11,8 +11,8 @@ import {
 /**
  * The public simulation endpoints, served at the edge.
  *
- * Cloud Run keeps its own copy of these routes until Phase 4 retires it, and
- * the two are deliberately not shared: only one of them ever answers a given
+ * Cloud Run keeps its own copy of these routes until the origin is retired,
+ * and the two are deliberately not shared: only one ever answers a given
  * deployment, and this one authenticates every request, which the origin — the
  * rollback target for browser bundles that predate it — cannot.
  */

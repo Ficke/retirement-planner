@@ -25,9 +25,9 @@ export class QuotaCounter extends DurableObject {
       ? stored
       : { used: 0, reset: now + budget.windowMs };
 
-    // A request larger than the entire budget can never succeed. Refusing it
-    // without spending the window keeps it from starving smaller ones.
-    const refused = cost > budget.limit || window.used + cost > budget.limit;
+    // Nothing is spent on a refusal, so an oversized request cannot starve the
+    // window for smaller ones; it simply never succeeds.
+    const refused = window.used + cost > budget.limit;
     if (refused) {
       return { success: false, reset: window.reset, remaining: budget.limit - window.used };
     }

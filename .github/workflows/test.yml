@@ -385,7 +385,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Shellcheck
-        run: shellcheck scripts/smoke-check.sh scripts/pull-secrets.sh
+        run: shellcheck scripts/*.sh
 
       - name: Test deployment helpers
         run: python3 scripts/cloud_run_candidate_test.py

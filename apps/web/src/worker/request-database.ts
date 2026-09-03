@@ -13,7 +13,7 @@ export type DatabaseEnv = {
 };
 
 /**
- * The schema the isolate has already confirmed.
+ * Whether this isolate has already confirmed the schema floor.
  *
  * Only a settled result is remembered, never an in-flight promise: sharing one
  * would tie later requests to the connection of the request that began it, and

@@ -11,10 +11,12 @@
 # application users table, so this needs a dedicated smoke account. It stores no
 # plan data: simulation inputs are transient.
 #
-# Required, all from repository secrets:
-#   FIREBASE_API_KEY       the web API key, for the password sign-in endpoint
-#   SMOKE_USER_EMAIL       the smoke account
-#   SMOKE_USER_PASSWORD    its password
+# Required in the environment:
+#   FIREBASE_API_KEY       the web API key, for the password sign-in endpoint;
+#                          the VITE_FIREBASE_API_KEY repository variable, and
+#                          public by design — it ships in the client bundle
+#   SMOKE_USER_EMAIL       the smoke account, a repository secret
+#   SMOKE_USER_PASSWORD    its password, a repository secret
 #
 # Neither the credentials nor the minted token are ever printed. Response bodies
 # are, so nothing that carries a token is echoed.

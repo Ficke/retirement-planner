@@ -1,12 +1,14 @@
-const ORIGIN_SECRET_HEADER = 'x-retire-plan-origin-secret';
-const CLIENT_IP_HEADER = 'x-retire-plan-client-ip';
-const ORIGINAL_HOST_HEADER = 'x-retire-plan-original-host';
-const ORIGINAL_PROTO_HEADER = 'x-retire-plan-original-proto';
-const REQUEST_ID_HEADER = 'x-retire-plan-request-id';
+import {
+  connectingClientIp,
+  ORIGIN_SECRET_HEADER,
+  ORIGINAL_HOST_HEADER,
+  ORIGINAL_PROTO_HEADER,
+  REQUEST_ID_HEADER,
+  TRUSTED_CLIENT_IP_HEADER,
+} from '@/lib/edge-headers';
 
 const INTERNAL_PATH_PREFIX = '/api/internal/';
 const NO_STORE = 'no-store';
-
 
 export interface ProxyDependencies {
   originFetch(request: Request): Promise<Response>;
@@ -35,14 +37,12 @@ function originRequestHeaders(request: Request, env: Env, requestId: string): He
   }
 
   const publicUrl = new URL(request.url);
-  // Only cf-connecting-ip is read. Cloudflare overwrites it, while
-  // x-forwarded-for is appended to and so carries client-supplied values.
-  const clientIp = request.headers.get('cf-connecting-ip')?.trim();
+  const clientIp = connectingClientIp(request.headers);
   headers.set(ORIGIN_SECRET_HEADER, env.ORIGIN_SECRET);
   headers.set(ORIGINAL_HOST_HEADER, publicUrl.host);
   headers.set(ORIGINAL_PROTO_HEADER, publicUrl.protocol.slice(0, -1));
   headers.set(REQUEST_ID_HEADER, requestId);
-  if (clientIp) headers.set(CLIENT_IP_HEADER, clientIp);
+  if (clientIp) headers.set(TRUSTED_CLIENT_IP_HEADER, clientIp);
   return headers;
 }
 
