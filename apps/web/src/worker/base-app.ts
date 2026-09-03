@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 
+import { connectingClientIp } from '@/lib/edge-headers';
 import { SchemaFloorError } from '@/services/server/database';
 import { withDatabase, type DatabaseEnv } from './request-database';
 
@@ -31,9 +32,7 @@ export function createEdgeApp(): Hono<EdgeEnv> {
   );
 
   app.use('*', async (c, next) => {
-    // Only cf-connecting-ip is read. Cloudflare overwrites it, while
-    // x-forwarded-for is appended to and carries client-supplied values.
-    c.set('clientIp', c.req.header('cf-connecting-ip')?.trim() || 'unknown');
+    c.set('clientIp', connectingClientIp(c.req.raw.headers) ?? 'unknown');
     await next();
   });
 

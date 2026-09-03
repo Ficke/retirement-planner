@@ -1,9 +1,11 @@
 /**
- * Validation and abuse limits for the public simulation endpoints.
+ * Validation and abuse limits for the simulation endpoints, shared by the edge
+ * and Cloud Run mounts.
  *
- * These endpoints are reachable without authentication by design (anonymous
- * mode may opt into cloud compute), so they are the app's main abuse surface:
- * every request fans out to CPU-bound work on the Rust service. Everything a
+ * The edge admits only a verified Firebase identity that also has a row in the
+ * application `users` table. The Cloud Run copy stays unauthenticated: it is
+ * the rollback target for browser bundles that send no token. Either way one
+ * request fans out to CPU-bound work on the Rust service, so everything a
  * client can inflate — path counts, batch sizes, horizon length — is clamped
  * here before the request is forwarded.
  */
@@ -33,11 +35,6 @@ const simulationConfigSchema = z.object({
 });
 
 /**
- * Plan validation for simulation requests. Reuses the domain schema (which
- * bounds ages, rates, and horizon) plus a cap on account count to bound the
- * per-path work.
- */
-/**
  * Keep accepting requests from browser bundles that were already open when the
  * current schema deployed. Every version below the current one is accepted and
  * forwarded unchanged, so Rust can apply the semantics that bundle was built
@@ -56,6 +53,11 @@ const legacySimulationPlanSchema = z
     schemaVersion: plan.schemaVersion ?? 0,
   }));
 
+/**
+ * Plan validation for simulation requests. Reuses the domain schema (which
+ * bounds ages, rates, and horizon) plus a cap on account count to bound the
+ * per-path work.
+ */
 const simulationPlanSchema = z
   .union([currentSimulationPlanSchema, legacySimulationPlanSchema])
   .refine(
@@ -88,13 +90,17 @@ export const batchRequestSchema = z
     { message: `Total paths across a batch may not exceed ${MAX_BATCH_TOTAL_PATHS}` },
   );
 
-/** Per-IP limits: generous for interactive use, hostile to scripted abuse. */
+/**
+ * The Cloud Run mount's per-IP limits: generous for interactive use, hostile to
+ * scripted abuse. The edge keys the same budgets on the verified uid instead —
+ * see `SIMULATION_BUDGET` in `worker/simulation-routes.ts`.
+ */
 export const SIMULATION_RATE_LIMIT = {
   limit: 300,
   windowMs: 60 * 1000,
 } as const;
 
-/** Per-instance backstop; production also needs a distributed quota. */
+/** Per-instance backstop, exact only within one Cloud Run container. */
 export const SIMULATION_PATH_RATE_LIMIT = {
   // A complete Plan refresh costs at most 36,000 paths: 5,000 main paths plus
   // the widest sweep the levers can produce, 31 scenarios at 1,000 paths each.

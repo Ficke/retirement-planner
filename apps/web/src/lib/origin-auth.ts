@@ -1,8 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-export const ORIGIN_SECRET_HEADER = 'x-retire-plan-origin-secret';
-export const TRUSTED_CLIENT_IP_HEADER = 'x-retire-plan-client-ip';
-export const ORIGIN_AUTHENTICATED_HEADER = 'x-retire-plan-origin-authenticated';
+import {
+  ORIGIN_AUTHENTICATED_HEADER,
+  ORIGIN_SECRET_HEADER,
+  TRUSTED_CLIENT_IP_HEADER,
+} from '@/lib/edge-headers';
+
+export { ORIGIN_AUTHENTICATED_HEADER, ORIGIN_SECRET_HEADER, TRUSTED_CLIENT_IP_HEADER };
 
 function digest(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();

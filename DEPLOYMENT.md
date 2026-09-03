@@ -1,15 +1,21 @@
 # Deployment Guide
 
-RetirePlan runs on Google Cloud Run as **two services**:
+RetirePlan serves from **Cloudflare** and computes on **Cloud Run**:
 
-| Service | What it is | Reachability |
+| Component | What it is | Reachability |
 |---|---|---|
-| `retire-plan` | Vite SPA + Hono API | Public (`allUsers` invoker), protected by the edge origin secret |
-| `rust-simulation-service` | Monte Carlo engine (Warp + Rayon) | Private — invokable only by the web service account |
+| `retire-plan-edge` | Cloudflare Worker: SPA shell, assets, and the Hono API | Public, at `adamficke.dev` |
+| `retire-plan` | Cloud Run: the same SPA and API, one phase behind | Public (`allUsers` invoker), gated by `ORIGIN_SECRET`; the rollback target |
+| `rust-simulation-service` | Cloud Run: Monte Carlo engine (Warp + Rayon) | Private — invokable only by the edge and web service accounts |
 
-The web service proxies `/api/simulation/*` to the Rust service using a Cloud
-Run ID token (`lib/rust-service-client.ts`). The local Wasm adapter runs the
-same Rust engine for on-device computation.
+The Worker reaches the private Rust service with an OIDC token it mints itself
+from the `edge-invoker` service-account key (`worker/google-id-token.ts`). The
+Cloud Run copy mints its own with the metadata server
+(`lib/rust-service-client.ts`) and answers only while it is the rollback
+target. The local Wasm adapter runs the same Rust engine on-device.
+
+Deploys of the two are separate pipelines on one tag; see
+[Ongoing deploys](#ongoing-deploys).
 
 **Terraform is the source of truth for infrastructure.** Cloud Build owns image
 rollout and candidate promotion. See `terraform/README.md` for the ownership
@@ -45,6 +51,32 @@ Production uses the following runtime and build-time configuration.
 
 The three Secret Manager entries are fetched at container start. Keeping the
 mounted set focused limits cold-start work and access permissions.
+
+### Runtime — edge Worker
+
+Plain values live in `vars` in `apps/web/wrangler.jsonc`; secrets are set with
+`wrangler secret` and are listed in `secrets.required` there, so `wrangler
+types` generates them and a missing one warns in local development.
+
+| Variable | Purpose | Source |
+|---|---|---|
+| `ORIGIN_URL`, `FIREBASE_PROJECT_ID`, `RUST_SERVICE_URL` | Origin, token issuer, OIDC audience | `vars` |
+| `ORIGIN_SECRET` | Authenticates the Worker to Cloud Run | `wrangler secret` |
+| `SIGNUP_INVITE_CODES` | Comma-separated signup gate | `wrangler secret` |
+| `GCP_SA_CLIENT_EMAIL`, `GCP_SA_PRIVATE_KEY`, `GCP_SA_PRIVATE_KEY_ID` | The edge invoker's key | `wrangler secret` |
+
+`ORIGIN_SECRET` and `SIGNUP_INVITE_CODES` must hold the same values Cloud Run
+mounts, so copy them from the version `terraform/production.tfvars` pins rather
+than from `latest`:
+
+```bash
+gcloud secrets versions access 1 --secret=SIGNUP_INVITE_CODES \
+  | pnpm -C apps/web exec wrangler secret put SIGNUP_INVITE_CODES
+```
+
+The `GCP_SA_*` trio is deliberately outside Terraform. Install and rotate it
+with one `wrangler secret bulk` call; the runbook is in
+`docs/architecture/edge-compute-plan.md`.
 
 ### Build-time — baked into the client bundle
 
@@ -107,6 +139,17 @@ call the Rust service, and the Cloud Build trigger.
 
 ### 4. Verify
 
+The edge, which is what users reach. `FIREBASE_API_KEY` is the
+`VITE_FIREBASE_API_KEY` repository variable; the account credentials are
+repository secrets:
+
+```bash
+FIREBASE_API_KEY=… SMOKE_USER_EMAIL=… SMOKE_USER_PASSWORD=… \
+  ./scripts/smoke-check-edge.sh https://adamficke.dev
+```
+
+The Cloud Run rollback target, which serves no user traffic:
+
 ```bash
 export ORIGIN_SECRET="$(gcloud secrets versions access latest --secret ORIGIN_SECRET)"
 ./scripts/smoke-check.sh "$(gcloud run services describe retire-plan \
@@ -130,18 +173,30 @@ complete authenticated request path and computation contract.
 
 ## Ongoing deploys
 
-Production deploys are explicit. After the release commit is on `main`, create
-and push an annotated tag named `deploy-YYYYMMDDTHHMMSSZ-<short-sha>`:
+Production deploys are explicit. After the release commit is on `main`, push a
+tag named `deploy-YYYY-MM-DD.N`, where `N` counts that day's deploys:
 
 ```bash
 git switch main
 git pull --ff-only
-deploy_tag="deploy-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=8 HEAD)"
-git tag -a "$deploy_tag" -m "Production deploy $deploy_tag"
-git push origin "$deploy_tag"
+git tag deploy-2026-09-02.1
+git push origin deploy-2026-09-02.1
 ```
 
-The Terraform-managed trigger matches `deploy-*` and runs `cloudbuild.yaml`:
+**One tag fires two independent pipelines**, both matching `deploy-*`. They do
+not coordinate, and either can fail without the other noticing.
+
+`.github/workflows/deploy-edge.yml` deploys the Worker — the tier users reach:
+
+1. Build with `EDGE_BUILD`, then `wrangler deploy --strict`
+2. `scripts/verify-edge-assets.sh` — the SPA fallback answers a missing asset
+   with the shell at status 200, so a mismatched upload has no error signal
+3. `scripts/smoke-check-edge.sh` — an authenticated simulation end to end, run
+   only when the `EDGE_SMOKE_ENABLED` variable is `true`
+4. `wrangler rollback` if either check fails after a successful deploy
+
+The Terraform-managed Cloud Build trigger deploys the Cloud Run rollback target
+with `cloudbuild.yaml`:
 
 1. Build both images with Kaniko, in parallel, with layer caching
 2. Deploy the Rust service with `--no-traffic`, tagged `candidate`
@@ -212,16 +267,32 @@ health checks. Either add a version or remove the mount.
 
 **Simulations are slow or falling back to the client**
 
-The engine badge on the Plan page shows which engine served the result.
-Falling back means the web service could not reach the Rust service. Check:
+The engine badge on the Plan page shows which engine served the result. Falling
+back means `/api/simulation/*` answered 503, so the Worker could not reach or
+authenticate to the Rust service. The client degrades silently, which is why
+the deploy smoke check exists.
+
+Both invoker identities need `roles/run.invoker` on the Rust service, and
+Terraform manages both bindings (`edge_invokes_rust`, `web_invokes_rust`):
 
 ```bash
-gcloud run services describe rust-simulation-service --region us-central1
 gcloud run services get-iam-policy rust-simulation-service --region us-central1
 ```
 
-The web service account needs `roles/run.invoker` on the Rust service —
-Terraform manages this binding (`google_cloud_run_v2_service_iam_member.web_invokes_rust`).
+If the binding is intact, the edge invoker's key is the next suspect. It is not
+in Terraform — `google_service_account_key` would write the private key into the
+GCS state bucket — so it can be absent, or left behind by a rotation that
+replaced the GCP key without reinstalling the Worker secrets:
+
+```bash
+gcloud iam service-accounts keys list --managed-by=user \
+  --iam-account="edge-invoker@$(gcloud config get-value project).iam.gserviceaccount.com"
+pnpm -C apps/web exec wrangler secret list
+```
+
+The Worker needs `GCP_SA_CLIENT_EMAIL`, `GCP_SA_PRIVATE_KEY`, and
+`GCP_SA_PRIVATE_KEY_ID`. Bootstrap and rotation are in
+`docs/architecture/edge-compute-plan.md`.
 
 **Database connection errors**
 
