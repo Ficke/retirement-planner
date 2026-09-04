@@ -8,6 +8,8 @@ import {
   MAX_BATCH_TOTAL_PATHS,
 } from '@/lib/simulation-request';
 import { simulationExportSchema } from '@/domain/simulation-export';
+import { userProfileSchema } from '@/domain/schemas';
+import { MAX_PLAN_DOLLARS } from '@/domain/constants';
 import { createTestProjectionSettings } from './test-helpers';
 
 // The server path signs every request with a Firebase ID token; these tests
@@ -114,11 +116,13 @@ describe('SimulationService (Pure)', () => {
     });
   });
 
-  it('widens the standard spending range to cover a plan below it', async () => {
+  it('centers the spending sweep on what the plan already spends', async () => {
+    // $50k against a $75k salary: the band runs from half that to half again,
+    // which puts the plan's own value in the middle rather than at an edge.
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      40_000, 50_000, 60_000, 70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
+      20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000,
     ]);
   });
 
@@ -129,19 +133,35 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      60_000, 70_000, 80_000, 90_000, 94_500, 100_000, 110_000, 120_000,
+      40_000, 60_000, 80_000, 94_500, 100_000, 120_000, 140_000, 160_000,
     ]);
+  });
+
+  it('stops the sweep short of what a household could never outspend', async () => {
+    // A $75k salary and no balances cannot fund much past its own income, so
+    // the band stops rather than plotting a shelf of guaranteed failures.
+    const result = await service.runSpendingAnalysis(mockPlan, false);
+
+    expect(Math.max(...result.map((r) => r.annualSpending))).toBeLessThanOrEqual(
+      mockPlan.profile.currentSalary * 1.5,
+    );
   });
 
   it('keeps every spending scenario within the simulation contract', async () => {
     const result = await service.runSpendingAnalysis({
       ...mockPlan,
-      profile: { ...mockPlan.profile, currentSpending: 1_000_000_000 },
+      profile: { ...mockPlan.profile, currentSpending: MAX_PLAN_DOLLARS },
     }, false);
 
     const levels = result.map((r) => r.annualSpending);
     expect(levels.length).toBeLessThanOrEqual(9);
-    expect(levels.every((level) => level >= 20_000 && level <= 250_000)).toBe(true);
+    expect(levels.every((level) => level >= 0 && level <= MAX_PLAN_DOLLARS)).toBe(true);
+    // The schema each scenario is validated against is the real ceiling.
+    for (const level of levels) {
+      expect(userProfileSchema.safeParse({
+        ...mockPlan.profile, currentSpending: level,
+      }).success).toBe(true);
+    }
   });
 
   it('sweeps a stable age 45–70 retirement range', async () => {
@@ -230,7 +250,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(7);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'
@@ -256,7 +276,9 @@ describe('SimulationService (Pure)', () => {
       profile: {
         ...mockPlan.profile,
         retirementAge: 76,
-        currentSpending: 45_000,
+        // Off every sweep's grid and wide enough to fill it: $65.5k spans the
+        // full nine spending steps and adds itself as a tenth.
+        currentSpending: 65_500,
       },
       socialSecurity: { ...mockPlan.socialSecurity, claimAge: 63 },
     }, true);
