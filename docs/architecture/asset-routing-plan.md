@@ -162,6 +162,16 @@ since it documented the fallback behavior that no longer applies. The
 content-type assertions stay as a defensive check rather than the primary
 signal, and would catch the fallback returning.
 
+The settle condition does have to cover both shapes of a miss, though. A colo
+that has not picked up a new version is still answering from the old one, so
+during any deploy an asset can come back as a 404 (from a version that has this
+fix) or as the shell (from one that does not). That is not hypothetical for the
+deploy that ships this change: every colo is running the SPA fallback until it
+rolls over, so a gate that treated the shell as an immediate verdict would fail
+this deploy exactly the way it failed `deploy-2026-09-04.1`, roll back, and
+leave the fix unshippable. Both shapes are waited out; only the state after the
+window closes is a verdict.
+
 Also revisit the rollback step. It reverted a healthy deploy on a false
 positive, which is a worse outcome than failing loudly and leaving the new
 version live. Decide deliberately whether verification failure should roll back
@@ -232,4 +242,5 @@ is a new path to the free-plan ceiling.
 | 2026-09-03 | Phase 0 item 2 — `_headers` applies through `env.ASSETS.fetch()`: **yes**. A Worker-served shell carries CSP, `nosniff`, `X-Frame-Options`, and the `/*` cache rule rather than the `/assets/*` one. No Worker-side header duplication needed. |
 | 2026-09-03 | Phase 0 item 3 — `assets_navigation_prefers_asset_serving` under `"none"`: moot. With no fallback page to prefer, every miss reaches the Worker regardless of `Sec-Fetch-Mode`, which is the behavior this plan wants. |
 | 2026-09-03 | Phase 3 required no logic change: once a miss is a 404, the existing retry window is already correct. Verified both directions — a healthy build passes, a mismatched one fails as `HTTP 404 after N attempts`. |
+| 2026-09-03 | Gate must wait out *both* shapes of a miss. Retrying only the 404 would have failed the very deploy that ships this fix, since every colo serves the SPA fallback until it rolls over. Verified against production, which still runs the old version: a shell response is now retried, and the healthy path still passes with no retries. |
 | | Phase 2 gate — open tab survives a real deploy: _pending, needs a deployment_ |

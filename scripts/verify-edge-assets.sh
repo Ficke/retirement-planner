@@ -12,13 +12,17 @@
 # for a bounded window before it counts. Without that, running straight after a
 # deploy reports a failure that fixes itself seconds later.
 #
-# The retry window depends on a miss being a 404. It is: the Worker answers an
-# unlisted /assets/ path itself rather than letting the SPA fallback return the
-# shell at 200 (docs/architecture/asset-routing-plan.md). While the fallback
-# still covered asset paths, an unpropagated asset and an absent one were the
-# same 200, this window never engaged, and deploy-2026-09-04.1 failed on a
-# healthy build. The content-type assertions below stay as a check on what is
-# served, and would catch that fallback returning if it ever did.
+# An asset miss is a 404: the Worker answers an unlisted /assets/ path itself
+# rather than letting the SPA fallback return the shell at 200
+# (docs/architecture/asset-routing-plan.md). While the fallback still covered
+# asset paths, an unpropagated asset and an absent one were the same 200, this
+# window never engaged, and deploy-2026-09-04.1 failed on a healthy build.
+#
+# A colo that has not picked up the new version yet is still answering from the
+# old one, so during a deploy a miss can be either shape -- a 404 from a version
+# that has the fix, or the shell from one that does not. Both mean "not this
+# build yet", so both are waited out. Only the state after the window closes is
+# a verdict.
 set -eu
 
 ATTEMPTS="${VERIFY_ATTEMPTS:-8}"
@@ -57,6 +61,24 @@ settled_status() {
   done
 }
 
+# The same, for an asset, where a 200 carrying the shell is also a miss. Prints
+# the final status; a settled asset leaves its own content type to be asserted.
+settled_asset_status() {
+  attempt=1
+  while :; do
+    code=$(status "$1")
+    if [ "$code" = "200" ]; then
+      case "$(header "$1" content-type)" in
+        text/html*) ;;
+        *) echo "$code"; return ;;
+      esac
+    fi
+    [ "$attempt" -ge "$ATTEMPTS" ] && { echo "$code"; return; }
+    attempt=$((attempt + 1))
+    sleep "$RETRY_DELAY"
+  done
+}
+
 echo "Verifying $BASE_URL against $CLIENT_DIR"
 
 shell_status=$(settled_status "$BASE_URL/")
@@ -78,12 +100,12 @@ for asset in "$CLIENT_DIR"/assets/*; do
   path="/assets/$(basename "$asset")"
   url="$BASE_URL$path"
 
-  asset_status=$(settled_status "$url")
+  asset_status=$(settled_asset_status "$url")
   [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status after $ATTEMPTS attempts"
 
   type=$(header "$url" content-type)
   case "$type" in
-    text/html*) fail "$path served the SPA shell — asset paths must 404 on a miss, not fall back" ;;
+    text/html*) fail "$path still served the SPA shell after $ATTEMPTS attempts — the deployed version is not this build, or asset paths are falling back instead of 404ing" ;;
   esac
 
   case "$path" in
