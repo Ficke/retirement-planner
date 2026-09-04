@@ -14,7 +14,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "std"
 once_cell = "1.19"
 rand = { version = "0.8", default-features = false, features = ["alloc"] }
 rand_chacha = { version = "0.3", default-features = false }
-rand_distr = { version = "0.4", default-features = false, features = ["alloc"] }
+rand_distr = { version = "0.6", default-features = false, features = ["alloc"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dotenvy = "0.15"
