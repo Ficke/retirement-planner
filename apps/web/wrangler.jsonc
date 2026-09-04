@@ -18,11 +18,22 @@
   "preview_urls": false,
 
   "assets": {
-    "not_found_handling": "single-page-application",
-    // Everything outside this list is answered by the asset store without
-    // invoking the Worker. Setting it to true instead routes every request
-    // through the Worker, and past the free daily limit those requests return
-    // 429 rather than falling back to asset serving.
+    "binding": "ASSETS",
+    // "none", not "single-page-application". The SPA fallback answers *any*
+    // unmatched path with the shell at 200, which makes a retired chunk
+    // indistinguishable from a client route: every deploy replaces the asset
+    // manifest, so a tab that outlives one asks for a chunk that is gone and
+    // gets HTML where it expects a module. Under "none" a miss reaches the
+    // Worker, which serves the shell for a navigation and a real 404 under
+    // /assets/. See docs/architecture/asset-routing-plan.md.
+    //
+    // A miss is the only thing that reaches the Worker. Asset hits are still
+    // served by the store without invoking it, which is what keeps the busiest
+    // request class off the free daily allowance.
+    "not_found_handling": "none",
+    // Redundant against "none" -- an /api/ path never matches an asset, so it
+    // would reach the Worker anyway -- but it pins the routing rather than
+    // leaving it to depend on nothing ever being uploaded under that prefix.
     "run_worker_first": ["/api/*"]
   },
 

@@ -1,15 +1,9 @@
 #!/bin/sh
 # Verify a deployed edge build. Usage: scripts/verify-edge-assets.sh <base-url> [client-dir]
 #
-# This covers the one Phase 1 failure mode that produces no error signal.
-# not_found_handling: single-page-application answers a missing asset with the
-# HTML shell at status 200, so a partial or mismatched upload looks healthy to
-# any check that only asserts 2xx: the browser gets text/html where it expects a
-# module, and the page goes blank with nothing in the logs.
-#
-# Every file in the local client build must therefore come back with its own
-# content type, not the shell's. Checking the build output rather than parsing
-# the shell also reaches assets the HTML never names, the Wasm module included.
+# Every file in the local client build must come back from the deployment with
+# its own content type. Checking the build output rather than parsing the shell
+# reaches assets the HTML never names, the Wasm module included.
 #
 # It deliberately needs no credentials. The end-to-end simulation path needs
 # them, and is covered by scripts/smoke-check-edge.sh.
@@ -17,6 +11,18 @@
 # Assets propagate asynchronously after wrangler returns, so a miss is retried
 # for a bounded window before it counts. Without that, running straight after a
 # deploy reports a failure that fixes itself seconds later.
+#
+# An asset miss is a 404: the Worker answers an unlisted /assets/ path itself
+# rather than letting the SPA fallback return the shell at 200
+# (docs/architecture/asset-routing-plan.md). While the fallback still covered
+# asset paths, an unpropagated asset and an absent one were the same 200, this
+# window never engaged, and deploy-2026-09-04.1 failed on a healthy build.
+#
+# A colo that has not picked up the new version yet is still answering from the
+# old one, so during a deploy a miss can be either shape -- a 404 from a version
+# that has the fix, or the shell from one that does not. Both mean "not this
+# build yet", so both are waited out. Only the state after the window closes is
+# a verdict.
 set -eu
 
 ATTEMPTS="${VERIFY_ATTEMPTS:-8}"
@@ -55,6 +61,24 @@ settled_status() {
   done
 }
 
+# The same, for an asset, where a 200 carrying the shell is also a miss. Prints
+# the final status; a settled asset leaves its own content type to be asserted.
+settled_asset_status() {
+  attempt=1
+  while :; do
+    code=$(status "$1")
+    if [ "$code" = "200" ]; then
+      case "$(header "$1" content-type)" in
+        text/html*) ;;
+        *) echo "$code"; return ;;
+      esac
+    fi
+    [ "$attempt" -ge "$ATTEMPTS" ] && { echo "$code"; return; }
+    attempt=$((attempt + 1))
+    sleep "$RETRY_DELAY"
+  done
+}
+
 echo "Verifying $BASE_URL against $CLIENT_DIR"
 
 shell_status=$(settled_status "$BASE_URL/")
@@ -76,12 +100,12 @@ for asset in "$CLIENT_DIR"/assets/*; do
   path="/assets/$(basename "$asset")"
   url="$BASE_URL$path"
 
-  asset_status=$(settled_status "$url")
+  asset_status=$(settled_asset_status "$url")
   [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status after $ATTEMPTS attempts"
 
   type=$(header "$url" content-type)
   case "$type" in
-    text/html*) fail "$path served the SPA shell — the deployed asset manifest does not match this build" ;;
+    text/html*) fail "$path still served the SPA shell after $ATTEMPTS attempts — the deployed version is not this build, or asset paths are falling back instead of 404ing" ;;
   esac
 
   case "$path" in

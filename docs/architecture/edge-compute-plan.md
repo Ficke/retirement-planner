@@ -842,7 +842,10 @@ would make that per-colo instead of per-isolate.
 
 **SPA fallback changes 404 semantics.** It enables direct loads of application
 page routes, but unknown non-API paths also return the shell at 200 before React
-renders its Not Found view. `/api/*` keeps real JSON 404 responses.
+renders its Not Found view. `/api/*` keeps real JSON 404 responses. Superseded by
+[asset-routing-plan.md](./asset-routing-plan.md): the same fallback also answers
+missing `/assets/*` paths with the shell, which breaks any tab that outlives a
+deploy, so the consequence is larger than this entry assumed.
 
 ## Review corrections
 

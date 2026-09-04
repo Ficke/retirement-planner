@@ -2,7 +2,8 @@ import { proxyToOrigin } from './proxy';
 
 /**
  * Paths this Worker answers itself, and the subsystem that answers each.
- * Everything else still proxies to Cloud Run.
+ * Everything else is a navigation, an asset miss, or an origin path; see the
+ * routing below.
  *
  * Each subsystem is loaded on first use, not at startup. Its module graph — the
  * Hono app, jose, and every zod schema the API validates against — costs real
@@ -35,10 +36,68 @@ function subsystemFor(pathname: string): number {
   );
 }
 
+const ASSET_PREFIX = '/assets/';
+
+/**
+ * A hashed asset that this version's manifest does not list is gone, not a
+ * client route. Every deploy replaces the manifest, so a tab open across one
+ * asks for a chunk the new version never had. Answering that with the shell
+ * hands the browser HTML where it expects a module -- a MIME error and a dead
+ * route rather than an honest load failure -- and `_headers` stamps the reply
+ * `immutable`, caching the wrong body under the chunk's URL for a year.
+ */
+function assetMiss(): Response {
+  return new Response('Not found', {
+    status: 404,
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+/**
+ * Client routes have no file of their own, so a navigation to one arrives here
+ * as a miss and is answered with the shell. The asset store serves it, which is
+ * what keeps `public/_headers` applied to the response.
+ *
+ * Serving the shell is on the Worker's path now, which it was not while the SPA
+ * fallback answered navigations without invoking it. A throw here would take
+ * down page loads and not just the API, so it fails with a status instead: 503
+ * is retryable and, unlike a Worker exception, says so to a browser and to a
+ * health check alike.
+ */
+async function serveShell(request: Request, env: Env): Promise<Response> {
+  const shell = new URL('/index.html', request.url);
+  try {
+    return await env.ASSETS.fetch(new Request(shell, { method: request.method }));
+  } catch {
+    console.error(JSON.stringify({ event: 'shell_unavailable', path: new URL(request.url).pathname }));
+    return new Response('Service unavailable', {
+      status: 503,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    const index = subsystemFor(new URL(request.url).pathname);
-    if (index < 0) return proxyToOrigin(request, env);
+    const { pathname } = new URL(request.url);
+    const index = subsystemFor(pathname);
+
+    if (index < 0) {
+      if (pathname.startsWith(ASSET_PREFIX)) return assetMiss();
+      if (pathname.startsWith('/api/')) return proxyToOrigin(request, env);
+      // Anything else with a body or a side effect is still the origin's; only
+      // a navigation gets the shell.
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return proxyToOrigin(request, env);
+      }
+      return serveShell(request, env);
+    }
 
     let app = loaded.get(index);
     if (!app) {

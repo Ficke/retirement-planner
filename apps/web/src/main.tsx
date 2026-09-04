@@ -8,12 +8,14 @@ import { BrowserRouter } from 'react-router-dom';
 import { AppRouter } from '@/app-router';
 import { AuthProvider } from '@/components/auth-provider';
 import { AppErrorBoundary } from '@/components/error-boundary';
+import { recoverFromRetiredChunks } from '@/lib/chunk-recovery';
 import { ThemeProvider } from '@/components/theme-provider';
 import { prefetchSimulationEngine } from '@/engine/mc';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Application root element is missing');
 
+recoverFromRetiredChunks();
 prefetchSimulationEngine();
 
 // Loaded on its own so the measurement stays out of the bundle whose load it

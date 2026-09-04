@@ -1,4 +1,6 @@
+import { createExecutionContext } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import worker from '@/worker/index';
 import { proxyToOrigin, type ProxyDependencies } from '@/worker/proxy';
 
 // Only the proxy's own bindings matter here; the data routes are exercised
@@ -190,8 +192,8 @@ describe('edge worker', () => {
     expect(response.status).toBe(401);
   });
 
-  // Assets are served by the asset store and never reach the Worker, so every
-  // response it produces is a dynamic origin response.
+  // An asset hit never reaches the Worker, and an asset miss is answered before
+  // the proxy, so every response the proxy produces is a dynamic origin one.
   it('marks every proxied response no-store', async () => {
     const cases: Array<[string, RequestInit | undefined, number, HeadersInit | undefined]> = [
       ['https://adamficke.dev/api/profile', undefined, 200, undefined],
@@ -233,5 +235,94 @@ describe('edge worker', () => {
     expect(logged).not.toContain(testEnv.ORIGIN_URL);
     expect(logged).not.toContain(testEnv.ORIGIN_SECRET);
     expect(logged).not.toContain('203.0.113.9');
+  });
+});
+
+describe('edge worker routing', () => {
+  function envWithAssets(shell: Response) {
+    let assetRequest: Request | undefined;
+    const fetchAsset = vi.fn(async (request: Request) => {
+      assetRequest = request;
+      return shell;
+    });
+    const env = { ...testEnv, ASSETS: { fetch: fetchAsset } } as unknown as Env;
+    return { env, fetchAsset, servedShell: () => assetRequest };
+  }
+
+  function call(url: string, env: Env, init?: RequestInit) {
+    const request = new Request(url, init) as unknown as Parameters<typeof worker.fetch>[0];
+    return worker.fetch(request, env, createExecutionContext());
+  }
+
+  // The manifest is scoped to the Worker version, so a chunk from the previous
+  // build is gone rather than misrouted. The shell would be HTML where the
+  // browser expects a module, and `_headers` would cache it immutable.
+  it('answers an unlisted asset path with a 404 the caches will not keep', async () => {
+    const { env, fetchAsset } = envWithAssets(new Response('must not be served'));
+
+    const response = await call('https://adamficke.dev/assets/accounts-retired.js', env);
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toMatch(/text\/plain/);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(fetchAsset).not.toHaveBeenCalled();
+  });
+
+  it('serves the shell for a client route, from the asset store', async () => {
+    const { env, servedShell } = envWithAssets(
+      new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } }),
+    );
+
+    const response = await call('https://adamficke.dev/accounts', env);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('<!doctype html>');
+    expect(servedShell()?.url).toBe('https://adamficke.dev/index.html');
+  });
+
+  it('preserves the method when it reaches for the shell', async () => {
+    const { env, servedShell } = envWithAssets(new Response(null));
+
+    await call('https://adamficke.dev/plan', env, { method: 'HEAD' });
+
+    expect(servedShell()?.method).toBe('HEAD');
+  });
+
+  // Navigations did not touch the Worker while the SPA fallback served them, so
+  // this branch is new blast radius: a throw here is a dead page, not a dead API.
+  it('answers 503 rather than throwing when the shell cannot be fetched', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const env = {
+      ...testEnv,
+      ASSETS: {
+        fetch: async () => {
+          throw new Error('asset store unavailable');
+        },
+      },
+    } as unknown as Env;
+
+    const response = await call('https://adamficke.dev/plan', env);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(consoleError).toHaveBeenCalledOnce();
+  });
+
+  // Only a navigation gets the shell. Anything with a body is still the
+  // origin's, which keeps the Cloud Run retirement independent of this change.
+  it('leaves non-navigation methods on unknown paths with the origin', async () => {
+    const { env, fetchAsset } = envWithAssets(new Response('must not be served'));
+    const originFetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('from origin'));
+
+    const response = await call('https://adamficke.dev/legacy-form', env, {
+      method: 'POST',
+      body: 'payload',
+    });
+
+    expect(await response.text()).toBe('from origin');
+    expect(originFetch).toHaveBeenCalledOnce();
+    expect(fetchAsset).not.toHaveBeenCalled();
   });
 });
