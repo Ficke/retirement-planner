@@ -36,15 +36,27 @@ BASE_URL="${BASE_URL%/}"
 
 fail() { echo "FAIL: $*"; exit 1; }
 
-header() {
-  # $1 url, $2 header name. Prints the last value, lowercased.
-  curl -sS -I --max-time 30 "$1" \
-    | tr -d '\r' \
+# One request, kept whole. Every assertion about an asset reads from the same
+# response: asking again is a second request, and during a rollout the two can
+# land on different Worker versions and disagree.
+fetch() { curl -sS -I --max-time 30 "$1" | tr -d '\r' || true; }
+
+# $1 response, $2 header name. Prints the last value, lowercased.
+value_of() {
+  printf '%s\n' "$1" \
     | awk -v want="$(echo "$2" | tr '[:upper:]' '[:lower:]')" \
-        'BEGIN { IGNORECASE = 1 } tolower($1) == want ":" { $1 = ""; sub(/^ /, ""); v = $0 } END { print tolower(v) }'
+        'tolower($1) == want ":" { $1 = ""; sub(/^ /, ""); v = $0 } END { print tolower(v) }'
 }
 
-status() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$1" || echo 000; }
+status_of() {
+  code=$(printf '%s\n' "$1" | awk '/^HTTP\// { c = $2 } END { print c }')
+  [ -n "$code" ] || code=000
+  echo "$code"
+}
+
+header() { value_of "$(fetch "$1")" "$2"; }
+
+status() { status_of "$(fetch "$1")"; }
 
 # Poll until the URL serves something other than a miss, or the window closes.
 # Prints the final status.
@@ -62,18 +74,19 @@ settled_status() {
 }
 
 # The same, for an asset, where a 200 carrying the shell is also a miss. Prints
-# the final status; a settled asset leaves its own content type to be asserted.
-settled_asset_status() {
+# the whole response that settled it, so the content type and caching asserted
+# below are the ones this reply actually carried.
+settled_asset() {
   attempt=1
   while :; do
-    code=$(status "$1")
-    if [ "$code" = "200" ]; then
-      case "$(header "$1" content-type)" in
+    response=$(fetch "$1")
+    if [ "$(status_of "$response")" = "200" ]; then
+      case "$(value_of "$response" content-type)" in
         text/html*) ;;
-        *) echo "$code"; return ;;
+        *) printf '%s\n' "$response"; return ;;
       esac
     fi
-    [ "$attempt" -ge "$ATTEMPTS" ] && { echo "$code"; return; }
+    [ "$attempt" -ge "$ATTEMPTS" ] && { printf '%s\n' "$response"; return; }
     attempt=$((attempt + 1))
     sleep "$RETRY_DELAY"
   done
@@ -94,16 +107,38 @@ for required in x-content-type-options content-security-policy x-frame-options; 
   [ -n "$value" ] || fail "shell is missing the $required header"
 done
 
+# Wait until this colo is serving this build before asserting anything about it.
+# A rollout is asynchronous: until the new version arrives, the shell and its
+# assets still come from the old one, and every assertion below would be about a
+# build that is not under test. That is what failed deploy-2026-09-04.1 and .2.
+# The shell naming this build's entry chunk is the signal that it has arrived,
+# and it is a positive signal rather than the absence of a negative one.
+[ -f "$CLIENT_DIR/index.html" ] || fail "no $CLIENT_DIR/index.html to identify this build by"
+entry=$(grep -oE '/assets/[A-Za-z0-9._-]+\.js' "$CLIENT_DIR/index.html" | head -1)
+[ -n "$entry" ] || fail "no entry chunk named in $CLIENT_DIR/index.html"
+
+attempt=1
+while :; do
+  case "$(curl -sS --max-time 30 "$BASE_URL/" || true)" in
+    *"$entry"*) break ;;
+  esac
+  [ "$attempt" -ge "$ATTEMPTS" ] && fail "after $ATTEMPTS attempts $BASE_URL still does not serve this build (no $entry in the shell)"
+  attempt=$((attempt + 1))
+  sleep "$RETRY_DELAY"
+done
+echo "Deployment is serving this build ($entry)"
+
 checked=0
 for asset in "$CLIENT_DIR"/assets/*; do
   [ -f "$asset" ] || continue
   path="/assets/$(basename "$asset")"
   url="$BASE_URL$path"
 
-  asset_status=$(settled_asset_status "$url")
+  response=$(settled_asset "$url")
+  asset_status=$(status_of "$response")
   [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status after $ATTEMPTS attempts"
 
-  type=$(header "$url" content-type)
+  type=$(value_of "$response" content-type)
   case "$type" in
     text/html*) fail "$path still served the SPA shell after $ATTEMPTS attempts — the deployed version is not this build, or asset paths are falling back instead of 404ing" ;;
   esac
@@ -114,7 +149,7 @@ for asset in "$CLIENT_DIR"/assets/*; do
     *.wasm) case "$type" in *application/wasm*) ;; *) fail "$path content-type is '$type'" ;; esac ;;
   esac
 
-  cache=$(header "$url" cache-control)
+  cache=$(value_of "$response" cache-control)
   case "$cache" in
     *immutable*) ;;
     *) fail "$path cache-control is '$cache', expected immutable" ;;
