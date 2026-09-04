@@ -165,11 +165,15 @@ describe('State Management - Simple Invalidation Logic', () => {
     expect(migrated.assumptions.useBackdoorRoth).toBe(false);
   });
 
-  it('seeds a starter balance for a plan that was never stored, but not for a cleared one', () => {
+  it('seeds starter balances for a plan that was never stored, but not for a cleared one', () => {
     const fresh = hydratePlan(null, null, null, null);
-    expect(fresh.accounts).toHaveLength(1);
-    expect(fresh.accounts[0].balance).toBe(100_000);
-    expect(fresh.accounts[0].assetWeights.stocks).toBe(1);
+    // The projection routes savings into these buckets whichever ones a
+    // household lists, so the starter balance sheet names them all.
+    expect(fresh.accounts.map((account) => account.type))
+      .toEqual(['Traditional', 'Roth', 'Taxable']);
+    expect(fresh.accounts.reduce((total, account) => total + account.balance, 0))
+      .toBe(150_000);
+    expect(fresh.accounts.every((account) => account.assetWeights.stocks === 0.9)).toBe(true);
 
     const cleared = hydratePlan(null, null, null, []);
     expect(cleared.accounts).toEqual([]);

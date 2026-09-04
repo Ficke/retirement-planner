@@ -1,4 +1,4 @@
-import { MIN_RETIREMENT_AGE } from './constants';
+import { MAX_PLAN_DOLLARS, MIN_RETIREMENT_AGE } from './constants';
 import type { RetirementPlan, RothConversionPolicy } from './types';
 
 /**
@@ -59,7 +59,12 @@ export interface LeverRange {
 }
 
 interface LeverSpec {
-  base: [number, number];
+  /**
+   * The standard band, before the range grows to contain a plan value outside
+   * it. A lever whose interesting region moves with the plan resolves this
+   * from the plan rather than fixing it.
+   */
+  base: (plan: RetirementPlan) => [number, number];
   step: number;
   tickStep: number;
   sweepStep: number;
@@ -70,9 +75,29 @@ interface LeverSpec {
   bounds: (plan: RetirementPlan) => [number, number];
 }
 
+/**
+ * What a plan spending nothing falls back to, so a zero cannot collapse the
+ * range to a single point. Deliberately small: every plan that spends anything
+ * real sizes its own band, and a floor above that only widens the axis into
+ * territory the household will never reach.
+ */
+const MIN_SPENDING_BAND = 20_000;
+
+/**
+ * Spending a household could sustain indefinitely: everything it earns, plus a
+ * safe draw on what it holds. Spending well past this fails every year whatever
+ * the markets do, so it fixes how far above the plan the axis is worth running.
+ */
+function sustainableSpending(plan: RetirementPlan): number {
+  const balances = plan.accounts.reduce((total, account) => total + account.balance, 0);
+  return plan.profile.currentSalary + 0.04 * balances;
+}
+
+const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) * tick;
+
 const SPECS: Record<LeverKey, LeverSpec> = {
   retirementAge: {
-    base: [MIN_RETIREMENT_AGE, 70],
+    base: () => [MIN_RETIREMENT_AGE, 70],
     step: 1,
     tickStep: 5,
     sweepStep: 5,
@@ -83,17 +108,37 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     bounds: (plan) => [MIN_RETIREMENT_AGE, Math.min(100, plan.profile.lifeExpectancy - 1)],
   },
   spending: {
-    base: [60_000, 120_000],
+    // Centered on what the plan already spends, so the handle never starts at
+    // an edge and the curve is plotted where this household's answer changes.
+    base: (plan) => {
+      const span = Math.max(plan.profile.currentSpending, MIN_SPENDING_BAND);
+      return [Math.floor((span * 0.5) / 20_000) * 20_000, roundUpToTick(span * 1.5, 20_000)];
+    },
     step: 1_000,
     tickStep: 20_000,
     sweepStep: 10_000,
     maxTicks: 7,
     maxSweepValues: 9,
     value: (plan) => plan.profile.currentSpending,
-    bounds: () => [20_000, 250_000],
+    // A guard against an absurd axis rather than the thing that sizes it: the
+    // band above does that. Half again above the larger of what the plan can
+    // sustain and what it already spends, so the cap can never pin the handle
+    // to the right edge of a plan that happens to spend near its own ceiling.
+    // Every sweep value is validated against the plan schema, so it also may
+    // never resolve past what that schema accepts.
+    bounds: (plan) => [
+      0,
+      Math.min(
+        MAX_PLAN_DOLLARS,
+        roundUpToTick(
+          Math.max(sustainableSpending(plan), plan.profile.currentSpending) * 1.5,
+          20_000,
+        ),
+      ),
+    ],
   },
   rothConversion: {
-    base: [0, CONVERSION_STEPS.length - 1],
+    base: () => [0, CONVERSION_STEPS.length - 1],
     step: 1,
     tickStep: 1,
     sweepStep: 1,
@@ -103,7 +148,7 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     bounds: () => [0, CONVERSION_STEPS.length - 1],
   },
   socialSecurityClaimAge: {
-    base: [62, 70],
+    base: () => [62, 70],
     step: 1,
     tickStep: 2,
     sweepStep: 2,
@@ -126,17 +171,18 @@ function multiplesWithin(min: number, max: number, step: number, maxCount: numbe
 export function leverRange(key: LeverKey, plan: RetirementPlan): LeverRange {
   const spec = SPECS[key];
   const [lowBound, highBound] = spec.bounds(plan);
+  const [baseLow, baseHigh] = spec.base(plan);
   const current = spec.value(plan);
 
   // A plan value outside the standard band still needs a marker on the curve,
   // so the range grows to a round multiple that contains it.
   const min = Math.max(
     lowBound,
-    Math.min(spec.base[0], Math.floor(current / spec.tickStep) * spec.tickStep),
+    Math.min(baseLow, Math.floor(current / spec.tickStep) * spec.tickStep),
   );
   const max = Math.max(min, Math.min(
     highBound,
-    Math.max(spec.base[1], Math.ceil(current / spec.tickStep) * spec.tickStep),
+    Math.max(baseHigh, Math.ceil(current / spec.tickStep) * spec.tickStep),
   ));
 
   const sweepValues = multiplesWithin(min, max, spec.sweepStep, spec.maxSweepValues);

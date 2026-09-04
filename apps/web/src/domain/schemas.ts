@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
+import { MAX_PLAN_DOLLARS, MIN_RETIREMENT_AGE, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import { ageOn, birthDateFromLegacyAge } from '@/domain/age';
 import { DEFAULT_LONG_TERM_CARE } from '@/data/tax-brackets-2025';
 import type { UserProfile } from '@/domain/types';
@@ -44,9 +44,9 @@ const profileBaseShape = {
   state: z.enum(['CA', 'TX', 'FL', 'NY', 'WA', 'Other'] as const),
   filingStatus: z.enum(['Single', 'MarriedFilingJointly', 'MarriedFilingSeparately', 'HeadOfHousehold'] as const),
   retirementAge: z.number().int().min(MIN_RETIREMENT_AGE, `Retirement age must be at least ${MIN_RETIREMENT_AGE}`).max(100, "Retirement age must be reasonable"),
-  currentSalary: z.number().min(0, "Salary must be non-negative").max(1_000_000_000),
+  currentSalary: z.number().min(0, "Salary must be non-negative").max(MAX_PLAN_DOLLARS),
   salaryGrowthRate: z.number().min(-0.1, "Salary growth rate must be reasonable").max(0.2, "Salary growth rate must be reasonable"),
-  currentSpending: z.number().min(0, "Current spending must be non-negative").max(1_000_000_000),
+  currentSpending: z.number().min(0, "Current spending must be non-negative").max(MAX_PLAN_DOLLARS),
   workingSpendingGrowthRate: z.number().min(-0.1, "Working spending growth rate must be reasonable").max(0.1, "Working spending growth rate must be reasonable"),
   retirementSpendingGrowthRate: z.number().min(-0.1, "Retirement spending growth rate must be reasonable").max(0.1, "Retirement spending growth rate must be reasonable"),
   lifeExpectancy: z.number().int().min(65, "Life expectancy must be at least 65").max(120, "Life expectancy must be reasonable"),

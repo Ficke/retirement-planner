@@ -147,26 +147,50 @@ function newLocalAccount(data: CreateAccountData): Account {
  * that has never been stored: an empty accounts array is a deletion and stays
  * empty.
  */
+/**
+ * A scaffold to edit, not a model household: round numbers a new plan can be
+ * typed over in a minute. The three buckets are materialized because the
+ * projection routes savings into them whether or not they are on screen, and a
+ * balance sheet that omits them tells a different story from the projection.
+ */
+const STARTER_WEIGHTS = { stocks: 0.9, bonds: 0.1 };
+
 const starterAccounts: Account[] = [
+  {
+    id: 'starter-401k',
+    name: '401(k)',
+    institution: '',
+    type: 'Traditional',
+    balance: 75_000,
+    assetWeights: { ...STARTER_WEIGHTS },
+  },
+  {
+    id: 'starter-roth-ira',
+    name: 'Roth IRA',
+    institution: '',
+    type: 'Roth',
+    balance: 25_000,
+    assetWeights: { ...STARTER_WEIGHTS },
+  },
   {
     id: 'starter-brokerage',
     name: 'Brokerage',
     institution: '',
     type: 'Taxable',
-    balance: 100_000,
-    assetWeights: { stocks: 1, bonds: 0 },
+    balance: 50_000,
+    assetWeights: { ...STARTER_WEIGHTS },
   },
 ];
 
 const defaultPlan: RetirementPlan = {
   profile: {
-    birthDate: `${new Date().getFullYear() - 35}-01-01`,
+    birthDate: `${new Date().getFullYear() - 30}-01-01`,
     state: 'CA',
     filingStatus: 'Single',
     retirementAge: 65,
-    currentSalary: 75000,
+    currentSalary: 150_000,
     salaryGrowthRate: 0.01,
-    currentSpending: 50000,
+    currentSpending: 85_000,
     workingSpendingGrowthRate: 0.0,
     retirementSpendingMultiplier: 1,
     retirementSpendingGrowthRate: 0.0,
