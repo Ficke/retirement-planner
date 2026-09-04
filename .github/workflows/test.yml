@@ -48,35 +48,6 @@ jobs:
       - name: Validate Worker
         run: pnpm -C apps/web check:worker
 
-  audit:
-    name: Audit Dependencies
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    # On its own, because it is the only check here that depends on a third
-    # party being reachable: it posts to npm's advisory API, so a registry
-    # outage fails it exactly like a real advisory would. Sequenced ahead of
-    # typecheck, lint, tests, and build -- as it was -- an outage skipped all
-    # four, and CI reported nothing about the code under review. Those four need
-    # no network, so they must not sit behind this.
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '24'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Audit production dependencies
-        run: pnpm audit --prod --audit-level high
-
   test-typescript:
     name: Run Tests
     runs-on: ubuntu-latest

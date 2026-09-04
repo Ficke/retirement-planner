@@ -76,24 +76,35 @@ interface LeverSpec {
 }
 
 /**
- * What a plan spending nothing falls back to, so a zero cannot collapse the
- * range to a single point. Deliberately small: every plan that spends anything
- * real sizes its own band, and a floor above that only widens the axis into
- * territory the household will never reach.
+ * What a household with no income and no savings falls back to, so an empty
+ * plan still gets a band rather than a point. Deliberately small: every plan
+ * with real income or savings sizes its own, and a floor above that only widens
+ * the axis into territory the household will never reach.
  */
 const MIN_SPENDING_BAND = 20_000;
 
-/**
- * Spending a household could sustain indefinitely: everything it earns, plus a
- * safe draw on what it holds. Spending well past this fails every year whatever
- * the markets do, so it fixes how far above the plan the axis is worth running.
- */
-function sustainableSpending(plan: RetirementPlan): number {
-  const balances = plan.accounts.reduce((total, account) => total + account.balance, 0);
-  return plan.profile.currentSalary + 0.04 * balances;
-}
-
 const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) * tick;
+
+/**
+ * The top of the spending axis. One band is half again what the household could
+ * spend today -- everything it earns, plus a safe draw on what it holds -- and
+ * the axis runs in whole bands, taking as many as it needs to reach a plan that
+ * already spends more.
+ *
+ * The band itself never reads spending, and the count of them is a step
+ * function of it, so the axis holds still while the lever moves. That is the
+ * whole point: an axis sized from spending directly re-centers on every move,
+ * so one screen position maps to a larger number each time and the lever walks
+ * its own value up. Stretching to the plan's value instead of rounding to a
+ * whole band has the mirror defect -- the track shrinks under every leftward
+ * drag, and a value the lever just left falls off the end.
+ */
+function spendingAxisTop(plan: RetirementPlan): number {
+  const balances = plan.accounts.reduce((total, account) => total + account.balance, 0);
+  const affordable = plan.profile.currentSalary + 0.04 * balances;
+  const band = roundUpToTick(Math.max(affordable, MIN_SPENDING_BAND) * 1.5, 20_000);
+  return band * Math.max(1, Math.ceil(plan.profile.currentSpending / band));
+}
 
 const SPECS: Record<LeverKey, LeverSpec> = {
   retirementAge: {
@@ -108,34 +119,24 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     bounds: (plan) => [MIN_RETIREMENT_AGE, Math.min(100, plan.profile.lifeExpectancy - 1)],
   },
   spending: {
-    // Centered on what the plan already spends, so the handle never starts at
-    // an edge and the curve is plotted where this household's answer changes.
-    base: (plan) => {
-      const span = Math.max(plan.profile.currentSpending, MIN_SPENDING_BAND);
-      return [Math.floor((span * 0.5) / 20_000) * 20_000, roundUpToTick(span * 1.5, 20_000)];
-    },
+    // From zero, so a frugal household's handle has somewhere to sit without
+    // the band having to follow it down.
+    base: (plan) => [0, spendingAxisTop(plan)],
     step: 1_000,
     tickStep: 20_000,
     sweepStep: 10_000,
     maxTicks: 7,
-    maxSweepValues: 9,
+    // Enough to keep $20k steps over an axis in the low hundreds of thousands,
+    // where the answer actually turns. Fewer and `multiplesWithin` doubles the
+    // spacing, which costs resolution exactly there. The widest batch this can
+    // produce stays inside the request contract; the sensitivity test in
+    // `simulation-service` holds that bound.
+    maxSweepValues: 14,
     value: (plan) => plan.profile.currentSpending,
-    // A guard against an absurd axis rather than the thing that sizes it: the
-    // band above does that. Half again above the larger of what the plan can
-    // sustain and what it already spends, so the cap can never pin the handle
-    // to the right edge of a plan that happens to spend near its own ceiling.
-    // Every sweep value is validated against the plan schema, so it also may
-    // never resolve past what that schema accepts.
-    bounds: (plan) => [
-      0,
-      Math.min(
-        MAX_PLAN_DOLLARS,
-        roundUpToTick(
-          Math.max(sustainableSpending(plan), plan.profile.currentSpending) * 1.5,
-          20_000,
-        ),
-      ),
-    ],
+    // Every sweep value is validated against the plan schema, so the axis may
+    // never resolve past what that schema accepts. The band above is what
+    // sizes it.
+    bounds: () => [0, MAX_PLAN_DOLLARS],
   },
   rothConversion: {
     base: () => [0, CONVERSION_STEPS.length - 1],

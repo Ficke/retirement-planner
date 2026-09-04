@@ -34,7 +34,14 @@ BASE_URL="${BASE_URL%/}"
 
 [ -d "$CLIENT_DIR/assets" ] || { echo "No build output at $CLIENT_DIR/assets"; exit 1; }
 
+# Two verdicts, because they call for different responses. `fail` means the
+# check could not reach a conclusion about this build -- no local build output,
+# the site unreachable, the new version never observed rolling out. `broken`
+# means the deployment is serving this build and this build is wrong. Only the
+# second justifies reverting: the deploy workflow rolls back on exit 2 alone,
+# and a rollback on "could not verify" is what reverted two healthy deploys.
 fail() { echo "FAIL: $*"; exit 1; }
+broken() { echo "BROKEN: $*"; exit 2; }
 
 # One request, kept whole. Every assertion about an asset reads from the same
 # response: asking again is a second request, and during a rollout the two can
@@ -96,16 +103,6 @@ echo "Verifying $BASE_URL against $CLIENT_DIR"
 
 shell_status=$(settled_status "$BASE_URL/")
 [ "$shell_status" = "200" ] || fail "shell returned HTTP $shell_status"
-shell_type=$(header "$BASE_URL/" content-type)
-case "$shell_type" in
-  text/html*) ;;
-  *) fail "shell content-type is '$shell_type', expected text/html" ;;
-esac
-
-for required in x-content-type-options content-security-policy x-frame-options; do
-  value=$(header "$BASE_URL/" "$required")
-  [ -n "$value" ] || fail "shell is missing the $required header"
-done
 
 # Wait until this colo is serving this build before asserting anything about it.
 # A rollout is asynchronous: until the new version arrives, the shell and its
@@ -128,6 +125,19 @@ while :; do
 done
 echo "Deployment is serving this build ($entry)"
 
+# Everything from here is an assertion about the build now known to be serving,
+# so every failure below is a verdict on it.
+shell_type=$(header "$BASE_URL/" content-type)
+case "$shell_type" in
+  text/html*) ;;
+  *) broken "shell content-type is '$shell_type', expected text/html" ;;
+esac
+
+for required in x-content-type-options content-security-policy x-frame-options; do
+  value=$(header "$BASE_URL/" "$required")
+  [ -n "$value" ] || broken "shell is missing the $required header"
+done
+
 checked=0
 for asset in "$CLIENT_DIR"/assets/*; do
   [ -f "$asset" ] || continue
@@ -136,23 +146,26 @@ for asset in "$CLIENT_DIR"/assets/*; do
 
   response=$(settled_asset "$url")
   asset_status=$(status_of "$response")
-  [ "$asset_status" = "200" ] || fail "$path returned HTTP $asset_status after $ATTEMPTS attempts"
+  # `fetch` swallows curl's own errors, which surface as status 000. That is a
+  # network problem between the runner and the edge, not a verdict on the build.
+  [ "$asset_status" = "000" ] && fail "$path could not be reached after $ATTEMPTS attempts"
+  [ "$asset_status" = "200" ] || broken "$path returned HTTP $asset_status after $ATTEMPTS attempts"
 
   type=$(value_of "$response" content-type)
   case "$type" in
-    text/html*) fail "$path still served the SPA shell after $ATTEMPTS attempts — the deployed version is not this build, or asset paths are falling back instead of 404ing" ;;
+    text/html*) broken "$path still served the SPA shell after $ATTEMPTS attempts — asset paths are falling back to the shell instead of 404ing" ;;
   esac
 
   case "$path" in
-    *.js)   case "$type" in *javascript*) ;; *) fail "$path content-type is '$type'" ;; esac ;;
-    *.css)  case "$type" in *text/css*) ;;    *) fail "$path content-type is '$type'" ;; esac ;;
-    *.wasm) case "$type" in *application/wasm*) ;; *) fail "$path content-type is '$type'" ;; esac ;;
+    *.js)   case "$type" in *javascript*) ;; *) broken "$path content-type is '$type'" ;; esac ;;
+    *.css)  case "$type" in *text/css*) ;;    *) broken "$path content-type is '$type'" ;; esac ;;
+    *.wasm) case "$type" in *application/wasm*) ;; *) broken "$path content-type is '$type'" ;; esac ;;
   esac
 
   cache=$(value_of "$response" cache-control)
   case "$cache" in
     *immutable*) ;;
-    *) fail "$path cache-control is '$cache', expected immutable" ;;
+    *) broken "$path cache-control is '$cache', expected immutable" ;;
   esac
 
   checked=$((checked + 1))

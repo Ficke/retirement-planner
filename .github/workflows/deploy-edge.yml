@@ -67,12 +67,32 @@ jobs:
 
       # The SPA fallback answers a missing asset with the shell at status 200,
       # so a mismatched upload has no error signal of its own.
+      #
+      # Exit 2 is the script's one rollback-worthy verdict: the deployment is
+      # serving this build and this build is wrong. Exit 1 is "could not
+      # verify" -- unreachable host, no local build output, the new version
+      # never seen rolling out -- and must not revert anything.
       - name: Verify deployed assets
-        run: ./scripts/verify-edge-assets.sh https://adamficke.dev
+        id: verify
+        run: |
+          set +e
+          ./scripts/verify-edge-assets.sh https://adamficke.dev
+          status=$?
+          [ "$status" -eq 2 ] && verdict=broken || verdict=unverified
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          exit $status
 
       # The only check that covers Worker -> minted OIDC token -> private Rust
       # service. It needs a dedicated Firebase account that also has a row in
       # the application users table; set EDGE_SMOKE_ENABLED once that exists.
+      #
+      # This one alerts rather than rolls back: it fails the job, and the failed
+      # run is the page. Every dependency it crosses -- Firebase, the Rust
+      # service, the database -- can be down while the deploy is fine, and
+      # reverting the Worker does not restore any of them. It swaps a known
+      # outage for an unannounced version change on top of it. It has no verdict
+      # of its own to offer, which is the same reason the asset gate's exit 1
+      # does not revert either.
       - name: Smoke check the simulation path
         if: vars.EDGE_SMOKE_ENABLED == 'true'
         run: ./scripts/smoke-check-edge.sh https://adamficke.dev
@@ -81,11 +101,17 @@ jobs:
           SMOKE_USER_EMAIL: ${{ secrets.SMOKE_USER_EMAIL }}
           SMOKE_USER_PASSWORD: ${{ secrets.SMOKE_USER_PASSWORD }}
 
-      # A Worker that cannot serve its own assets or a simulation must not stay
-      # live while it is investigated. Conditioned on the deploy having
-      # succeeded, so a failed build never reverts a healthy Worker.
+      # A Worker that cannot serve the build it just uploaded must not stay live
+      # while it is investigated: every page load is already broken, and the
+      # previous version is known to serve.
+      #
+      # Both deploys this step reverted in error -- deploy-2026-09-04.1 and .2 --
+      # were healthy builds that the asset gate could not verify, so the gate's
+      # exit status alone is not the signal. It answers only to the verdict that
+      # the build under test is serving and wrong. Reverting on anything weaker
+      # discards a good version to fix nothing.
       - name: Roll back the Worker
-        if: failure() && steps.deploy.outcome == 'success'
+        if: failure() && steps.deploy.outcome == 'success' && steps.verify.outputs.verdict == 'broken'
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -93,4 +119,4 @@ jobs:
           workingDirectory: apps/web
           wranglerVersion: '4.128.0'
           packageManager: pnpm
-          command: rollback --yes --message "Post-deploy verification failed for ${{ github.ref_name }}"
+          command: rollback --yes --message "${{ github.ref_name }} deployed and could not serve its own assets"

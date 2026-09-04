@@ -33,7 +33,7 @@ export default defineConfig({
     env: {
       // Miniflare will not start a Hyperdrive binding without one. Nothing here
       // opens a connection.
-      WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE:
+      CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE:
         'postgresql://retire_worker:local-only@127.0.0.1:5432/neondb',
     },
   },
