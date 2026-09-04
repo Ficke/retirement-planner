@@ -1,7 +1,7 @@
 # Multi-stage build for the Vite client and Hono server
 
 # Stage 1: Dependencies and Builder
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 RUN apk add --no-cache libc6-compat
 
 # Install pnpm
@@ -43,7 +43,7 @@ WORKDIR /app/apps/web
 RUN pnpm build
 
 # Stage 2: Runner
-FROM node:24-alpine AS runner
+FROM node:26-alpine AS runner
 RUN apk add --no-cache libc6-compat
 
 WORKDIR /app
