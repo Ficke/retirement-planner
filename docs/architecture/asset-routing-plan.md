@@ -172,10 +172,32 @@ this deploy exactly the way it failed `deploy-2026-09-04.1`, roll back, and
 leave the fix unshippable. Both shapes are waited out; only the state after the
 window closes is a verdict.
 
-Also revisit the rollback step. It reverted a healthy deploy on a false
-positive, which is a worse outcome than failing loudly and leaving the new
-version live. Decide deliberately whether verification failure should roll back
-or alert.
+The rollback step is now scoped to one verdict, and the gate reports that
+verdict separately from its exit status.
+
+Both healthy deploys this step reverted -- `deploy-2026-09-04.1` and `.2` --
+failed here, in this gate, on builds that were fine. So "the asset check failed"
+is not the signal, and narrowing the rollback to this step would have changed
+nothing: the script exits non-zero for plenty that says nothing about the
+deployed build. No local build output. The host unreachable. The new version
+never observed rolling out -- which is precisely what both of those deploys hit.
+
+`verify-edge-assets.sh` now separates the two. **Exit 2** means the deployment
+is serving this build and this build is wrong: every assertion after the
+build-identity gate, including the shell's own content type and headers, which
+used to be asserted before that gate and so were never about the build under
+test. **Exit 1** means the check could not reach a conclusion. Only exit 2 rolls
+back.
+
+The smoke check offers no verdict of its own either, so it alerts: it fails the
+run and leaves the build live. It crosses Firebase, the Rust service, and the
+database, any of which can be down while the deploy is fine, and reverting the
+Worker restores none of them -- it only stacks an unannounced version change on
+an outage.
+
+The general rule the two rollbacks bought: revert on a signal that means *this
+build is broken*, never on one that only means *something is broken* or *this
+could not be checked*.
 
 Gate: a deliberately corrupted build fails the gate; a healthy deploy passes on
 the first attempt.
@@ -258,6 +280,7 @@ that twice on this branch.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-04 | Rollback narrowed to one verdict. `verify-edge-assets.sh` exits 2 for "this build is serving and is wrong" and 1 for "could not verify"; the workflow reverts on 2 alone. Scoping by step rather than by verdict would not have saved either healthy deploy, since both failed inside this gate. The shell's content-type and header assertions moved after the build-identity gate, where they are about the build under test. |
 | 2026-09-04 | `deploy-2026-09-04.2` failed and rolled back on a defect in the gate, not in the Worker. The settle loop validated an asset's content type in one request and the caller then re-read that header in a *second* request; mid-rollout the two hit different Worker versions and disagreed. Every assertion now reads from the one response that settled. |
 | 2026-09-04 | Gate now waits for a positive signal instead of a bounded absence of a negative one: the deployed shell must name this build's entry chunk before any assertion runs. Waiting out a miss cannot distinguish "not yet" from "never", however long the window; naming the build can. |
 | 2026-09-03 | Root cause identified as one `not_found_handling` rule applied to both routes and asset paths. |
