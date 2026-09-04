@@ -116,14 +116,24 @@ describe('SimulationService (Pure)', () => {
     });
   });
 
-  it('centers the spending sweep on what the plan already spends', async () => {
-    // $50k against a $75k salary: the band runs from half that to half again,
-    // which puts the plan's own value in the middle rather than at an edge.
-    const result = await service.runSpendingAnalysis(mockPlan, false);
+  it('sweeps the same spending levels whatever the plan spends', async () => {
+    // The band comes from income and balances, so moving the spending lever
+    // cannot move the axis it is plotted against.
+    const grid = [
+      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000,
+      70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
+    ];
 
-    expect(result.map((r) => r.annualSpending)).toEqual([
-      20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000,
-    ]);
+    for (const currentSpending of [20_000, 50_000, 100_000]) {
+      const result = await service.runSpendingAnalysis({
+        ...mockPlan,
+        profile: { ...mockPlan.profile, currentSpending },
+      }, false);
+      const levels = result.map((r) => r.annualSpending);
+
+      expect(levels.filter((level) => grid.includes(level))).toEqual(grid);
+      expect(levels).toContain(currentSpending);
+    }
   });
 
   it('adds an exact in-range plan spending value to the standard range', async () => {
@@ -133,17 +143,19 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      40_000, 60_000, 80_000, 94_500, 100_000, 120_000, 140_000, 160_000,
+      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000, 90_000,
+      94_500, 100_000, 110_000, 120_000,
     ]);
   });
 
   it('stops the sweep short of what a household could never outspend', async () => {
     // A $75k salary and no balances cannot fund much past its own income, so
-    // the band stops rather than plotting a shelf of guaranteed failures.
+    // the band stops rather than plotting a shelf of guaranteed failures. The
+    // ceiling lands on the next $20k tick above half again that income.
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(Math.max(...result.map((r) => r.annualSpending))).toBeLessThanOrEqual(
-      mockPlan.profile.currentSalary * 1.5,
+      mockPlan.profile.currentSalary * 1.5 + 20_000,
     );
   });
 
@@ -154,7 +166,9 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     const levels = result.map((r) => r.annualSpending);
-    expect(levels.length).toBeLessThanOrEqual(9);
+    // The lever's fourteen sweep steps, plus the plan's own value when it falls
+    // off their grid.
+    expect(levels.length).toBeLessThanOrEqual(15);
     expect(levels.every((level) => level >= 0 && level <= MAX_PLAN_DOLLARS)).toBe(true);
     // The schema each scenario is validated against is the real ceiling.
     for (const level of levels) {
@@ -250,7 +264,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(7);
+    expect(results).toHaveLength(13);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'
@@ -276,8 +290,10 @@ describe('SimulationService (Pure)', () => {
       profile: {
         ...mockPlan.profile,
         retirementAge: 76,
-        // Off every sweep's grid and wide enough to fill it: $65.5k spans the
-        // full nine spending steps and adds itself as a tenth.
+        // A $170k income puts the spending axis at its widest: a $260k ceiling
+        // is exactly fourteen $20k steps, and $65.5k sits off that grid and
+        // adds itself as a fifteenth.
+        currentSalary: 170_000,
         currentSpending: 65_500,
       },
       socialSecurity: { ...mockPlan.socialSecurity, claimAge: 63 },
@@ -294,12 +310,12 @@ describe('SimulationService (Pure)', () => {
       + results.retirementAge.length
       + results.rothConversion.length;
 
-    // Every lever's sweep includes the plan's current value, so four of the 31
+    // Every lever's sweep includes the plan's current value, so four of the 36
     // curve points are the unchanged plan. They are dispatched once.
-    expect(curvePoints).toBe(31);
-    expect(simulations).toHaveLength(28);
+    expect(curvePoints).toBe(36);
+    expect(simulations).toHaveLength(33);
     expect(simulations.length).toBeLessThanOrEqual(MAX_BATCH_SIMULATIONS);
-    expect(totalPaths).toBe(28_000);
+    expect(totalPaths).toBe(33_000);
     expect(totalPaths).toBeLessThanOrEqual(MAX_BATCH_TOTAL_PATHS);
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
   });
