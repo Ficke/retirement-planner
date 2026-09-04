@@ -60,10 +60,27 @@ function assetMiss(): Response {
  * Client routes have no file of their own, so a navigation to one arrives here
  * as a miss and is answered with the shell. The asset store serves it, which is
  * what keeps `public/_headers` applied to the response.
+ *
+ * Serving the shell is on the Worker's path now, which it was not while the SPA
+ * fallback answered navigations without invoking it. A throw here would take
+ * down page loads and not just the API, so it fails with a status instead: 503
+ * is retryable and, unlike a Worker exception, says so to a browser and to a
+ * health check alike.
  */
-function serveShell(request: Request, env: Env): Promise<Response> {
+async function serveShell(request: Request, env: Env): Promise<Response> {
   const shell = new URL('/index.html', request.url);
-  return env.ASSETS.fetch(new Request(shell, { method: request.method }));
+  try {
+    return await env.ASSETS.fetch(new Request(shell, { method: request.method }));
+  } catch {
+    console.error(JSON.stringify({ event: 'shell_unavailable', path: new URL(request.url).pathname }));
+    return new Response('Service unavailable', {
+      status: 503,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
 }
 
 export default {

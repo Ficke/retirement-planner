@@ -223,12 +223,36 @@ is a new path to the free-plan ceiling.
 
 ## Test plan
 
-- Unit: Worker routing table, one case per row, including `/assets/` miss → 404.
-- Unit: the chunk-load recovery guard reloads once and not twice.
-- Integration: `_headers` asserted on both an asset response and a
-  Worker-served shell, closing the gap `edge-compute-plan.md` flagged.
-- Live: `scripts/verify-edge-assets.sh` against the deployed Worker, plus a
-  manual open-tab-across-deploy check for the Phase 2 gate.
+The gap that let this ship is worth naming, because it is larger than the bug.
+Every test in the repository was either a unit test or a smoke test against the
+Vite dev server, which has no asset manifest, no Worker, and no versions. The
+only check that exercised production routing was `verify-edge-assets.sh`, which
+runs *after* a deploy, against live production, with an auto-rollback attached.
+The first place this class of bug could be observed was the most expensive and
+most dangerous one available.
+
+- Unit: Worker routing table, one case per row, including `/assets/` miss → 404
+  and a 503 rather than a throw when the shell cannot be fetched.
+- Unit: the chunk-load recovery guard reloads once, not twice, again after the
+  window, and not at all when storage is unavailable.
+- Worker e2e (`pnpm e2e:worker`, `tests/e2e-worker/`): the built client behind a
+  real Worker — a tab whose chunk was retired reloads onto the current build; a
+  chunk that stays gone reloads exactly once and then explains itself; a retired
+  name is a 404 while a listed one is served by the store, and the shell still
+  carries `_headers`. This is the suite that would have caught the original bug,
+  and it runs locally in seconds.
+- Live: `scripts/verify-edge-assets.sh` against the deployed Worker.
+
+Both new suites were verified against the defect they exist to catch: with
+`not_found_handling` put back to `single-page-application`, the routing checks
+fail with the original three symptoms; with the recovery removed, both recovery
+tests fail. A test that cannot fail is not evidence.
+
+`pnpm audit` also moved out of the test job into its own. It posts to npm's
+advisory API, so a registry outage failed it exactly like a real advisory would
+— and sequenced ahead of typecheck, lint, tests, and build, that outage skipped
+all four and CI reported nothing about the code under review. It did precisely
+that twice on this branch.
 
 ## Decision log
 
@@ -243,4 +267,5 @@ is a new path to the free-plan ceiling.
 | 2026-09-03 | Phase 0 item 3 — `assets_navigation_prefers_asset_serving` under `"none"`: moot. With no fallback page to prefer, every miss reaches the Worker regardless of `Sec-Fetch-Mode`, which is the behavior this plan wants. |
 | 2026-09-03 | Phase 3 required no logic change: once a miss is a 404, the existing retry window is already correct. Verified both directions — a healthy build passes, a mismatched one fails as `HTTP 404 after N attempts`. |
 | 2026-09-03 | Gate must wait out *both* shapes of a miss. Retrying only the 404 would have failed the very deploy that ships this fix, since every colo serves the SPA fallback until it rolls over. Verified against production, which still runs the old version: a shell response is now retried, and the healthy path still passes with no retries. |
-| | Phase 2 gate — open tab survives a real deploy: _pending, needs a deployment_ |
+| 2026-09-03 | Phase 2 gate closed locally. It does not need a deployment: pointing Playwright at the Worker instead of the dev server tests a version transition directly, by failing the chunk a route needs. Claiming otherwise was wrong. |
+| 2026-09-03 | Dropped a second, shell-script version of the transition test. It booted its own Worker to assert what the Playwright suite already covers; its two unique assertions moved into that suite instead. |

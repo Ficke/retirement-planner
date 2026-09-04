@@ -7,7 +7,10 @@ export default defineConfig({
     setupFiles: ['./tests/setup.ts'],
     globals: true,
     exclude: ['**/contracts/**', '**/e2e/**', '**/worker/**', '**/node_modules/**'],
-    include: ['tests/**/*.{test,spec}.{js,ts}'],
+    // Vitest owns *.test.ts and Playwright owns *.spec.ts. Splitting on the
+    // suffix rather than the directory means a new Playwright directory cannot
+    // be picked up here by accident, which tests/e2e-worker was.
+    include: ['tests/**/*.test.{js,ts}'],
   },
   resolve: {
     alias: {

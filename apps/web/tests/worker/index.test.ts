@@ -288,6 +288,26 @@ describe('edge worker routing', () => {
     expect(servedShell()?.method).toBe('HEAD');
   });
 
+  // Navigations did not touch the Worker while the SPA fallback served them, so
+  // this branch is new blast radius: a throw here is a dead page, not a dead API.
+  it('answers 503 rather than throwing when the shell cannot be fetched', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const env = {
+      ...testEnv,
+      ASSETS: {
+        fetch: async () => {
+          throw new Error('asset store unavailable');
+        },
+      },
+    } as unknown as Env;
+
+    const response = await call('https://adamficke.dev/plan', env);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(consoleError).toHaveBeenCalledOnce();
+  });
+
   // Only a navigation gets the shell. Anything with a body is still the
   // origin's, which keeps the Cloud Run retirement independent of this change.
   it('leaves non-navigation methods on unknown paths with the origin', async () => {

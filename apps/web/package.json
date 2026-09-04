@@ -24,7 +24,8 @@
     "types:worker": "wrangler types",
     "types:worker:check": "wrangler types --check",
     "check:worker": "pnpm types:worker:check && pnpm typecheck:worker && pnpm test:worker && pnpm build:edge && pnpm check:startup && pnpm deploy:edge:dry-run",
-    "check:startup": "node ../../scripts/check-edge-startup.mjs"
+    "check:startup": "node ../../scripts/check-edge-startup.mjs",
+    "e2e:worker": "playwright test --config playwright.worker.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
