@@ -12,6 +12,11 @@ Reference for the Monte Carlo simulation architecture, including:
 - Rolling-deployment compatibility
 - Correctness invariants
 
+### [Asset Routing and Stale Chunks](./asset-routing-plan.md)
+Proposed fix for the SPA fallback answering missing asset paths with the shell:
+real 404s for asset misses, client recovery when a deploy retires a chunk a
+loaded tab still needs, and the deploy gate that follows from both.
+
 ### [Edge Compute Plan](./edge-compute-plan.md)
 Proposed migration of the web tier from Cloud Run into the Cloudflare Worker:
 static assets at the edge, Hono on Workers, Neon through Hyperdrive, and a
