@@ -258,6 +258,8 @@ that twice on this branch.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-04 | `deploy-2026-09-04.2` failed and rolled back on a defect in the gate, not in the Worker. The settle loop validated an asset's content type in one request and the caller then re-read that header in a *second* request; mid-rollout the two hit different Worker versions and disagreed. Every assertion now reads from the one response that settled. |
+| 2026-09-04 | Gate now waits for a positive signal instead of a bounded absence of a negative one: the deployed shell must name this build's entry chunk before any assertion runs. Waiting out a miss cannot distinguish "not yet" from "never", however long the window; naming the build can. |
 | 2026-09-03 | Root cause identified as one `not_found_handling` rule applied to both routes and asset paths. |
 | 2026-09-03 | Verified empirically: 18 of 19 chunks from the preceding build are unreachable in production; dead chunks return `text/html` under `immutable` caching. |
 | 2026-09-03 | Retry-on-shell workaround drafted, then rejected in favor of the root fix. |
