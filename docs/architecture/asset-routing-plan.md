@@ -270,16 +270,25 @@ Both new suites were verified against the defect they exist to catch: with
 fail with the original three symptoms; with the recovery removed, both recovery
 tests fail. A test that cannot fail is not evidence.
 
-`pnpm audit` also moved out of the test job into its own. It posts to npm's
-advisory API, so a registry outage failed it exactly like a real advisory would
-— and sequenced ahead of typecheck, lint, tests, and build, that outage skipped
-all four and CI reported nothing about the code under review. It did precisely
-that twice on this branch.
+`pnpm audit` first moved out of the test job into its own, then out of CI
+entirely. Its problem was the same one this plan spent two rollbacks learning:
+it posts to npm's advisory API, so an unreachable API failed it exactly as a
+real advisory would, and nothing in the check could tell the two apart. Moving
+it to its own job stopped an outage from skipping typecheck, lint, tests, and
+build — it had done precisely that twice on this branch — but left the check
+still able to block a branch on npm's uptime, which it then did twice more.
+
+Dependabot replaced it. GitHub scans the same advisory data server-side on its
+own schedule and opens fix PRs, so nothing about a dependency's known
+vulnerabilities sits between a change and its merge. Alerts and automated
+security fixes are enabled on the repository; `.github/dependabot.yml` governs
+the scheduled version updates.
 
 ## Decision log
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-04 | `pnpm audit` dropped from CI in favor of Dependabot alerts and automated security fixes. Same defect class as the deploy gate: an unreachable advisory API was indistinguishable from a finding, and it blocked this branch twice on socket timeouts. Scanning belongs on GitHub's schedule rather than on the merge path. |
 | 2026-09-04 | Rollback narrowed to one verdict. `verify-edge-assets.sh` exits 2 for "this build is serving and is wrong" and 1 for "could not verify"; the workflow reverts on 2 alone. Scoping by step rather than by verdict would not have saved either healthy deploy, since both failed inside this gate. The shell's content-type and header assertions moved after the build-identity gate, where they are about the build under test. |
 | 2026-09-04 | `deploy-2026-09-04.2` failed and rolled back on a defect in the gate, not in the Worker. The settle loop validated an asset's content type in one request and the caller then re-read that header in a *second* request; mid-rollout the two hit different Worker versions and disagreed. Every assertion now reads from the one response that settled. |
 | 2026-09-04 | Gate now waits for a positive signal instead of a bounded absence of a negative one: the deployed shell must name this build's entry chunk before any assertion runs. Waiting out a miss cannot distinguish "not yet" from "never", however long the window; naming the build can. |

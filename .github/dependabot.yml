@@ -1,0 +1,54 @@
+# Dependency updates. The vulnerability scanning this replaced used to run as a
+# `pnpm audit` step in test.yml, where npm's advisory API being unreachable
+# failed the branch exactly as a real advisory would. GitHub scans server-side
+# against the same data, on its own schedule, so an outage no longer sits
+# between a change and its merge.
+#
+# Security PRs need Dependabot alerts enabled on the repository as well; this
+# file only governs the scheduled version updates. scripts/enable-dependabot.sh
+# turns the alerts on.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for the routine drift, so a real advisory PR is not
+      # buried among fifteen patch bumps.
+      minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /rust-simulation-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # Actions are pinned by commit SHA, which is why they need an updater at all:
+  # a pinned SHA never drifts to a fix on its own.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /rust-simulation-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directory: /terraform
+    schedule:
+      interval: monthly
