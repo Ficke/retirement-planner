@@ -1,6 +1,6 @@
 # Asset routing and stale-chunk plan
 
-Status: proposed
+Status: Phases 0-3 implemented and verified locally; not yet deployed
 Last updated: 2026-09-03
 Prompted by: the failed deploy of tag `deploy-2026-09-04.1` (PR #71), which
 rolled itself back on a false positive and left #71 unshipped.
@@ -102,10 +102,13 @@ instead of serving the shell.
 
 ## Phases
 
-### Phase 0 — verify the routing assumptions
+### Phase 0 — verify the routing assumptions — complete
 
-Three things this plan depends on are not settled by the documentation and must
-be confirmed on a throwaway Worker before production changes:
+Answered against local `workerd` (`wrangler dev`) rather than a throwaway
+deploy, which needs no credentials and no production change. All three came
+back favorable; see the decision log.
+
+Three things this plan depends on were not settled by the documentation:
 
 1. Under `not_found_handling: "none"`, an asset **hit** still bypasses the
    Worker. The whole cost argument rests on this.
@@ -119,7 +122,7 @@ be confirmed on a throwaway Worker before production changes:
 
 Gate: all three answered, in writing, in the decision log below.
 
-### Phase 1 — asset misses return 404
+### Phase 1 — asset misses return 404 — complete
 
 Config and Worker routing per the table above. Ship behind the existing deploy
 pipeline.
@@ -132,7 +135,7 @@ This phase does **not** fix the user-facing break. It converts a confusing MIME
 error into an honest 404 and stops the cache poisoning, but a tab whose chunk is
 gone still cannot load that route. Phase 2 is what fixes users.
 
-### Phase 2 — recover from a chunk that no longer exists
+### Phase 2 — recover from a chunk that no longer exists — complete
 
 The chunk is genuinely gone after a deploy no matter how the server answers, so
 this is required independently of Phase 1.
@@ -149,13 +152,15 @@ this is required independently of Phase 1.
 Gate: with a tab open, deploy a new version, navigate to an unvisited route,
 and land on the working page without seeing an error card.
 
-### Phase 3 — simplify the deploy gate
+### Phase 3 — simplify the deploy gate — complete
 
 With Phase 1 in place a missing asset is a `404`, so `settled_status` in
 `scripts/verify-edge-assets.sh` does exactly what `442a9f9` intended: a
 propagating asset is retried, a genuinely absent one fails once the window
-closes. Keep the content-type assertion as a defensive check rather than the
-primary signal.
+closes. The script needed no logic change at all — only its rationale corrected,
+since it documented the fallback behavior that no longer applies. The
+content-type assertions stay as a defensive check rather than the primary
+signal, and would catch the fallback returning.
 
 Also revisit the rollback step. It reverted a healthy deploy on a false
 positive, which is a worse outcome than failing loudly and leaving the new
@@ -223,6 +228,8 @@ is a new path to the free-plan ceiling.
 | 2026-09-03 | Verified empirically: 18 of 19 chunks from the preceding build are unreachable in production; dead chunks return `text/html` under `immutable` caching. |
 | 2026-09-03 | Retry-on-shell workaround drafted, then rejected in favor of the root fix. |
 | 2026-09-03 | `not_found_handling: "none"` chosen over `run_worker_first` on assets, on free-plan request cost. |
-| | Phase 0 item 1 — asset hits bypass the Worker under `"none"`: _pending_ |
-| | Phase 0 item 2 — `_headers` applies through `env.ASSETS.fetch()`: _pending_ |
-| | Phase 0 item 3 — `assets_navigation_prefers_asset_serving` under `"none"`: _pending_ |
+| 2026-09-03 | Phase 0 item 1 — asset hits bypass the Worker under `"none"`: **yes**. A hit returns its own content type; had it reached the Worker, the `/assets/` branch would have 404'd it, so the routing makes this directly observable. |
+| 2026-09-03 | Phase 0 item 2 — `_headers` applies through `env.ASSETS.fetch()`: **yes**. A Worker-served shell carries CSP, `nosniff`, `X-Frame-Options`, and the `/*` cache rule rather than the `/assets/*` one. No Worker-side header duplication needed. |
+| 2026-09-03 | Phase 0 item 3 — `assets_navigation_prefers_asset_serving` under `"none"`: moot. With no fallback page to prefer, every miss reaches the Worker regardless of `Sec-Fetch-Mode`, which is the behavior this plan wants. |
+| 2026-09-03 | Phase 3 required no logic change: once a miss is a 404, the existing retry window is already correct. Verified both directions — a healthy build passes, a mismatched one fails as `HTTP 404 after N attempts`. |
+| | Phase 2 gate — open tab survives a real deploy: _pending, needs a deployment_ |

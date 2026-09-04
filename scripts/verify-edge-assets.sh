@@ -1,15 +1,9 @@
 #!/bin/sh
 # Verify a deployed edge build. Usage: scripts/verify-edge-assets.sh <base-url> [client-dir]
 #
-# This covers the one Phase 1 failure mode that produces no error signal.
-# not_found_handling: single-page-application answers a missing asset with the
-# HTML shell at status 200, so a partial or mismatched upload looks healthy to
-# any check that only asserts 2xx: the browser gets text/html where it expects a
-# module, and the page goes blank with nothing in the logs.
-#
-# Every file in the local client build must therefore come back with its own
-# content type, not the shell's. Checking the build output rather than parsing
-# the shell also reaches assets the HTML never names, the Wasm module included.
+# Every file in the local client build must come back from the deployment with
+# its own content type. Checking the build output rather than parsing the shell
+# reaches assets the HTML never names, the Wasm module included.
 #
 # It deliberately needs no credentials. The end-to-end simulation path needs
 # them, and is covered by scripts/smoke-check-edge.sh.
@@ -17,6 +11,14 @@
 # Assets propagate asynchronously after wrangler returns, so a miss is retried
 # for a bounded window before it counts. Without that, running straight after a
 # deploy reports a failure that fixes itself seconds later.
+#
+# The retry window depends on a miss being a 404. It is: the Worker answers an
+# unlisted /assets/ path itself rather than letting the SPA fallback return the
+# shell at 200 (docs/architecture/asset-routing-plan.md). While the fallback
+# still covered asset paths, an unpropagated asset and an absent one were the
+# same 200, this window never engaged, and deploy-2026-09-04.1 failed on a
+# healthy build. The content-type assertions below stay as a check on what is
+# served, and would catch that fallback returning if it ever did.
 set -eu
 
 ATTEMPTS="${VERIFY_ATTEMPTS:-8}"
@@ -81,7 +83,7 @@ for asset in "$CLIENT_DIR"/assets/*; do
 
   type=$(header "$url" content-type)
   case "$type" in
-    text/html*) fail "$path served the SPA shell — the deployed asset manifest does not match this build" ;;
+    text/html*) fail "$path served the SPA shell — asset paths must 404 on a miss, not fall back" ;;
   esac
 
   case "$path" in
