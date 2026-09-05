@@ -372,7 +372,14 @@ fn estimated_retirement_magi(
         from_portfolio,
         age,
         taxable_gain_ratio,
-        magi_target,
+        // The benefit is income the estimate reports, so the ceiling has to be
+        // measured from it. Left out, the pre-tax leg is given the benefit's
+        // worth of headroom it does not have and the estimate lands over the
+        // cliff — pricing at list exactly the household this is meant to help.
+        magi_target.map(|target| MagiTarget {
+            committed_magi: target.committed_magi + social_security_benefit,
+            ..target
+        }),
     );
     // An HSA distribution is left out for the same reason the stored figure
     // leaves it out: the estimate has to be the same measure the test reads.
@@ -2835,6 +2842,51 @@ mod tests {
         // strictly above the out-of-pocket cost it pays regardless.
         assert!(after.healthcare_cost > 3_000.0);
         assert!(after.healthcare_cost < list);
+    }
+
+    /// A benefit already being claimed is income the estimate reports, so the
+    /// ceiling has to be measured from it. Counted in the total but left out of
+    /// the headroom, the pre-tax leg is handed the benefit's worth of room it
+    /// does not have and the estimate clears the cliff — pricing at list the
+    /// very household the estimate exists to help.
+    #[test]
+    fn a_claimed_benefit_is_counted_against_the_ceiling_not_just_added_to_it() {
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Taxable, 50_000.0),
+            account(AccountType::Traditional, 900_000.0),
+            // Without a Roth balance the ceiling has nowhere to send the
+            // remainder and yields, as it should — so there would be nothing
+            // for the headroom to get wrong.
+            account(AccountType::Roth, 400_000.0),
+        ];
+        // A clean salaried year behind it, so the estimate is the portfolio
+        // term and the benefit alone.
+        let prior = YearMagi {
+            total: 150_000.0,
+            wages: 150_000.0,
+        };
+        let target = MagiTarget {
+            healthcare: &healthcare,
+            filing_status: FilingStatus::Single,
+            household_size: 1,
+            committed_magi: 0.0,
+        };
+        let estimate = |target: Option<MagiTarget<'_>>| {
+            estimated_retirement_magi(prior, 153_000.0, 30_000.0, &accounts, 62, 0.5, target)
+        };
+
+        let cliff = federal_poverty_level(1) * 4.0;
+        // Spending this far above the benefit reaches the pre-tax bucket, which
+        // is the only leg the ceiling can act on.
+        println!(
+            "PROBE none={} capped={} cliff={}",
+            estimate(None),
+            estimate(Some(target)),
+            cliff
+        );
+        assert!(estimate(None) > cliff);
+        assert!((estimate(Some(target)) - cliff).abs() < 1.0);
     }
 
     /// Only the retirement discontinuity is corrected. Once the salary is
