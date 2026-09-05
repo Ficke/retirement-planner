@@ -364,6 +364,11 @@ fn estimated_retirement_magi(
     taxable_gain_ratio: f64,
     magi_target: Option<MagiTarget<'_>>,
 ) -> f64 {
+    // Last year's income with the wages taken out: dividends, a shortfall draw,
+    // whatever the final working year realized beyond its salary. It recurs, so
+    // the estimate reports it -- which means the ceiling has to be measured
+    // from it as well.
+    let carried_forward = (prior.total - prior.wages).max(0.0);
     let from_portfolio = (planned_spending - social_security_benefit).max(0.0);
     let mut balances: Vec<f64> = accounts.iter().map(|account| account.balance).collect();
     let drawn = apply_withdrawal_order(
@@ -372,21 +377,18 @@ fn estimated_retirement_magi(
         from_portfolio,
         age,
         taxable_gain_ratio,
-        // The benefit is income the estimate reports, so the ceiling has to be
-        // measured from it. Left out, the pre-tax leg is given the benefit's
-        // worth of headroom it does not have and the estimate lands over the
-        // cliff — pricing at list exactly the household this is meant to help.
+        // Every term the estimate will report has to be in the headroom the
+        // pre-tax leg is capped against. Left out, the leg is handed that much
+        // room it does not have and the estimate clears the cliff -- pricing at
+        // list exactly the household this is meant to help.
         magi_target.map(|target| MagiTarget {
-            committed_magi: target.committed_magi + social_security_benefit,
+            committed_magi: target.committed_magi + social_security_benefit + carried_forward,
             ..target
         }),
     );
     // An HSA distribution is left out for the same reason the stored figure
     // leaves it out: the estimate has to be the same measure the test reads.
-    (prior.total - prior.wages).max(0.0)
-        + social_security_benefit
-        + drawn.traditional
-        + drawn.taxable_gain
+    carried_forward + social_security_benefit + drawn.traditional + drawn.taxable_gain
 }
 
 fn healthcare_cost_for(
@@ -508,6 +510,9 @@ struct OrderedWithdrawal {
 #[derive(Debug, Clone, Copy)]
 struct MagiTarget<'a> {
     healthcare: &'a RetirementHealthcare,
+    /// Which later years price a premium at all, and so which tests can read
+    /// this year's MAGI.
+    retirement_age: u32,
     filing_status: FilingStatus,
     household_size: u32,
     /// Income the year reports whatever the order does: wages or benefits, plus
@@ -598,6 +603,7 @@ fn apply_withdrawal_order(
         let committed = target.committed_magi + drawn.taxable * taxable_gain_ratio;
         magi_band_for(
             age,
+            target.retirement_age,
             target.filing_status,
             target.household_size,
             committed,
@@ -962,15 +968,13 @@ fn project_scenario_internal_prepared(
         // and inert on a request too old to price a premium at all — the band
         // would then be aimed at a test that never runs.
         //
-        // A working year is read only if the household is retired the next
-        // year, because that is the first year a premium is priced at all. A
-        // shortfall drawn two or more years before retirement is read by
-        // nothing, and capping it would divert to Roth for no one's benefit.
+        // Which years actually read this one is left to the band, which knows
+        // that a working year is covered by an employer and priced by nothing.
         let magi_target = (plan.assumptions.magi_aware_withdrawals
-            && plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION
-            && current_age + 1 >= profile.retirement_age)
+            && plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION)
             .then_some(MagiTarget {
                 healthcare: &profile.retirement_healthcare,
+                retirement_age: profile.retirement_age,
                 filing_status: profile.filing_status,
                 household_size: 1,
                 committed_magi: 0.0,
@@ -2107,6 +2111,7 @@ mod tests {
         WithdrawalContext {
             magi_target: Some(MagiTarget {
                 healthcare,
+                retirement_age: 55,
                 filing_status: FilingStatus::Single,
                 household_size: 1,
                 committed_magi: 0.0,
@@ -2144,8 +2149,10 @@ mod tests {
             120_000.0,
             &magi_aware_context(60, &household, &healthcare),
         );
-        assert!((managed.withdrawal_traditional - cliff).abs() < 1.0);
-        assert!((managed.withdrawal_roth - (100_000.0 - cliff)).abs() < 1.0);
+        assert!(managed.withdrawal_traditional <= cliff);
+        assert!(cliff - managed.withdrawal_traditional <= 1.0);
+        assert!(expected_premium_contribution(managed.withdrawal_traditional, 1).is_some());
+        assert!((managed.withdrawal_roth - (100_000.0 - cliff)).abs() <= 1.0);
         assert_eq!(managed.total_withdrawn, plain.total_withdrawn);
         // Same dollars out, less of them taxed.
         assert!(managed.cash_available_after_tax > plain.cash_available_after_tax);
@@ -2213,7 +2220,8 @@ mod tests {
         // At 63 next year's marketplace credit still binds, so Traditional
         // stops at the cliff. At 64 only IRMAA reads the year, and its first
         // threshold is far above the draw.
-        assert!((draw(63) - federal_poverty_level(1) * 4.0).abs() < 1.0);
+        let cliff = federal_poverty_level(1) * 4.0;
+        assert!(draw(63) <= cliff && cliff - draw(63) <= 1.0);
         assert_eq!(draw(64), 90_000.0);
     }
 
@@ -2874,6 +2882,7 @@ mod tests {
         };
         let target = MagiTarget {
             healthcare: &healthcare,
+            retirement_age: 62,
             filing_status: FilingStatus::Single,
             household_size: 1,
             committed_magi: 0.0,
@@ -2885,14 +2894,10 @@ mod tests {
         let cliff = federal_poverty_level(1) * 4.0;
         // Spending this far above the benefit reaches the pre-tax bucket, which
         // is the only leg the ceiling can act on.
-        println!(
-            "PROBE none={} capped={} cliff={}",
-            estimate(None),
-            estimate(Some(target)),
-            cliff
-        );
         assert!(estimate(None) > cliff);
-        assert!((estimate(Some(target)) - cliff).abs() < 1.0);
+        let capped = estimate(Some(target));
+        assert!(capped <= cliff && cliff - capped <= 1.0);
+        assert!(expected_premium_contribution(capped, 1).is_some());
     }
 
     /// Only the retirement discontinuity is corrected. Once the salary is

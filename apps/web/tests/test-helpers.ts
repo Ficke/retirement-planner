@@ -28,7 +28,7 @@ export function createTestProjectionSettings(partial?: Partial<ProjectionSetting
     hsaEligible: partial?.hsaEligible ?? false,
     useBackdoorRoth: partial?.useBackdoorRoth ?? false,
     rothConversion: partial?.rothConversion ?? { enabled: false, ceiling: 'bracket24' },
-    magiAwareWithdrawals: false,
+    magiAwareWithdrawals: partial?.magiAwareWithdrawals ?? false,
     terminalTaxRate: partial?.terminalTaxRate ?? 0.30,
   };
 }

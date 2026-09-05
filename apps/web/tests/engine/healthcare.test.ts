@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { estimatedFirstRetirementYearMagi, healthcareCostFor } from '@/domain/healthcare';
-import { federalPovertyLevel, SUBSIDY_CLIFF_FPL_RATIO, SUBSIDY_FLOOR_FPL_RATIO } from '@/data/healthcare-premiums';
+import { federalPovertyLevel, irmaaFreeMagiCeiling, SUBSIDY_CLIFF_FPL_RATIO, SUBSIDY_FLOOR_FPL_RATIO } from '@/data/healthcare-premiums';
 import type { Account } from '@/domain/types';
 import { retirementSpendingOf } from '@/domain/age';
 
@@ -117,7 +117,7 @@ describe("the first retirement year's income estimate", () => {
     // Subtracting the salary alone leaves nothing, and a household under the
     // poverty level pays list exactly as one over the cliff does. The
     // portfolio-draw term is what keeps the estimate in reach of a credit.
-    const magi = estimatedFirstRetirementYearMagi(73_000, 0, accountsOf(600_000, 900_000), 0.5, true);
+    const magi = estimatedFirstRetirementYearMagi(58, 'Single', 73_000, 0, accountsOf(600_000, 900_000), 0.5, true);
     expect(magi).toBeGreaterThan(povertyLevel * SUBSIDY_FLOOR_FPL_RATIO);
     expect(magi).toBeLessThan(povertyLevel * SUBSIDY_CLIFF_FPL_RATIO);
     expect(healthcareCostFor(HEALTHCARE, 58, 0, {
@@ -130,17 +130,39 @@ describe("the first retirement year's income estimate", () => {
   it('stops the pre-tax draw at the cliff when the order is managing MAGI', () => {
     // A spending target this large exhausts the taxable account and would
     // otherwise report the whole remainder as ordinary income.
-    const managed = estimatedFirstRetirementYearMagi(200_000, 0, accountsOf(50_000, 900_000), 0.5, true);
-    const plain = estimatedFirstRetirementYearMagi(200_000, 0, accountsOf(50_000, 900_000), 0.5, false);
-    expect(managed).toBeCloseTo(povertyLevel * SUBSIDY_CLIFF_FPL_RATIO, 6);
+    const managed = estimatedFirstRetirementYearMagi(58, 'Single', 200_000, 0, accountsOf(50_000, 900_000), 0.5, true);
+    const plain = estimatedFirstRetirementYearMagi(58, 'Single', 200_000, 0, accountsOf(50_000, 900_000), 0.5, false);
+    const cliff = povertyLevel * SUBSIDY_CLIFF_FPL_RATIO;
+    // A dollar short of the cliff, not on it: aiming exactly at a cliff leaves
+    // the result a rounding error away from losing the whole credit.
+    expect(managed).toBeLessThan(cliff);
+    expect(cliff - managed).toBeLessThanOrEqual(1);
     expect(plain).toBeGreaterThan(managed);
   });
 
   it('counts a benefit the household is already claiming', () => {
-    const withBenefit = estimatedFirstRetirementYearMagi(73_000, 30_000, accountsOf(600_000, 900_000), 0.5, true);
-    const without = estimatedFirstRetirementYearMagi(73_000, 0, accountsOf(600_000, 900_000), 0.5, true);
+    const withBenefit = estimatedFirstRetirementYearMagi(58, 'Single', 73_000, 30_000, accountsOf(600_000, 900_000), 0.5, true);
+    const without = estimatedFirstRetirementYearMagi(58, 'Single', 73_000, 0, accountsOf(600_000, 900_000), 0.5, true);
     // The benefit funds part of the year, so less is drawn — but it is income
     // itself, and at a 50% gain ratio it replaces gains dollar for two.
     expect(withBenefit).toBeGreaterThan(without);
+  });
+});
+
+describe('the first-year estimate mirrors the engine band', () => {
+  const accountsOf = (taxable: number, traditional: number): Account[] => [
+    { id: 'a', name: 'Brokerage', institution: '', type: 'Taxable', balance: taxable, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+    { id: 'b', name: '401(k)', institution: '', type: 'Traditional', balance: traditional, assetWeights: { stocks: 0.6, bonds: 0.4 } },
+  ];
+
+  it('stops using the subsidy cliff once the household reaches Medicare first', () => {
+    // Retiring at 64, the credit is out of reach — the year after is a Medicare
+    // year — so the IRMAA threshold binds instead and the draw is not capped
+    // anywhere near the cliff.
+    const atSixtyFour = estimatedFirstRetirementYearMagi(64, 'Single', 200_000, 0, accountsOf(10_000, 1_000_000), 0.5, true);
+    const atSixtyThree = estimatedFirstRetirementYearMagi(63, 'Single', 200_000, 0, accountsOf(10_000, 1_000_000), 0.5, true);
+    expect(atSixtyThree).toBeLessThan(federalPovertyLevel(1) * SUBSIDY_CLIFF_FPL_RATIO);
+    expect(atSixtyFour).toBeGreaterThan(atSixtyThree);
+    expect(atSixtyFour).toBeLessThan(irmaaFreeMagiCeiling('Single'));
   });
 });

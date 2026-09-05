@@ -101,6 +101,20 @@ Both tables already exist, in `healthcare_premiums.rs` and its TypeScript mirror
 `apps/web/src/data/healthcare-premiums.ts`. IRMAA is a staircase rather than one
 cliff, so above the first tier the target is the next boundary, not "give up."
 
+### Aim a dollar short, not at the line
+
+Both tests are cliffs with no partial credit, and the order aims at the ceiling
+exactly. The figure that finally gets tested is re-summed in a different order
+than the headroom was derived in, so binary rounding puts it an ulp over about
+one binding year in eight — losing the whole credit, which is the outcome the
+work exists to prevent. The band stops a dollar short. Whole dollars is the
+resolution every other solve in this engine works to, and a dollar swamps the
+rounding.
+
+The same margin covers an asymmetry in the IRMAA table: a married-filing-
+separately return's middle tier ends *below* $391,000 rather than at it, so a
+ceiling of exactly $391,000 would have bought the top tier.
+
 ### The floor matters as much as the cliff
 
 `expected_premium_contribution` returns `None` below `SUBSIDY_FLOOR_FPL_RATIO`
@@ -277,14 +291,18 @@ Work item 2 second, because it changes every plan and carries the rollout.
 
 - **An already-retired plan's first modeled year has no prior year at all**, so
   `prior_year_magi` is `None` and it prices at list — the same defect from the
-  other end, and untouched here. The estimate would answer it directly (a
+  other end, and untouched here. The profile preview matches the engine on this
+  rather than previewing a credit the projection will not grant. The estimate would answer it directly (a
   missing prior year contributes nothing, and the portfolio-draw term stands on
   its own), but that is a behavior change for a different population than the
   one this work is scoped to.
 - **Conversions and the ordering do not know about each other.** A conversion
   ceiling is a taxable-income bracket top; it will spend the headroom the
   ordering clears. Teaching `RothConversionCeiling` the MAGI band is the
-  follow-on.
+  follow-on. The conversion cannot be folded into the band's committed MAGI
+  instead — it is solved *from* the withdrawal, so the two would be circular.
+  Measured, the interaction is a wash rather than a loss: the conversion is
+  ceiling-bound in both arms, so the year reports the same MAGI either way.
 - **IRMAA still reads the raw two-year lookback.** That is what the law does,
   and the work-stoppage appeal that would change it (SSA-44) is not modeled.
 
