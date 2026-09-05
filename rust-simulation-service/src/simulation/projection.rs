@@ -2132,6 +2132,111 @@ mod tests {
         }
     }
 
+    /// What the setting costs and buys, across the plan shapes it can matter
+    /// for. Both numbers, because the trade is the point: holding MAGI down in
+    /// the pre-Medicare years spends exactly the low-bracket years otherwise
+    /// used to draw Traditional down cheaply, so a rule that lifts success can
+    /// lower terminal wealth at the same time.
+    ///
+    /// Not an assertion — it prints a table for a human to read the default
+    /// off. `cargo test --release -- --ignored magi_aware_ordering --nocapture`
+    #[test]
+    #[ignore = "reports numbers rather than asserting them"]
+    fn magi_aware_ordering_benchmark() {
+        use super::super::monte_carlo::run_simulation;
+        use crate::types::MCConfig;
+
+        /// The product default, which is what a household's premium is priced
+        /// from when it has entered nothing of its own.
+        fn default_healthcare() -> RetirementHealthcare {
+            RetirementHealthcare {
+                pre_medicare_premium: 15_900.0,
+                medicare_premium: 4_650.0,
+                out_of_pocket: 3_000.0,
+                real_growth_rate: 0.02,
+            }
+        }
+
+        fn shape(retirement_age: u32, traditional: f64, roth: f64, taxable: f64) -> RetirementPlan {
+            let mut plan = test_plan();
+            plan.profile.birth_date = "1968-01-01".to_string();
+            plan.profile.as_of_date = "2026-01-01".to_string();
+            plan.profile.retirement_age = retirement_age;
+            plan.profile.current_salary = 150_000.0;
+            plan.profile.current_spending = 70_000.0;
+            plan.profile.retirement_spending = 70_000.0;
+            plan.profile.retirement_spending_growth_rate = 0.0;
+            plan.profile.life_expectancy = 92;
+            plan.profile.retirement_healthcare = default_healthcare();
+            plan.profile.long_term_care.enabled = false;
+            plan.social_security.claim_age = 67;
+            plan.assumptions.simulation_model = SimulationModel::Historical;
+            plan.accounts = vec![
+                account(AccountType::Traditional, traditional),
+                account(AccountType::Roth, roth),
+                account(AccountType::Taxable, taxable),
+            ];
+            plan
+        }
+
+        let config = MCConfig {
+            paths: 2_000,
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 5,
+        };
+        let shapes = [
+            (
+                "retire 58, Roth-heavy",
+                shape(58, 900_000.0, 700_000.0, 300_000.0),
+            ),
+            (
+                "retire 58, Roth-light",
+                shape(58, 1_500_000.0, 150_000.0, 250_000.0),
+            ),
+            (
+                "retire 62, balanced",
+                shape(62, 1_100_000.0, 450_000.0, 350_000.0),
+            ),
+            (
+                "retire 65, no gap",
+                shape(65, 1_100_000.0, 450_000.0, 350_000.0),
+            ),
+            ("retire 58, converting", {
+                // Where the trade was expected to show: conversions already
+                // claim the low-bracket years the ceiling would spend.
+                let mut plan = shape(58, 900_000.0, 700_000.0, 300_000.0);
+                plan.assumptions.roth_conversion = RothConversionPolicy {
+                    enabled: true,
+                    ceiling: RothConversionCeiling::Bracket22,
+                };
+                plan
+            }),
+        ];
+
+        println!(
+            "\n{:<24} {:>10} {:>10} {:>14} {:>14}",
+            "shape", "success", "Δ", "after-tax p50", "Δ"
+        );
+        for (label, plan) in shapes {
+            let mut off = plan.clone();
+            off.assumptions.magi_aware_withdrawals = false;
+            let mut on = plan;
+            on.assumptions.magi_aware_withdrawals = true;
+
+            let off = run_simulation(off, config.clone()).expect("baseline runs");
+            let on = run_simulation(on, config.clone()).expect("managed runs");
+            println!(
+                "{:<24} {:>9.1}% {:>+9.1}pp {:>14.0} {:>+14.0}",
+                label,
+                on.success_probability * 100.0,
+                (on.success_probability - off.success_probability) * 100.0,
+                on.median_after_tax_terminal_wealth,
+                on.median_after_tax_terminal_wealth - off.median_after_tax_terminal_wealth,
+            );
+        }
+    }
+
     #[test]
     fn hsa_stays_untouched_while_traditional_money_can_fund_retirement() {
         let household = Household::single(FilingStatus::Single, 75);

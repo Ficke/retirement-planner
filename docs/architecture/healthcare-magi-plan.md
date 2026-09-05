@@ -115,6 +115,41 @@ a property test rather than trusting the argument — sweep the budget over a
 plan whose ceiling binds mid-range and check `cash_available_after_tax` never
 decreases.
 
+### What the benchmark found
+
+`magi_aware_ordering_benchmark` in `projection.rs`, 2,000 historical paths,
+seed 42, the product's default healthcare figures:
+
+| Shape | Success Δ | After-tax p50 Δ |
+| --- | --- | --- |
+| retire 58, Roth-heavy | +1.6pp | +$33,123 |
+| retire 58, Roth-light | +3.5pp | +$46,601 |
+| retire 62, balanced | 0.0pp | $0 |
+| retire 65, no gap | 0.0pp | $0 |
+| retire 58, converting | 0.0pp | $0 |
+
+The predicted trade did not appear. No shape lost terminal wealth, and the two
+that gained gained on both measures. Holding MAGI under the cliff at 58–64 does
+not spend cheap bracket space the way a conversion does, because the dollars it
+moves are ones the household had to withdraw regardless — the choice is which
+bucket, not whether.
+
+The zero rows are all mechanism, not noise:
+
+- **Retiring at 62 or 65** never reaches the ceiling. Taxable is drawn first and
+  covers the pre-Medicare years outright, so MAGI is realized gains alone.
+- **Converting is where the two features fight.** With a `bracket22` ceiling the
+  conversion refills exactly the headroom the ordering just cleared — on the
+  representative path the age-62 conversion goes from $10,991 to $44,232 while
+  the Traditional draw falls by the same amount, healthcare stays at the list
+  $20,458 either way, and the year nets out identical. The conversion ceiling
+  is a taxable-income bracket top; it does not know about the subsidy cliff.
+  Making it respect the same band is a separate decision, not this change.
+
+So the default should be on. It is off in the commit that introduces it and
+turns on with the schema 8 gate below, so the one bump carries one behavior
+change rather than two.
+
 ### Ship it as a setting, not a default
 
 Burning Roth at 58–64 to stay under $62,600 spends exactly the low-bracket years
