@@ -67,8 +67,13 @@ Traditional leg.
    MAGI for the year`.
 3. **Roth for the remainder.** Roth is the MAGI shock absorber — zero income,
    which is exactly what a binding cliff needs.
-4. **Traditional again above the ceiling** once Roth and HSA are dry.
+4. **Traditional again above the ceiling** once Roth is dry.
 5. **HSA last.** Unchanged.
+
+Steps 4 and 5 read the other way round in the first draft, which had the
+Traditional overflow wait for HSA as well. HSA goes last as shipped: a
+non-qualified distribution is ordinary income *and* a 20% penalty, so moving it
+ahead of Traditional shelters no MAGI and costs more.
 
 Step 4 is not optional. A path fails when any modeled year cannot be funded, so
 the ceiling has to be a preference that yields. A hard cap would manufacture
@@ -103,6 +108,12 @@ cliff, so above the first tier the target is the next boundary, not "give up."
 in the coverage gap, and the model prices neither. Driving MAGI to zero
 therefore costs the household the entire subsidy. The rule targets a **band**,
 not a cap: draw Traditional at least to the floor before switching to Roth.
+
+As implemented the floor needs no rule of its own. Traditional already precedes
+Roth, and the ceiling is never below the floor, so a draw capped at the headroom
+either reaches the floor or was cut short by a balance — never by the ceiling.
+The floor does its work in the estimate below, where it is the whole reason a
+wages-only subtraction fails.
 
 ### Monotonicity
 
@@ -146,9 +157,11 @@ The zero rows are all mechanism, not noise:
   is a taxable-income bracket top; it does not know about the subsidy cliff.
   Making it respect the same band is a separate decision, not this change.
 
-So the default should be on. It is off in the commit that introduces it and
-turns on with the schema 8 gate below, so the one bump carries one behavior
-change rather than two.
+So the default is on, flipped in the same commit as the schema 8 bump below so
+one gate carries one behavior change. The Rust `#[serde(default)]` stays
+`false` and the legacy wire schema pins it `false` explicitly, so a browser
+bundle still open from before the deploy keeps the plain order — which pairs
+with the engine leaving the premium estimate off below schema 8.
 
 ### Ship it as a setting, not a default
 
@@ -246,6 +259,21 @@ Work item 2 second, because it changes every plan and carries the rollout.
 4. First-year premium estimate, behind the new schema constant, with the
    `PLAN_SCHEMA_VERSION` bump and the TypeScript preview updated to match.
 5. Fix the stale AGENTS.md entries listed above.
+
+## Left undone
+
+- **An already-retired plan's first modeled year has no prior year at all**, so
+  `prior_year_magi` is `None` and it prices at list — the same defect from the
+  other end, and untouched here. The estimate would answer it directly (a
+  missing prior year contributes nothing, and the portfolio-draw term stands on
+  its own), but that is a behavior change for a different population than the
+  one this work is scoped to.
+- **Conversions and the ordering do not know about each other.** A conversion
+  ceiling is a taxable-income bracket top; it will spend the headroom the
+  ordering clears. Teaching `RothConversionCeiling` the MAGI band is the
+  follow-on.
+- **IRMAA still reads the raw two-year lookback.** That is what the law does,
+  and the work-stoppage appeal that would change it (SSA-44) is not modeled.
 
 ## Tests
 

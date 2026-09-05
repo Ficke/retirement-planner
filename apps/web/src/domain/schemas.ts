@@ -222,9 +222,10 @@ export const projectionSettingsSchema = z.object({
     enabled: false,
     ceiling: 'bracket24',
   }),
-  // Defaulted for the same reason as conversions: a plan saved before the
-  // setting existed keeps the plain withdrawal order it was built against.
-  magiAwareWithdrawals: z.boolean().default(false),
+  // On by default from schema 8, which is the bump that already changes every
+  // plan's numbers — one gate, one behavior change. A plan saved before the
+  // setting existed picks it up on the next load, and can turn it back off.
+  magiAwareWithdrawals: z.boolean().default(true),
   terminalTaxRate: z.number().min(0).max(1).default(0.30),
 });
 
