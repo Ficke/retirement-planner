@@ -163,6 +163,12 @@ export interface ProjectionSettings {
   useBackdoorRoth: boolean;
   rothConversion: RothConversionPolicy;
   /**
+   * Hold a year's ordinary income under the threshold the household's next
+   * marketplace credit or Medicare surcharge is tested against, drawing Roth
+   * for the rest. The ceiling yields rather than leaving a year unfunded.
+   */
+  magiAwareWithdrawals: boolean;
+  /**
    * Rate applied to the Traditional and HSA balances left at the horizon, to
    * report terminal wealth after the tax nobody has paid yet. Taxable and Roth
    * pass through whole: a bequeathed taxable account steps up its basis, and a

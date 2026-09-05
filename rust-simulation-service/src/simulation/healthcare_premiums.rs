@@ -277,7 +277,10 @@ mod tests {
         // At 62 only next year's marketplace credit reads this MAGI.
         let early = magi_band_for(62, FilingStatus::Single, 1, 0.0, &insured()).expect("a band");
         assert_eq!(early.ceiling, cliff);
-        assert_eq!(early.floor, federal_poverty_level(1) * SUBSIDY_FLOOR_FPL_RATIO);
+        assert_eq!(
+            early.floor,
+            federal_poverty_level(1) * SUBSIDY_FLOOR_FPL_RATIO
+        );
 
         // At 63 both read it, and the lower of the two binds.
         let both = magi_band_for(63, FilingStatus::Single, 1, 0.0, &insured()).expect("a band");
@@ -310,7 +313,10 @@ mod tests {
     fn above_the_first_irmaa_tier_the_ceiling_is_the_next_threshold_up() {
         let band = magi_band_for(70, FilingStatus::Single, 1, 150_000.0, &insured()).expect("band");
         assert_eq!(band.ceiling, 171_000.0);
-        assert_eq!(irmaa_annual_surcharge(band.ceiling, FilingStatus::Single, 1), 240.40 * 12.0);
+        assert_eq!(
+            irmaa_annual_surcharge(band.ceiling, FilingStatus::Single, 1),
+            240.40 * 12.0
+        );
         assert!(
             irmaa_annual_surcharge(band.ceiling + 1.0, FilingStatus::Single, 1)
                 > irmaa_annual_surcharge(band.ceiling, FilingStatus::Single, 1)

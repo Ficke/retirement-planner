@@ -58,6 +58,7 @@ const testPlan: SimulationPlan = {
     hsaEligible: false,
     useBackdoorRoth: false,
     rothConversion: { enabled: false, ceiling: 'bracket24' as const },
+    magiAwareWithdrawals: false,
     terminalTaxRate: 0.30,
   },
 };

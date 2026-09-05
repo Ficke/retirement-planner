@@ -248,6 +248,12 @@ pub struct ProjectionSettings {
     /// leaves them off — which is the behavior those plans were built against.
     #[serde(rename = "rothConversion", default)]
     pub roth_conversion: RothConversionPolicy,
+    /// Hold a year's ordinary income under the threshold the household's next
+    /// marketplace credit or Medicare surcharge is tested against, drawing Roth
+    /// for the rest. Absent from plans saved before the setting existed, where
+    /// the default leaves the plain order in place.
+    #[serde(rename = "magiAwareWithdrawals", default)]
+    pub magi_aware_withdrawals: bool,
     #[serde(rename = "terminalTaxRate", default = "default_terminal_tax_rate")]
     pub terminal_tax_rate: f64,
 }

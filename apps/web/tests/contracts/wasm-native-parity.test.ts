@@ -93,6 +93,7 @@ function planFor(simulationModel: SimulationModel): SimulationPlan {
       hsaEligible: true,
       useBackdoorRoth: true,
       rothConversion: { enabled: true, ceiling: 'bracket24' },
+      magiAwareWithdrawals: false,
       terminalTaxRate: 0.3,
     },
   };

@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -328,6 +329,18 @@ export function PageSettings() {
               <span className="text-muted-foreground text-sm">%</span>
             </div>
           </Setting>
+          <div className="border-border mt-4 border-t pt-4">
+            <Setting
+              label="Draw around the healthcare income limits"
+              helper="Stops pre-tax withdrawals at the income that would cost next year's marketplace subsidy or add a Medicare surcharge, and takes the rest from Roth. It crosses the limit anyway rather than leave a year unfunded. Protecting the subsidy spends the low-income years otherwise used to draw down pre-tax money, so watch what it does to the money left at the end, not only to the odds."
+            >
+              <Switch
+                checked={a.magiAwareWithdrawals}
+                onCheckedChange={(checked) =>
+                  updateAssumptions({ magiAwareWithdrawals: checked })}
+              />
+            </Setting>
+          </div>
           <div className="border-border mt-4 border-t pt-4">
             <Setting
               label="Tax rate on pre-tax money left at the end"
