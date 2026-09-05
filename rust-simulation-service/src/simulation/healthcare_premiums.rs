@@ -8,7 +8,7 @@
 //! Indexed annually, stated here for 2026. Mirrors
 //! `data/healthcare-premiums.ts` and both change together.
 
-use crate::types::FilingStatus;
+use crate::types::{FilingStatus, RetirementHealthcare, MEDICARE_AGE};
 
 /// HHS poverty guidelines for the 48 contiguous states, published January 2025
 /// and the ones a 2026 coverage year is measured against. Alaska and Hawaii run
@@ -129,6 +129,89 @@ pub fn irmaa_free_magi_ceiling(filing_status: FilingStatus) -> f64 {
     }
 }
 
+/// The most MAGI a household can report without buying a tier above the one
+/// `magi` already sits in. `None` in the top tier, where there is no further
+/// threshold left to stay under.
+pub fn irmaa_ceiling_above(magi: f64, filing_status: FilingStatus) -> Option<f64> {
+    if filing_status == FilingStatus::MarriedFilingSeparately {
+        return [IRMAA_SEPARATE_BOUNDS.0, IRMAA_SEPARATE_BOUNDS.1]
+            .into_iter()
+            .find(|bound| magi <= *bound);
+    }
+    let scale = if filing_status == FilingStatus::MarriedFilingJointly {
+        2.0
+    } else {
+        1.0
+    };
+    IRMAA_TIERS_2026
+        .iter()
+        .map(|(bound, _)| bound * scale)
+        .find(|bound| magi <= *bound)
+        .filter(|bound| bound.is_finite())
+}
+
+/// The MAGI range a year's own income should try to land in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MagiBand {
+    /// Under the poverty level the credit is gone as surely as over the cliff,
+    /// so this is a target to reach rather than only a bound to respect. Zero
+    /// when no marketplace credit is in play.
+    pub floor: f64,
+    pub ceiling: f64,
+}
+
+/// The band year `t`'s composition should aim for, or `None` when nothing will
+/// read that year's MAGI and the plain withdrawal order stands.
+///
+/// Neither test reads the year it is levied on. The marketplace credit is
+/// measured against prior-year MAGI and IRMAA against MAGI from two years back,
+/// so what year `t` decides is `t+1`'s credit — if the household is still
+/// pre-Medicare then — and `t+2`'s surcharge, once it is enrolled. That makes
+/// the binding test age-dependent, and it flips between 63 and 64.
+///
+/// A test that prices no premium is left out: the credit cannot reduce a
+/// premium of zero and a surcharge cannot be added to one, so managing MAGI
+/// against it would buy nothing.
+///
+/// `committed_magi` is the income the year owes whatever the order does —
+/// benefits, realized gains, forced distributions. A threshold it already
+/// exceeds is dropped rather than aimed at, which is what keeps the rule from
+/// protecting a credit that is gone either way; IRMAA is a staircase, so there
+/// the next threshold up takes over.
+pub fn magi_band_for(
+    age: u32,
+    filing_status: FilingStatus,
+    household_size: u32,
+    committed_magi: f64,
+    healthcare: &RetirementHealthcare,
+) -> Option<MagiBand> {
+    let marketplace_applies = age + 1 < MEDICARE_AGE && healthcare.pre_medicare_premium > 0.0;
+    let irmaa_applies = age + 2 >= MEDICARE_AGE && healthcare.medicare_premium > 0.0;
+
+    let poverty_level = federal_poverty_level(household_size);
+    let cliff = SUBSIDY_CLIFF_FPL_RATIO * poverty_level;
+    let marketplace_ceiling = (marketplace_applies && committed_magi <= cliff).then_some(cliff);
+    let irmaa_ceiling = if irmaa_applies {
+        irmaa_ceiling_above(committed_magi, filing_status)
+    } else {
+        None
+    };
+
+    let ceiling = match (marketplace_ceiling, irmaa_ceiling) {
+        (Some(marketplace), Some(irmaa)) => marketplace.min(irmaa),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => return None,
+    };
+    Some(MagiBand {
+        floor: if marketplace_ceiling.is_some() {
+            SUBSIDY_FLOOR_FPL_RATIO * poverty_level
+        } else {
+            0.0
+        },
+        ceiling,
+    })
+}
+
 pub fn irmaa_annual_surcharge(
     magi: f64,
     filing_status: FilingStatus,
@@ -174,6 +257,82 @@ mod tests {
         let at_cliff = 15_650.0 * 4.0;
         assert!(expected_premium_contribution(at_cliff, 1).is_some());
         assert!(expected_premium_contribution(at_cliff + 1.0, 1).is_none());
+    }
+
+    /// A plan that prices both premiums, so both tests are live.
+    fn insured() -> RetirementHealthcare {
+        RetirementHealthcare {
+            pre_medicare_premium: 15_900.0,
+            medicare_premium: 4_500.0,
+            out_of_pocket: 3_000.0,
+            real_growth_rate: 0.02,
+        }
+    }
+
+    #[test]
+    fn the_binding_test_flips_between_63_and_64() {
+        let cliff = federal_poverty_level(1) * SUBSIDY_CLIFF_FPL_RATIO;
+        let irmaa = irmaa_free_magi_ceiling(FilingStatus::Single);
+
+        // At 62 only next year's marketplace credit reads this MAGI.
+        let early = magi_band_for(62, FilingStatus::Single, 1, 0.0, &insured()).expect("a band");
+        assert_eq!(early.ceiling, cliff);
+        assert_eq!(early.floor, federal_poverty_level(1) * SUBSIDY_FLOOR_FPL_RATIO);
+
+        // At 63 both read it, and the lower of the two binds.
+        let both = magi_band_for(63, FilingStatus::Single, 1, 0.0, &insured()).expect("a band");
+        assert_eq!(both.ceiling, cliff.min(irmaa));
+        assert_eq!(both.ceiling, cliff);
+
+        // At 64 the marketplace is out of reach and IRMAA alone binds, which
+        // raises the ceiling rather than lowering it.
+        let late = magi_band_for(64, FilingStatus::Single, 1, 0.0, &insured()).expect("a band");
+        assert_eq!(late.ceiling, irmaa);
+        assert_eq!(late.floor, 0.0);
+    }
+
+    #[test]
+    fn a_threshold_already_exceeded_is_dropped_rather_than_aimed_at() {
+        let cliff = federal_poverty_level(1) * SUBSIDY_CLIFF_FPL_RATIO;
+
+        // Still working at 62 on a salary over the cliff: the credit is gone
+        // next year whatever the order does, so there is nothing left to aim at.
+        assert!(magi_band_for(62, FilingStatus::Single, 1, cliff + 1.0, &insured()).is_none());
+
+        // At 63 the same salary leaves IRMAA as the only live test.
+        let band =
+            magi_band_for(63, FilingStatus::Single, 1, cliff + 1.0, &insured()).expect("a band");
+        assert_eq!(band.ceiling, irmaa_free_magi_ceiling(FilingStatus::Single));
+        assert_eq!(band.floor, 0.0);
+    }
+
+    #[test]
+    fn above_the_first_irmaa_tier_the_ceiling_is_the_next_threshold_up() {
+        let band = magi_band_for(70, FilingStatus::Single, 1, 150_000.0, &insured()).expect("band");
+        assert_eq!(band.ceiling, 171_000.0);
+        assert_eq!(irmaa_annual_surcharge(band.ceiling, FilingStatus::Single, 1), 240.40 * 12.0);
+        assert!(
+            irmaa_annual_surcharge(band.ceiling + 1.0, FilingStatus::Single, 1)
+                > irmaa_annual_surcharge(band.ceiling, FilingStatus::Single, 1)
+        );
+
+        // In the top tier there is no further threshold, so nothing to manage.
+        assert!(magi_band_for(70, FilingStatus::Single, 1, 600_000.0, &insured()).is_none());
+    }
+
+    #[test]
+    fn a_premium_the_plan_does_not_price_is_not_worth_managing_magi_against() {
+        let uninsured = RetirementHealthcare::default();
+        assert!(magi_band_for(62, FilingStatus::Single, 1, 0.0, &uninsured).is_none());
+        assert!(magi_band_for(70, FilingStatus::Single, 1, 0.0, &uninsured).is_none());
+
+        // Medicare-only pricing leaves the pre-Medicare years unmanaged.
+        let medicare_only = RetirementHealthcare {
+            medicare_premium: 4_500.0,
+            ..Default::default()
+        };
+        assert!(magi_band_for(62, FilingStatus::Single, 1, 0.0, &medicare_only).is_none());
+        assert!(magi_band_for(63, FilingStatus::Single, 1, 0.0, &medicare_only).is_some());
     }
 
     #[test]
