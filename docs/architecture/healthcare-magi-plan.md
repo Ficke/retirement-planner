@@ -138,6 +138,7 @@ seed 42, the product's default healthcare figures:
 | retire 62, balanced | 0.0pp | $0 |
 | retire 65, no gap | 0.0pp | $0 |
 | retire 58, converting | 0.0pp | $0 |
+| retire 58, penalty window | +0.5pp | $0 |
 
 The predicted trade did not appear. No shape lost terminal wealth, and the two
 that gained gained on both measures. Holding MAGI under the cliff at 58–64 does
@@ -145,10 +146,22 @@ not spend cheap bracket space the way a conversion does, because the dollars it
 moves are ones the household had to withdraw regardless — the choice is which
 bucket, not whether.
 
-The zero rows are all mechanism, not noise:
+The rows that move, and the ones that do not, are all mechanism rather than
+noise:
 
 - **Retiring at 62 or 65** never reaches the ceiling. Taxable is drawn first and
   covers the pre-Medicare years outright, so MAGI is realized gains alone.
+- **The penalty window is a real cost and a small one.** Reordering can charge
+  a penalty the plain order avoids: a Roth draw before 60 that outruns the
+  penalty-free balance reaches conversion principal still inside its five-year
+  clock. It fires in that last shape — at 59 a $39,437 Roth draw takes $7,306
+  from the age-58 lot, about $731. The Traditional draw it displaces falls from
+  $119,290 to $74,868, and *all* of that carries the same 10% before 60, so the
+  year's tax and penalties drop from $29,625 to $24,642. Only part of a Roth
+  draw is penalized; all of a Traditional draw is.
+
+The zero rows:
+
 - **Converting is where the two features fight.** With a `bracket22` ceiling the
   conversion refills exactly the headroom the ordering just cleared — on the
   representative path the age-62 conversion goes from $10,991 to $44,232 while

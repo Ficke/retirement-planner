@@ -2316,6 +2316,19 @@ mod tests {
                 };
                 plan
             }),
+            ("retire 58, penalty window", {
+                // The one shape where the reordering can charge a penalty the
+                // plain order avoids: a Roth draw before 60 that outruns the
+                // penalty-free balance and reaches conversion principal still
+                // inside its five-year clock. Thin on both the brokerage that
+                // would delay the draw and the Roth that would absorb it.
+                let mut plan = shape(58, 1_600_000.0, 35_000.0, 20_000.0);
+                plan.assumptions.roth_conversion = RothConversionPolicy {
+                    enabled: true,
+                    ceiling: RothConversionCeiling::Bracket22,
+                };
+                plan
+            }),
         ];
 
         println!(
