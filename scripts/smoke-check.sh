@@ -34,10 +34,9 @@ SERVICE_URL="${1:?usage: smoke-check.sh <service-url>}"
 ATTEMPTS="${SMOKE_ATTEMPTS:-5}"
 ENDPOINT="$SERVICE_URL/api/internal/simulation-probe"
 
-# Pinned to the current plan schema on purpose: when the wire contract moves
-# and this is not updated, the check goes red instead of shipping a web build
-# the engine cannot read.
-PAYLOAD='{"plan":{"schemaVersion":3,"profile":{"birthDate":"1991-01-01","state":"CA","filingStatus":"Single","retirementAge":65,"currentSalary":100000,"salaryGrowthRate":0.01,"currentSpending":50000,"workingSpendingGrowthRate":0,"retirementSpending":50000,"retirementSpendingGrowthRate":0,"lifeExpectancy":90,"asOfDate":"2026-01-01"},"accounts":[{"type":"Taxable","balance":100000,"assetWeights":{"stocks":0.6,"bonds":0.4}}],"socialSecurity":{"enabled":true,"claimAge":67,"manualOverride":false},"assumptions":{"simulationModel":"historical","taxableGainRatio":0.5,"hsaEligible":false,"useBackdoorRoth":false}},"config":{"paths":100,"seed":42}}'
+SMOKE_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=scripts/smoke-payload.sh
+. "$SMOKE_SCRIPT_DIR/smoke-payload.sh"
 
 attempt=1
 while [ "$attempt" -le "$ATTEMPTS" ]; do
