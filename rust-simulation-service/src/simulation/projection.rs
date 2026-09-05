@@ -961,8 +961,14 @@ fn project_scenario_internal_prepared(
         // later premium is tested against. Off unless the plan asked for it,
         // and inert on a request too old to price a premium at all — the band
         // would then be aimed at a test that never runs.
+        //
+        // A working year is read only if the household is retired the next
+        // year, because that is the first year a premium is priced at all. A
+        // shortfall drawn two or more years before retirement is read by
+        // nothing, and capping it would divert to Roth for no one's benefit.
         let magi_target = (plan.assumptions.magi_aware_withdrawals
-            && plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION)
+            && plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION
+            && current_age + 1 >= profile.retirement_age)
             .then_some(MagiTarget {
                 healthcare: &profile.retirement_healthcare,
                 filing_status: profile.filing_status,
