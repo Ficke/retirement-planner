@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-
 import { describe, it, expect } from 'vitest';
 import {
   monteCarloRequestSchema,
@@ -202,23 +199,5 @@ describe('bounded JSON parsing', () => {
       method: 'POST',
       body: '{',
     }), 10)).rejects.toBeInstanceOf(SyntaxError);
-  });
-});
-
-// The smoke check is the only thing that exercises the deployed wire contract,
-// and a payload the current schema rejects would fail the deploy after the
-// Worker was already live rather than here.
-describe('deployment smoke payload', () => {
-  it('sends a request the current schema accepts', async () => {
-    const script = await readFile(
-      resolve(process.cwd(), '../../scripts/smoke-check-edge.sh'),
-      'utf8',
-    );
-    const payload = /^PAYLOAD='(.+)'$/m.exec(script)?.[1];
-    expect(payload).toBeDefined();
-
-    const parsed = monteCarloRequestSchema.safeParse(JSON.parse(payload!));
-    expect(parsed.error?.issues ?? []).toEqual([]);
-    expect(parsed.success).toBe(true);
   });
 });

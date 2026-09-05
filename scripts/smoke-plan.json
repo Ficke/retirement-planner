@@ -1,0 +1,44 @@
+{
+  "plan": {
+    "schemaVersion": "__PLAN_SCHEMA_VERSION__",
+    "profile": {
+      "birthDate": "1991-01-01",
+      "state": "CA",
+      "filingStatus": "Single",
+      "retirementAge": 65,
+      "currentSalary": 100000,
+      "salaryGrowthRate": 0.01,
+      "currentSpending": 50000,
+      "workingSpendingGrowthRate": 0,
+      "retirementSpending": 50000,
+      "retirementSpendingMultiplier": 1,
+      "retirementSpendingGrowthRate": 0,
+      "lifeExpectancy": 90,
+      "retirementHealthcare": {
+        "preMedicarePremium": 15900,
+        "medicarePremium": 4650,
+        "outOfPocket": 3000,
+        "realGrowthRate": 0.02
+      },
+      "longTermCare": { "enabled": true, "costMultiplier": 1 },
+      "asOfDate": "2026-01-01"
+    },
+    "accounts": [
+      { "type": "Taxable", "balance": 100000, "assetWeights": { "stocks": 0.6, "bonds": 0.4 } },
+      { "type": "Traditional", "balance": 400000, "assetWeights": { "stocks": 0.6, "bonds": 0.4 } },
+      { "type": "Roth", "balance": 150000, "assetWeights": { "stocks": 0.8, "bonds": 0.2 } }
+    ],
+    "socialSecurity": { "enabled": true, "claimAge": 67, "manualOverride": false },
+    "assumptions": {
+      "simulationModel": "historical",
+      "randomSeed": 42,
+      "taxableGainRatio": 0.5,
+      "hsaEligible": false,
+      "useBackdoorRoth": false,
+      "rothConversion": { "enabled": false, "ceiling": "bracket24" },
+      "magiAwareWithdrawals": true,
+      "terminalTaxRate": 0.3
+    }
+  },
+  "config": { "paths": 100, "seed": 42 }
+}

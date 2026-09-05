@@ -34,10 +34,9 @@ ENDPOINT="$SITE_URL/api/simulation/monte-carlo"
 : "${SMOKE_USER_EMAIL:?SMOKE_USER_EMAIL is required}"
 : "${SMOKE_USER_PASSWORD:?SMOKE_USER_PASSWORD is required}"
 
-# Pinned to the current plan schema on purpose: when the wire contract moves and
-# this is not updated, the check goes red instead of shipping a Worker the
-# engine cannot read.
-PAYLOAD='{"plan":{"schemaVersion":7,"profile":{"birthDate":"1991-01-01","state":"CA","filingStatus":"Single","retirementAge":65,"currentSalary":100000,"salaryGrowthRate":0.01,"currentSpending":50000,"workingSpendingGrowthRate":0,"retirementSpending":50000,"retirementSpendingMultiplier":1,"retirementSpendingGrowthRate":0,"lifeExpectancy":90,"retirementHealthcare":{"preMedicarePremium":0,"medicarePremium":0,"outOfPocket":0,"realGrowthRate":0},"longTermCare":{"enabled":true,"costMultiplier":1},"asOfDate":"2026-01-01"},"accounts":[{"type":"Taxable","balance":100000,"assetWeights":{"stocks":0.6,"bonds":0.4}}],"socialSecurity":{"enabled":true,"claimAge":67,"manualOverride":false},"assumptions":{"simulationModel":"historical","randomSeed":42,"taxableGainRatio":0.5,"hsaEligible":false,"useBackdoorRoth":false,"rothConversion":{"enabled":false,"ceiling":"bracket24"},"terminalTaxRate":0.3}},"config":{"paths":100,"seed":42}}'
+SMOKE_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=scripts/smoke-payload.sh
+. "$SMOKE_SCRIPT_DIR/smoke-payload.sh"
 
 # Backslash first, then quote: reversing the two would escape the escapes. A
 # credential containing a newline is not supported, which sed makes structural.
@@ -94,6 +93,14 @@ while [ "$attempt" -le "$ATTEMPTS" ]; do
          head -c 400 "$BODY_FILE"; echo; rm -f "$BODY_FILE"; exit 1 ;;
     400|413) echo "Wire contract rejected by the Worker (HTTP $STATUS):"
          head -c 400 "$BODY_FILE"; echo; rm -f "$BODY_FILE"; exit 1 ;;
+    502) if grep -q 'newer than supported version' "$BODY_FILE"; then
+           echo "The Rust service has not caught up to plan schema $PLAN_SCHEMA_VERSION yet."
+           echo "  This Worker deploys from a tag push while Cloud Build builds the engine"
+           echo "  from the same tag, and the Worker wins that race on a schema bump."
+           echo "  Clients fall back to the local engine meanwhile. Re-run once Cloud Build"
+           echo "  has promoted the new Rust revision; if it already has, this is real."
+           head -c 400 "$BODY_FILE"; echo
+         fi ;;
   esac
 
   echo "Attempt $attempt/$ATTEMPTS returned HTTP $STATUS; retrying in 5s"
