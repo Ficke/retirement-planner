@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_SCHEMA_VERSION: u32 = 7;
+pub const PLAN_SCHEMA_VERSION: u32 = 8;
 pub const WASM_ABI_VERSION: u32 = 1;
 
 /// Medicare eligibility, which is where retirement premiums step down.
@@ -17,6 +17,14 @@ pub const PHASE_SPENDING_SCHEMA_VERSION: u32 = 2;
 /// the entered premium whatever the household's income, with no marketplace
 /// credit before Medicare and no IRMAA surcharge after it.
 pub const HEALTHCARE_MODEL_SCHEMA_VERSION: u32 = 5;
+
+/// Version that stopped pricing the first retirement year on a salary the
+/// household no longer earns. Older requests test the marketplace credit
+/// against a prior-year MAGI that still counts the final paycheck, so a
+/// household retiring at 58 is charged the full list premium on the strength
+/// of its age-57 income. Gating on this rather than on the current version is
+/// what keeps the next schema bump from reverting to that.
+pub const RETIREMENT_MAGI_ESTIMATE_SCHEMA_VERSION: u32 = 8;
 
 /// Version that introduced the long-term-care episode. Older requests priced no
 /// care at all, so gating on this keeps a bundle built before the model from
@@ -248,6 +256,12 @@ pub struct ProjectionSettings {
     /// leaves them off — which is the behavior those plans were built against.
     #[serde(rename = "rothConversion", default)]
     pub roth_conversion: RothConversionPolicy,
+    /// Hold a year's ordinary income under the threshold the household's next
+    /// marketplace credit or Medicare surcharge is tested against, drawing Roth
+    /// for the rest. Absent from plans saved before the setting existed, where
+    /// the default leaves the plain order in place.
+    #[serde(rename = "magiAwareWithdrawals", default)]
+    pub magi_aware_withdrawals: bool,
     #[serde(rename = "terminalTaxRate", default = "default_terminal_tax_rate")]
     pub terminal_tax_rate: f64,
 }

@@ -212,6 +212,7 @@ const defaultPlan: RetirementPlan = {
     hsaEligible: false,
     useBackdoorRoth: true,
     rothConversion: { enabled: false, ceiling: 'bracket24' },
+    magiAwareWithdrawals: true,
     terminalTaxRate: 0.30,
   },
 };

@@ -7,7 +7,7 @@ use rand_chacha::ChaCha12Rng;
 
 use super::age::{age_on, birth_year_of};
 use super::healthcare_premiums::{
-    expected_premium_contribution, federal_poverty_level, irmaa_annual_surcharge,
+    expected_premium_contribution, federal_poverty_level, irmaa_annual_surcharge, magi_band_for,
 };
 use super::historical_data;
 use super::ltc::{draw_episode, quintile_for, IncomeQuintile};
@@ -24,6 +24,7 @@ use crate::types::{
     Account, AccountType, AssetWeights, FilingStatus, PathProjection, PathResult,
     RetirementHealthcare, RetirementPlan, State, HEALTHCARE_MODEL_SCHEMA_VERSION,
     LTC_MODEL_SCHEMA_VERSION, MEDICARE_AGE, PHASE_SPENDING_SCHEMA_VERSION,
+    RETIREMENT_MAGI_ESTIMATE_SCHEMA_VERSION,
 };
 
 /// All-in annual portfolio cost, subtracted from the realized return before it
@@ -283,6 +284,15 @@ struct HealthcareCost {
 /// IRMAA because that is the law, the marketplace credit because healthcare is
 /// priced before the year's withdrawals are known and enrollment rests on an
 /// estimate made in advance.
+/// One year's MAGI with the wage share kept separate, because the estimate
+/// that replaces a first retirement year's prior-year figure has to take
+/// exactly that share back out.
+#[derive(Debug, Clone, Copy, Default)]
+struct YearMagi {
+    total: f64,
+    wages: f64,
+}
+
 struct PremiumIncomeTest {
     prior_year_magi: Option<f64>,
     irmaa_lookback_magi: Option<f64>,
@@ -319,13 +329,75 @@ fn income_tested_premium(list_premium: f64, on_medicare: bool, test: &PremiumInc
     }
 }
 
+/// Real growth on the entered healthcare figures, compounded from the as-of
+/// date. Shared so the out-of-pocket share the premium estimate has to budget
+/// for cannot drift from the one that is charged.
+fn healthcare_growth_factor(healthcare: &RetirementHealthcare, growth_years: u32) -> f64 {
+    (1.0 + healthcare.real_growth_rate).powi(growth_years as i32)
+}
+
+/// What a household would report to the marketplace for its first retirement
+/// year, in place of a prior-year MAGI that still counts a salary it no longer
+/// earns.
+///
+/// A real enrollee reports projected income and reconciles on the return, and
+/// this is built the same way: last year's income with the wages taken out,
+/// plus the income this year's own spending will realize. One forward pass
+/// against start-of-year balances, and deliberately never reconciled against
+/// the solve that follows — exactly like the estimate it stands in for.
+///
+/// Taking the wages out is not enough on its own. A household retiring at 58
+/// lands near zero, under the poverty level, where no credit reaches it either;
+/// it would pay the full list premium, worse off than on the salary it was
+/// charged for. The portfolio-draw term is what keeps the estimate in the band.
+///
+/// Pricing on the year's *realized* MAGI, which is what the law reconciles to,
+/// is not an option here: the premium is an input to the withdrawal solve, and
+/// a credit that vanishes at the cliff would cost the bisection the monotone
+/// after-tax cash it converges on.
+fn estimated_retirement_magi(
+    prior: YearMagi,
+    planned_spending: f64,
+    social_security_benefit: f64,
+    accounts: &[Account],
+    age: u32,
+    taxable_gain_ratio: f64,
+    magi_target: Option<MagiTarget<'_>>,
+) -> f64 {
+    // Last year's income with the wages taken out: dividends, a shortfall draw,
+    // whatever the final working year realized beyond its salary. It recurs, so
+    // the estimate reports it -- which means the ceiling has to be measured
+    // from it as well.
+    let carried_forward = (prior.total - prior.wages).max(0.0);
+    let from_portfolio = (planned_spending - social_security_benefit).max(0.0);
+    let mut balances: Vec<f64> = accounts.iter().map(|account| account.balance).collect();
+    let drawn = apply_withdrawal_order(
+        accounts,
+        &mut balances,
+        from_portfolio,
+        age,
+        taxable_gain_ratio,
+        // Every term the estimate will report has to be in the headroom the
+        // pre-tax leg is capped against. Left out, the leg is handed that much
+        // room it does not have and the estimate clears the cliff -- pricing at
+        // list exactly the household this is meant to help.
+        magi_target.map(|target| MagiTarget {
+            committed_magi: target.committed_magi + social_security_benefit + carried_forward,
+            ..target
+        }),
+    );
+    // An HSA distribution is left out for the same reason the stored figure
+    // leaves it out: the estimate has to be the same measure the test reads.
+    carried_forward + social_security_benefit + drawn.traditional + drawn.taxable_gain
+}
+
 fn healthcare_cost_for(
     healthcare: &RetirementHealthcare,
     age: u32,
     growth_years: u32,
     income_test: Option<&PremiumIncomeTest>,
 ) -> HealthcareCost {
-    let growth = (1.0 + healthcare.real_growth_rate).powi(growth_years as i32);
+    let growth = healthcare_growth_factor(healthcare, growth_years);
     let on_medicare = age >= MEDICARE_AGE;
     let list_premium = if on_medicare {
         healthcare.medicare_premium
@@ -427,32 +499,164 @@ struct OrderedWithdrawal {
     roth: f64,
     hsa: f64,
     total: f64,
+    /// The share of the taxable draw that is realized gain, which excludes a
+    /// surplus-cash bucket because that money was never invested.
+    taxable_gain: f64,
 }
 
-/// Drain buckets in the withdrawal order until `amount` is raised or nothing is left.
-fn withdraw_in_order(accounts: &mut [Account], amount: f64) -> OrderedWithdrawal {
-    let mut drawn = OrderedWithdrawal::default();
-    let mut remaining = amount.max(0.0);
-    for account_type in BUCKET_ORDER {
+/// What the withdrawal order needs to keep a year's MAGI inside the band the
+/// household's later premiums are tested against. Absent when the setting is
+/// off, when the plan prices no premium, or when no test will read the year.
+#[derive(Debug, Clone, Copy)]
+struct MagiTarget<'a> {
+    healthcare: &'a RetirementHealthcare,
+    /// Which later years price a premium at all, and so which tests can read
+    /// this year's MAGI.
+    retirement_age: u32,
+    filing_status: FilingStatus,
+    household_size: u32,
+    /// Income the year reports whatever the order does: wages or benefits, plus
+    /// any distribution already forced out of it.
+    committed_magi: f64,
+}
+
+/// Take up to `limit` from one bucket type, leaving the accounts alone and
+/// writing through to the shadow balances the caller is evaluating against.
+fn draw_bucket_balances(
+    accounts: &[Account],
+    balances: &mut [f64],
+    account_type: AccountType,
+    limit: f64,
+) -> f64 {
+    let mut remaining = limit.max(0.0);
+    let mut drawn = 0.0;
+    for (index, account) in accounts.iter().enumerate() {
         if remaining <= 0.0 {
             break;
         }
-        let Some(bucket) = accounts
-            .iter_mut()
-            .find(|account| account.account_type == account_type && account.balance > 0.0)
-        else {
+        if account.account_type != account_type || balances[index] <= 0.0 {
             continue;
-        };
-        let withdrawal = remaining.min(bucket.balance);
-        bucket.balance -= withdrawal;
-        remaining -= withdrawal;
-        drawn.total += withdrawal;
-        match account_type {
-            AccountType::Taxable => drawn.taxable += withdrawal,
-            AccountType::Traditional => drawn.traditional += withdrawal,
-            AccountType::Roth => drawn.roth += withdrawal,
-            AccountType::Hsa => drawn.hsa += withdrawal,
         }
+        let withdrawal = remaining.min(balances[index]);
+        balances[index] -= withdrawal;
+        remaining -= withdrawal;
+        drawn += withdrawal;
+    }
+    drawn
+}
+
+/// The withdrawal order, shared by the working-year shortfall loop and the
+/// retirement solve so the two cannot drift into different rules.
+///
+/// Taxable, then Traditional as far as the MAGI band allows, then Roth, then
+/// whatever Traditional the band could not hold, and HSA last.
+///
+/// The ceiling is a preference that yields, not a cap. A path fails when any
+/// modeled year cannot be funded, so refusing to cross the ceiling would
+/// manufacture failed paths out of years the portfolio can pay for; an
+/// unsubsidized premium is much the cheaper outcome.
+///
+/// The band's floor needs no rule of its own. Traditional already precedes
+/// Roth and the ceiling never binds below the floor, so the only draws landing
+/// under the poverty level are the ones a balance cut short — which is what
+/// they were before this ordering existed.
+///
+/// HSA stays last. A non-qualified distribution is ordinary income and a 20%
+/// penalty besides, so moving it ahead of Traditional would shelter no MAGI
+/// and cost more.
+fn apply_withdrawal_order(
+    accounts: &[Account],
+    balances: &mut [f64],
+    amount: f64,
+    age: u32,
+    taxable_gain_ratio: f64,
+    magi_target: Option<MagiTarget<'_>>,
+) -> OrderedWithdrawal {
+    let mut drawn = OrderedWithdrawal::default();
+    let mut remaining = amount.max(0.0);
+
+    for (index, account) in accounts.iter().enumerate() {
+        if remaining <= 0.0 {
+            break;
+        }
+        if account.account_type != AccountType::Taxable || balances[index] <= 0.0 {
+            continue;
+        }
+        let withdrawal = remaining.min(balances[index]);
+        balances[index] -= withdrawal;
+        remaining -= withdrawal;
+        drawn.taxable += withdrawal;
+        if !account.is_surplus_cash {
+            drawn.taxable_gain += withdrawal * taxable_gain_ratio;
+        }
+    }
+
+    // The band is read after the taxable leg because the gain it realizes is
+    // part of the MAGI it has to fit inside, and because by then that gain is
+    // settled: Traditional is only reached once Taxable is dry, so raising the
+    // budget further cannot move the ceiling. That is what keeps after-tax cash
+    // monotone in the budget, which the solve's bisection depends on.
+    //
+    // The ceiling is aimed at the figure the premium test will actually read,
+    // which counts the whole taxable draw at the plan's gain ratio.
+    let traditional_headroom = magi_target.map_or(f64::INFINITY, |target| {
+        let committed = target.committed_magi + drawn.taxable * taxable_gain_ratio;
+        magi_band_for(
+            age,
+            target.retirement_age,
+            target.filing_status,
+            target.household_size,
+            committed,
+            target.healthcare,
+        )
+        .map_or(f64::INFINITY, |band| (band.ceiling - committed).max(0.0))
+    });
+
+    let capped = draw_bucket_balances(
+        accounts,
+        balances,
+        AccountType::Traditional,
+        remaining.min(traditional_headroom),
+    );
+    drawn.traditional += capped;
+    remaining -= capped;
+
+    let roth = draw_bucket_balances(accounts, balances, AccountType::Roth, remaining);
+    drawn.roth += roth;
+    remaining -= roth;
+
+    let over_the_ceiling =
+        draw_bucket_balances(accounts, balances, AccountType::Traditional, remaining);
+    drawn.traditional += over_the_ceiling;
+    remaining -= over_the_ceiling;
+
+    let hsa = draw_bucket_balances(accounts, balances, AccountType::Hsa, remaining);
+    drawn.hsa += hsa;
+
+    drawn.total = drawn.taxable + drawn.traditional + drawn.roth + drawn.hsa;
+    drawn
+}
+
+/// Drain buckets in the withdrawal order until `amount` is raised or nothing is
+/// left, committing the result to the accounts themselves.
+fn withdraw_in_order(
+    accounts: &mut [Account],
+    amount: f64,
+    age: u32,
+    taxable_gain_ratio: f64,
+    magi_target: Option<MagiTarget<'_>>,
+) -> OrderedWithdrawal {
+    let mut balances: Vec<f64> = accounts.iter().map(|account| account.balance).collect();
+    let drawn = apply_withdrawal_order(
+        accounts,
+        &mut balances,
+        amount,
+        age,
+        taxable_gain_ratio,
+        magi_target,
+    );
+    for (account, balance) in accounts.iter_mut().zip(&balances) {
+        account.balance = *balance;
     }
     drawn
 }
@@ -725,7 +929,7 @@ fn project_scenario_internal_prepared(
     let mut hsa_qualified_allowance = 0.0;
     // MAGI for each modeled year, which the next years' premiums are tested
     // against.
-    let mut magi_by_year: Vec<f64> = Vec::with_capacity(total_years as usize);
+    let mut magi_by_year: Vec<YearMagi> = Vec::with_capacity(total_years as usize);
 
     let mut returns_generator = create_market_returns_generator(plan, &config);
     let mut long_term_care = LongTermCareDraw::start(plan, &config, current_year, birth_year, age);
@@ -758,6 +962,23 @@ fn project_scenario_internal_prepared(
             };
             rmd_amount = calculate_rmd(balance_for_rmd, current_age, rmd_start_age);
         }
+
+        // Whether the order may hold ordinary income under the threshold a
+        // later premium is tested against. Off unless the plan asked for it,
+        // and inert on a request too old to price a premium at all — the band
+        // would then be aimed at a test that never runs.
+        //
+        // Which years actually read this one is left to the band, which knows
+        // that a working year is covered by an employer and priced by nothing.
+        let magi_target = (plan.assumptions.magi_aware_withdrawals
+            && plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION)
+            .then_some(MagiTarget {
+                healthcare: &profile.retirement_healthcare,
+                retirement_age: profile.retirement_age,
+                filing_status: profile.filing_status,
+                household_size: 1,
+                committed_magi: 0.0,
+            });
 
         // Yearly tracking variables — income/spending/taxes/savings are assigned
         // in both the working and retirement branches below.
@@ -880,7 +1101,22 @@ fn project_scenario_internal_prepared(
                 if remaining <= SHORTFALL_TOLERANCE {
                     break;
                 }
-                let drawn = withdraw_in_order(&mut accounts, remaining);
+                // A working year still feeds the first retirement year's
+                // premium test, so its shortfall draw obeys the same band. A
+                // salary usually puts the year over the cliff already, in which
+                // case the band drops that test and nothing is held back.
+                let drawn = withdraw_in_order(
+                    &mut accounts,
+                    remaining,
+                    current_age,
+                    taxable_gain_ratio,
+                    magi_target.map(|target| MagiTarget {
+                        committed_magi: annual_salary * period_fraction
+                            + withdrawal_traditional
+                            + withdrawal_taxable * taxable_gain_ratio,
+                        ..target
+                    }),
+                );
                 if drawn.total <= SHORTFALL_TOLERANCE {
                     break; // portfolio exhausted
                 }
@@ -977,34 +1213,6 @@ fn project_scenario_internal_prepared(
             } else {
                 year.saturating_sub(profile.retirement_age.saturating_sub(age))
             };
-            let income_test = if plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION {
-                Some(PremiumIncomeTest {
-                    prior_year_magi: year
-                        .checked_sub(1)
-                        .and_then(|y| magi_by_year.get(y as usize))
-                        .copied(),
-                    irmaa_lookback_magi: year
-                        .checked_sub(2)
-                        .and_then(|y| magi_by_year.get(y as usize))
-                        .copied(),
-                    filing_status: profile.filing_status,
-                    household_size: 1,
-                })
-            } else {
-                None
-            };
-            let healthcare = healthcare_cost_for(
-                &profile.retirement_healthcare,
-                current_age,
-                healthcare_growth_years,
-                income_test.as_ref(),
-            );
-            // Medical spending is what an HSA can cover tax-free, and the
-            // allowance carries forward: an HSA has no reimbursement deadline,
-            // and this bucket is drained last, so by the time it is touched the
-            // allowance is large.
-            hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
-            healthcare_cost = healthcare.total * retirement_period_fraction;
             // Spread the lifetime total across the sampled duration ending at
             // life expectancy. Care services are deductible medical expenses
             // under IRC 213(d), so the HSA allowance grows with each installment.
@@ -1013,13 +1221,10 @@ fn project_scenario_internal_prepared(
                 _ => 0.0,
             };
             hsa_qualified_allowance += long_term_care_cost;
-            let target_spending = profile.retirement_spending
-                * (1.0 + profile.retirement_spending_growth_rate)
-                    .powi(spending_growth_exponent as i32)
-                * retirement_period_fraction
-                + healthcare_cost
-                + long_term_care_cost;
 
+            // Social Security is settled before healthcare is priced because
+            // the premium estimate counts it: it is income the year reports
+            // whatever the portfolio does.
             if plan.social_security.enabled && current_age >= plan.social_security.claim_age {
                 let annual_social_security_benefit = if plan.social_security.manual_override {
                     plan.social_security
@@ -1043,6 +1248,75 @@ fn project_scenario_internal_prepared(
                 social_security_benefit =
                     annual_social_security_benefit * retirement_period_fraction;
             }
+
+            let base_spending = profile.retirement_spending
+                * (1.0 + profile.retirement_spending_growth_rate)
+                    .powi(spending_growth_exponent as i32)
+                * retirement_period_fraction;
+
+            let income_test = if plan.schema_version >= HEALTHCARE_MODEL_SCHEMA_VERSION {
+                let prior = year
+                    .checked_sub(1)
+                    .and_then(|y| magi_by_year.get(y as usize))
+                    .copied();
+                Some(PremiumIncomeTest {
+                    // A prior year with wages in it is the retirement
+                    // discontinuity, and the only year the stored figure gets
+                    // this wrong. Once the salary is already gone, last year's
+                    // MAGI is a fair reading of this year's.
+                    prior_year_magi: prior.map(|prior| {
+                        if prior.wages <= 0.0
+                            || plan.schema_version < RETIREMENT_MAGI_ESTIMATE_SCHEMA_VERSION
+                        {
+                            return prior.total;
+                        }
+                        // Everything the year has to fund but the premium, which
+                        // is the figure being solved for. Out-of-pocket cost and
+                        // care are cash the household still has to raise.
+                        let planned_spending = base_spending
+                            + profile.retirement_healthcare.out_of_pocket
+                                * healthcare_growth_factor(
+                                    &profile.retirement_healthcare,
+                                    healthcare_growth_years,
+                                )
+                                * retirement_period_fraction
+                            + long_term_care_cost;
+                        estimated_retirement_magi(
+                            prior,
+                            planned_spending,
+                            social_security_benefit,
+                            &accounts,
+                            current_age,
+                            plan.assumptions.taxable_gain_ratio,
+                            magi_target,
+                        )
+                    }),
+                    // IRMAA is left on the stored figure. Two-year lookback is
+                    // what the law does, and the work-stoppage appeal that would
+                    // change it (SSA-44) is not modeled.
+                    irmaa_lookback_magi: year
+                        .checked_sub(2)
+                        .and_then(|y| magi_by_year.get(y as usize))
+                        .map(|magi| magi.total),
+                    filing_status: profile.filing_status,
+                    household_size: 1,
+                })
+            } else {
+                None
+            };
+            let healthcare = healthcare_cost_for(
+                &profile.retirement_healthcare,
+                current_age,
+                healthcare_growth_years,
+                income_test.as_ref(),
+            );
+            // Medical spending is what an HSA can cover tax-free, and the
+            // allowance carries forward: an HSA has no reimbursement deadline,
+            // and this bucket is drained last, so by the time it is touched the
+            // allowance is large.
+            hsa_qualified_allowance += healthcare.qualified * retirement_period_fraction;
+            healthcare_cost = healthcare.total * retirement_period_fraction;
+            let target_spending = base_spending + healthcare_cost + long_term_care_cost;
 
             let (stock_return, bond_return) = returns_generator.next();
 
@@ -1076,6 +1350,7 @@ fn project_scenario_internal_prepared(
                     rmd_amount,
                     taxable_gain_ratio: plan.assumptions.taxable_gain_ratio,
                     hsa_qualified_allowance,
+                    magi_target,
                 },
             )?;
 
@@ -1187,12 +1462,15 @@ fn project_scenario_internal_prepared(
         // IRMAA counts only the taxable part, so this runs high by the untaxed
         // remainder. At the income a surcharge starts from, 85% of the benefit
         // is taxable anyway, and erring high charges the surcharge sooner.
-        magi_by_year.push(
-            income
+        magi_by_year.push(YearMagi {
+            total: income
                 + withdrawal_traditional
                 + roth_conversion
                 + withdrawal_taxable * plan.assumptions.taxable_gain_ratio,
-        );
+            // Only a working year's `income` is wages; a retired year's is the
+            // Social Security benefit, which does not stop when the salary does.
+            wages: if is_retired { 0.0 } else { income },
+        });
 
         if insufficient_funds {
             success = false;
@@ -1283,6 +1561,9 @@ struct WithdrawalContext<'a> {
     rmd_amount: f64,
     taxable_gain_ratio: f64,
     hsa_qualified_allowance: f64,
+    /// Absent when the setting is off, or when no premium test will read this
+    /// year's MAGI — either way the plain order stands.
+    magi_target: Option<MagiTarget<'a>>,
 }
 
 fn balance_of_bucket(accounts: &[Account], account_type: AccountType) -> f64 {
@@ -1471,54 +1752,25 @@ fn evaluate_ordered_withdrawals(
         }
     }
 
-    let mut remaining = voluntary_budget.max(0.0);
-    for (index, account) in accounts.iter().enumerate() {
-        if matches!(account.account_type, AccountType::Taxable)
-            && balances[index] > 0.0
-            && remaining > 0.0
-        {
-            let withdrawal = remaining.min(balances[index]);
-            balances[index] -= withdrawal;
-            withdrawal_taxable += withdrawal;
-            if !account.is_surplus_cash {
-                qualified_income += withdrawal * context.taxable_gain_ratio;
-            }
-            remaining -= withdrawal;
-        }
-    }
-    for (index, account) in accounts.iter().enumerate() {
-        if matches!(account.account_type, AccountType::Traditional)
-            && balances[index] > 0.0
-            && remaining > 0.0
-        {
-            let withdrawal = remaining.min(balances[index]);
-            balances[index] -= withdrawal;
-            withdrawal_traditional += withdrawal;
-            remaining -= withdrawal;
-        }
-    }
-    for (index, account) in accounts.iter().enumerate() {
-        if matches!(account.account_type, AccountType::Roth)
-            && balances[index] > 0.0
-            && remaining > 0.0
-        {
-            let withdrawal = remaining.min(balances[index]);
-            balances[index] -= withdrawal;
-            withdrawal_roth += withdrawal;
-            remaining -= withdrawal;
-        }
-    }
-    for (index, account) in accounts.iter().enumerate() {
-        if matches!(account.account_type, AccountType::Hsa)
-            && balances[index] > 0.0
-            && remaining > 0.0
-        {
-            let withdrawal = remaining.min(balances[index]);
-            balances[index] -= withdrawal;
-            withdrawal_hsa += withdrawal;
-            remaining -= withdrawal;
-        }
-    }
+    // Benefits and the forced distribution above are income the year reports
+    // however the voluntary draw is composed, so they are what the band's
+    // headroom is measured from.
+    let voluntary = apply_withdrawal_order(
+        accounts,
+        &mut balances,
+        voluntary_budget,
+        context.age,
+        context.taxable_gain_ratio,
+        context.magi_target.map(|target| MagiTarget {
+            committed_magi: context.social_security_benefit + withdrawal_traditional,
+            ..target
+        }),
+    );
+    withdrawal_taxable += voluntary.taxable;
+    withdrawal_traditional += voluntary.traditional;
+    withdrawal_roth += voluntary.roth;
+    withdrawal_hsa += voluntary.hsa;
+    qualified_income += voluntary.taxable_gain;
 
     let roth_conversion_penalty = if roth_basis.enabled && withdrawal_roth > 0.0 {
         roth_conversion_penalty_for(withdrawal_roth, roth_basis, context.age)
@@ -1702,6 +1954,7 @@ mod tests {
                 hsa_eligible: false,
                 use_backdoor_roth: false,
                 roth_conversion: RothConversionPolicy::default(),
+                magi_aware_withdrawals: false,
                 terminal_tax_rate: 0.30,
             },
         }
@@ -1794,6 +2047,7 @@ mod tests {
             rmd_amount,
             taxable_gain_ratio: 0.0,
             hsa_qualified_allowance: 0.0,
+            magi_target: None,
         }
     }
 
@@ -1837,6 +2091,288 @@ mod tests {
         assert_eq!(hsa_reached.withdrawal_traditional, 10_000.0);
         assert_eq!(hsa_reached.withdrawal_roth, 10_000.0);
         assert_eq!(hsa_reached.withdrawal_hsa, 5_000.0);
+    }
+
+    /// A plan that prices both premiums, so both income tests are live.
+    fn insured() -> RetirementHealthcare {
+        RetirementHealthcare {
+            pre_medicare_premium: 15_900.0,
+            medicare_premium: 4_500.0,
+            out_of_pocket: 3_000.0,
+            real_growth_rate: 0.0,
+        }
+    }
+
+    fn magi_aware_context<'a>(
+        age: u32,
+        household: &'a Household,
+        healthcare: &'a RetirementHealthcare,
+    ) -> WithdrawalContext<'a> {
+        WithdrawalContext {
+            magi_target: Some(MagiTarget {
+                healthcare,
+                retirement_age: 55,
+                filing_status: FilingStatus::Single,
+                household_size: 1,
+                committed_magi: 0.0,
+            }),
+            ..withdrawal_context(age, 0.0, household)
+        }
+    }
+
+    #[test]
+    fn traditional_stops_at_the_cliff_and_roth_funds_the_rest() {
+        let household = Household::single(FilingStatus::Single, 60);
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Taxable, 20_000.0),
+            account(AccountType::Traditional, 400_000.0),
+            account(AccountType::Roth, 400_000.0),
+        ];
+        let cliff = federal_poverty_level(1) * 4.0;
+
+        // Without the setting the whole draw is Traditional, straight over the
+        // cliff, while the Roth balance sits untouched.
+        let plain = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            120_000.0,
+            &withdrawal_context(60, 0.0, &household),
+        );
+        assert_eq!(plain.withdrawal_traditional, 100_000.0);
+        assert_eq!(plain.withdrawal_roth, 0.0);
+        assert!(plain.withdrawal_traditional > cliff);
+
+        let managed = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            120_000.0,
+            &magi_aware_context(60, &household, &healthcare),
+        );
+        assert!(managed.withdrawal_traditional <= cliff);
+        assert!(cliff - managed.withdrawal_traditional <= 1.0);
+        assert!(expected_premium_contribution(managed.withdrawal_traditional, 1).is_some());
+        assert!((managed.withdrawal_roth - (100_000.0 - cliff)).abs() <= 1.0);
+        assert_eq!(managed.total_withdrawn, plain.total_withdrawn);
+        // Same dollars out, less of them taxed.
+        assert!(managed.cash_available_after_tax > plain.cash_available_after_tax);
+    }
+
+    #[test]
+    fn the_ceiling_yields_rather_than_failing_a_year_it_could_fund() {
+        let household = Household::single(FilingStatus::Single, 60);
+        let healthcare = insured();
+        let accounts = vec![account(AccountType::Traditional, 400_000.0)];
+
+        let managed = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            200_000.0,
+            &magi_aware_context(60, &household, &healthcare),
+        );
+        assert_eq!(managed.withdrawal_traditional, 200_000.0);
+    }
+
+    #[test]
+    fn a_year_far_under_the_ceiling_is_ordered_exactly_as_before() {
+        let household = Household::single(FilingStatus::Single, 60);
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Taxable, 10_000.0),
+            account(AccountType::Traditional, 400_000.0),
+            account(AccountType::Roth, 400_000.0),
+        ];
+        let plain = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            40_000.0,
+            &withdrawal_context(60, 0.0, &household),
+        );
+        let managed = evaluate_ordered_withdrawals(
+            &accounts,
+            &disabled_roth_basis(),
+            40_000.0,
+            &magi_aware_context(60, &household, &healthcare),
+        );
+        assert_eq!(managed.withdrawal_taxable, plain.withdrawal_taxable);
+        assert_eq!(managed.withdrawal_traditional, plain.withdrawal_traditional);
+        assert_eq!(managed.withdrawal_roth, plain.withdrawal_roth);
+    }
+
+    #[test]
+    fn the_band_that_binds_flips_at_64_in_the_engine_too() {
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Traditional, 400_000.0),
+            account(AccountType::Roth, 400_000.0),
+        ];
+        let draw = |age: u32| {
+            let household = Household::single(FilingStatus::Single, age);
+            let evaluation = evaluate_ordered_withdrawals(
+                &accounts,
+                &disabled_roth_basis(),
+                90_000.0,
+                &magi_aware_context(age, &household, &healthcare),
+            );
+            evaluation.withdrawal_traditional
+        };
+
+        // At 63 next year's marketplace credit still binds, so Traditional
+        // stops at the cliff. At 64 only IRMAA reads the year, and its first
+        // threshold is far above the draw.
+        let cliff = federal_poverty_level(1) * 4.0;
+        assert!(draw(63) <= cliff && cliff - draw(63) <= 1.0);
+        assert_eq!(draw(64), 90_000.0);
+    }
+
+    /// The solve bisects on after-tax cash and states the monotonicity
+    /// assumption outright. Reordering keeps it — premiums are priced before
+    /// the solve, so a larger budget can only shift the composition further
+    /// down the order — but the property is asserted rather than argued.
+    #[test]
+    fn after_tax_cash_never_falls_as_the_budget_rises() {
+        let household = Household::single(FilingStatus::Single, 60);
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Taxable, 40_000.0),
+            account(AccountType::Traditional, 150_000.0),
+            account(AccountType::Roth, 120_000.0),
+            account(AccountType::Hsa, 30_000.0),
+        ];
+        let mut context = magi_aware_context(60, &household, &healthcare);
+        context.taxable_gain_ratio = 0.5;
+        context.rmd_amount = 5_000.0;
+
+        let mut previous = f64::NEG_INFINITY;
+        for step in 0..=680 {
+            let budget = step as f64 * 500.0;
+            let cash =
+                evaluate_ordered_withdrawals(&accounts, &disabled_roth_basis(), budget, &context)
+                    .cash_available_after_tax;
+            assert!(
+                cash + 1e-6 >= previous,
+                "after-tax cash fell from {previous} to {cash} at a budget of {budget}"
+            );
+            previous = cash;
+        }
+    }
+
+    /// What the setting costs and buys, across the plan shapes it can matter
+    /// for. Both numbers, because the trade is the point: holding MAGI down in
+    /// the pre-Medicare years spends exactly the low-bracket years otherwise
+    /// used to draw Traditional down cheaply, so a rule that lifts success can
+    /// lower terminal wealth at the same time.
+    ///
+    /// Not an assertion — it prints a table for a human to read the default
+    /// off. `cargo test --release -- --ignored magi_aware_ordering --nocapture`
+    #[test]
+    #[ignore = "reports numbers rather than asserting them"]
+    fn magi_aware_ordering_benchmark() {
+        use super::super::monte_carlo::run_simulation;
+        use crate::types::MCConfig;
+
+        /// The product default, which is what a household's premium is priced
+        /// from when it has entered nothing of its own.
+        fn default_healthcare() -> RetirementHealthcare {
+            RetirementHealthcare {
+                pre_medicare_premium: 15_900.0,
+                medicare_premium: 4_650.0,
+                out_of_pocket: 3_000.0,
+                real_growth_rate: 0.02,
+            }
+        }
+
+        fn shape(retirement_age: u32, traditional: f64, roth: f64, taxable: f64) -> RetirementPlan {
+            let mut plan = test_plan();
+            plan.profile.birth_date = "1968-01-01".to_string();
+            plan.profile.as_of_date = "2026-01-01".to_string();
+            plan.profile.retirement_age = retirement_age;
+            plan.profile.current_salary = 150_000.0;
+            plan.profile.current_spending = 70_000.0;
+            plan.profile.retirement_spending = 70_000.0;
+            plan.profile.retirement_spending_growth_rate = 0.0;
+            plan.profile.life_expectancy = 92;
+            plan.profile.retirement_healthcare = default_healthcare();
+            plan.profile.long_term_care.enabled = false;
+            plan.social_security.claim_age = 67;
+            plan.assumptions.simulation_model = SimulationModel::Historical;
+            plan.accounts = vec![
+                account(AccountType::Traditional, traditional),
+                account(AccountType::Roth, roth),
+                account(AccountType::Taxable, taxable),
+            ];
+            plan
+        }
+
+        let config = MCConfig {
+            paths: 2_000,
+            seed: 42,
+            use_historical_bootstrap: true,
+            block_size: 5,
+        };
+        let shapes = [
+            (
+                "retire 58, Roth-heavy",
+                shape(58, 900_000.0, 700_000.0, 300_000.0),
+            ),
+            (
+                "retire 58, Roth-light",
+                shape(58, 1_500_000.0, 150_000.0, 250_000.0),
+            ),
+            (
+                "retire 62, balanced",
+                shape(62, 1_100_000.0, 450_000.0, 350_000.0),
+            ),
+            (
+                "retire 65, no gap",
+                shape(65, 1_100_000.0, 450_000.0, 350_000.0),
+            ),
+            ("retire 58, converting", {
+                // Where the trade was expected to show: conversions already
+                // claim the low-bracket years the ceiling would spend.
+                let mut plan = shape(58, 900_000.0, 700_000.0, 300_000.0);
+                plan.assumptions.roth_conversion = RothConversionPolicy {
+                    enabled: true,
+                    ceiling: RothConversionCeiling::Bracket22,
+                };
+                plan
+            }),
+            ("retire 58, penalty window", {
+                // The one shape where the reordering can charge a penalty the
+                // plain order avoids: a Roth draw before 60 that outruns the
+                // penalty-free balance and reaches conversion principal still
+                // inside its five-year clock. Thin on both the brokerage that
+                // would delay the draw and the Roth that would absorb it.
+                let mut plan = shape(58, 1_600_000.0, 35_000.0, 20_000.0);
+                plan.assumptions.roth_conversion = RothConversionPolicy {
+                    enabled: true,
+                    ceiling: RothConversionCeiling::Bracket22,
+                };
+                plan
+            }),
+        ];
+
+        println!(
+            "\n{:<24} {:>10} {:>10} {:>14} {:>14}",
+            "shape", "success", "Δ", "after-tax p50", "Δ"
+        );
+        for (label, plan) in shapes {
+            let mut off = plan.clone();
+            off.assumptions.magi_aware_withdrawals = false;
+            let mut on = plan;
+            on.assumptions.magi_aware_withdrawals = true;
+
+            let off = run_simulation(off, config.clone()).expect("baseline runs");
+            let on = run_simulation(on, config.clone()).expect("managed runs");
+            println!(
+                "{:<24} {:>9.1}% {:>+9.1}pp {:>14.0} {:>+14.0}",
+                label,
+                on.success_probability * 100.0,
+                (on.success_probability - off.success_probability) * 100.0,
+                on.median_after_tax_terminal_wealth,
+                on.median_after_tax_terminal_wealth - off.median_after_tax_terminal_wealth,
+            );
+        }
     }
 
     #[test]
@@ -2210,6 +2746,9 @@ mod tests {
         plan.profile.retirement_age = 55;
         plan.profile.life_expectancy = 57;
         plan.profile.retirement_spending_growth_rate = 0.0;
+        // Far over the subsidy cliff, so the premium is the list figure in both
+        // arms and this test reads the growth exponent alone.
+        plan.profile.retirement_spending = 200_000.0;
         plan.profile.retirement_healthcare = RetirementHealthcare {
             pre_medicare_premium: 15_900.0,
             medicare_premium: 4_650.0,
@@ -2248,6 +2787,166 @@ mod tests {
         legacy.schema_version = HEALTHCARE_MODEL_SCHEMA_VERSION - 1;
         let old = healthcare_in_first_retired_year(&legacy);
         assert!((old - 18_900.0).abs() < 0.01);
+    }
+
+    /// A household working at 57 and retiring at 58, which is the shape the
+    /// estimate exists for: the first retirement year has a salaried year
+    /// behind it to be priced on.
+    fn early_retirement_plan() -> RetirementPlan {
+        let mut plan = test_plan();
+        plan.profile.birth_date = "1969-01-01".to_string();
+        plan.profile.as_of_date = "2026-01-01".to_string();
+        plan.profile.retirement_age = 58;
+        plan.profile.current_salary = 150_000.0;
+        plan.profile.current_spending = 70_000.0;
+        plan.profile.retirement_spending = 70_000.0;
+        plan.profile.retirement_spending_growth_rate = 0.0;
+        plan.profile.life_expectancy = 90;
+        plan.profile.retirement_healthcare = RetirementHealthcare {
+            pre_medicare_premium: 15_900.0,
+            medicare_premium: 4_650.0,
+            out_of_pocket: 3_000.0,
+            real_growth_rate: 0.0,
+        };
+        plan.profile.long_term_care.enabled = false;
+        plan.social_security.enabled = false;
+        plan.accounts = vec![
+            account(AccountType::Taxable, 600_000.0),
+            account(AccountType::Traditional, 900_000.0),
+        ];
+        plan
+    }
+
+    fn first_retirement_year(plan: &RetirementPlan) -> PathProjection {
+        let config = ProjectionConfig {
+            seed: 11,
+            use_historical_bootstrap: true,
+            block_size: 3,
+        };
+        project_scenario(plan, config)
+            .expect("projection succeeds")
+            .projections
+            .into_iter()
+            .find(|year| year.is_retired)
+            .expect("a retirement year")
+    }
+
+    /// The first retirement year is no longer priced on a salary that stopped.
+    /// A wages-only subtraction would land the household near zero, under the
+    /// poverty level, where no credit reaches it either — so the check is that
+    /// the year lands inside the band, not merely below the cliff.
+    #[test]
+    fn the_first_retirement_year_is_priced_inside_the_subsidy_band() {
+        let plan = early_retirement_plan();
+        let list = 15_900.0 + 3_000.0;
+
+        let mut legacy = plan.clone();
+        legacy.schema_version = RETIREMENT_MAGI_ESTIMATE_SCHEMA_VERSION - 1;
+        let before = first_retirement_year(&legacy);
+        assert!(
+            (before.healthcare_cost - list).abs() < 1.0,
+            "the salary put the year over the cliff, so it paid list"
+        );
+
+        let after = first_retirement_year(&plan);
+        assert!(after.healthcare_cost < before.healthcare_cost);
+
+        // Inside the band means a credit actually reached it: the premium is
+        // the household's expected contribution, strictly under list and
+        // strictly above the out-of-pocket cost it pays regardless.
+        assert!(after.healthcare_cost > 3_000.0);
+        assert!(after.healthcare_cost < list);
+    }
+
+    /// A benefit already being claimed is income the estimate reports, so the
+    /// ceiling has to be measured from it. Counted in the total but left out of
+    /// the headroom, the pre-tax leg is handed the benefit's worth of room it
+    /// does not have and the estimate clears the cliff — pricing at list the
+    /// very household the estimate exists to help.
+    #[test]
+    fn a_claimed_benefit_is_counted_against_the_ceiling_not_just_added_to_it() {
+        let healthcare = insured();
+        let accounts = vec![
+            account(AccountType::Taxable, 50_000.0),
+            account(AccountType::Traditional, 900_000.0),
+            // Without a Roth balance the ceiling has nowhere to send the
+            // remainder and yields, as it should — so there would be nothing
+            // for the headroom to get wrong.
+            account(AccountType::Roth, 400_000.0),
+        ];
+        // A clean salaried year behind it, so the estimate is the portfolio
+        // term and the benefit alone.
+        let prior = YearMagi {
+            total: 150_000.0,
+            wages: 150_000.0,
+        };
+        let target = MagiTarget {
+            healthcare: &healthcare,
+            retirement_age: 62,
+            filing_status: FilingStatus::Single,
+            household_size: 1,
+            committed_magi: 0.0,
+        };
+        let estimate = |target: Option<MagiTarget<'_>>| {
+            estimated_retirement_magi(prior, 153_000.0, 30_000.0, &accounts, 62, 0.5, target)
+        };
+
+        let cliff = federal_poverty_level(1) * 4.0;
+        // Spending this far above the benefit reaches the pre-tax bucket, which
+        // is the only leg the ceiling can act on.
+        assert!(estimate(None) > cliff);
+        let capped = estimate(Some(target));
+        assert!(capped <= cliff && cliff - capped <= 1.0);
+        assert!(expected_premium_contribution(capped, 1).is_some());
+    }
+
+    /// Only the retirement discontinuity is corrected. Once the salary is
+    /// already gone, last year's MAGI is a fair reading of this year's, and
+    /// adding a projected draw on top of it would count the portfolio twice.
+    ///
+    /// Later years still move — a cheaper first year draws less, which changes
+    /// every figure after it — so the invariant is the rule, not the number:
+    /// each of those years is priced on the MAGI the year before it reported.
+    #[test]
+    fn later_retirement_years_are_still_priced_on_the_year_before_them() {
+        let plan = early_retirement_plan();
+        let healthcare = &plan.profile.retirement_healthcare;
+        let list = healthcare.pre_medicare_premium;
+        let projections = project_scenario(
+            &plan,
+            ProjectionConfig {
+                seed: 11,
+                use_historical_bootstrap: true,
+                block_size: 3,
+            },
+        )
+        .expect("projection succeeds")
+        .projections;
+
+        let reported_magi = |year: &PathProjection| {
+            year.income
+                + year.withdrawal_traditional
+                + year.roth_conversion
+                + year.withdrawal_taxable * plan.assumptions.taxable_gain_ratio
+        };
+
+        let mut checked = 0;
+        for pair in projections.windows(2) {
+            let (prior, year) = (&pair[0], &pair[1]);
+            if !prior.is_retired || year.age >= MEDICARE_AGE || year.insufficient_funds {
+                continue;
+            }
+            let premium = expected_premium_contribution(reported_magi(prior), 1)
+                .map_or(list, |expected| expected.min(list).max(0.0));
+            assert!(
+                (year.healthcare_cost - (premium + healthcare.out_of_pocket)).abs() < 1.0,
+                "age {} was not priced on the {} its prior year reported",
+                year.age,
+                reported_magi(prior),
+            );
+            checked += 1;
+        }
+        assert!(checked >= 5, "only {checked} years were exercised");
     }
 
     #[test]

@@ -1,6 +1,19 @@
-import type { FilingStatus, RetirementHealthcare } from '@/domain/types';
+import type { Account, FilingStatus, RetirementHealthcare } from '@/domain/types';
 import { MEDICARE_AGE } from '@/domain/constants';
-import { expectedPremiumContribution, irmaaAnnualSurcharge } from '@/data/healthcare-premiums';
+import {
+  expectedPremiumContribution,
+  federalPovertyLevel,
+  irmaaAnnualSurcharge,
+  irmaaFreeMagiCeiling,
+  SUBSIDY_CLIFF_FPL_RATIO,
+} from '@/data/healthcare-premiums';
+
+/**
+ * How far short of a threshold the estimate aims. Mirrors `CEILING_MARGIN` in
+ * the Rust engine: both tests are cliffs, and aiming at one exactly leaves the
+ * result a rounding error away from losing everything it was aiming for.
+ */
+const CEILING_MARGIN = 1;
 
 /**
  * What the household's income makes of its premium. Absent, the entered
@@ -77,4 +90,53 @@ function incomeTestedPremium(
   const expected = expectedPremiumContribution(test.priorYearMagi, test.householdSize);
   if (expected == null) return listPremium;
   return Math.max(0, Math.min(listPremium, expected));
+}
+
+/**
+ * What a household would report to the marketplace for its first retirement
+ * year, in place of a prior-year MAGI that still counts the salary it just
+ * stopped earning.
+ *
+ * The engine builds this same figure from the year's modeled state; here there
+ * is only the plan, so the salary is taken to be gone and the estimate is the
+ * income this year's own spending will realize. Mirrors
+ * `estimated_retirement_magi` in the Rust engine and changes with it — a
+ * divergence shows up as a preview that promises a premium the projection does
+ * not charge.
+ *
+ * `plannedSpending` is everything the year has to fund except the premium
+ * itself, which is the figure being estimated for.
+ */
+export function estimatedFirstRetirementYearMagi(
+  age: number,
+  filingStatus: FilingStatus,
+  plannedSpending: number,
+  socialSecurityBenefit: number,
+  accounts: Account[],
+  taxableGainRatio: number,
+  magiAware: boolean,
+): number {
+  const balanceOf = (type: Account['type']) => accounts
+    .filter((account) => account.type === type)
+    .reduce((total, account) => total + account.balance, 0);
+
+  let remaining = Math.max(0, plannedSpending - socialSecurityBenefit);
+  const taxable = Math.min(remaining, balanceOf('Taxable'));
+  remaining -= taxable;
+
+  const gain = taxable * taxableGainRatio;
+  // Which ceiling binds flips at 64, exactly as `magi_band_for` has it: below
+  // that it is next year's subsidy cliff, and from 64 on the household is
+  // already on Medicare by the time a credit could apply, leaving the IRMAA
+  // threshold. Roth absorbs whatever Traditional cannot report, which is why
+  // the estimate can land inside the band rather than over it.
+  const ceiling = age + 1 < MEDICARE_AGE
+    ? federalPovertyLevel(1) * SUBSIDY_CLIFF_FPL_RATIO
+    : irmaaFreeMagiCeiling(filingStatus);
+  const headroom = magiAware
+    ? Math.max(0, ceiling - CEILING_MARGIN - gain - socialSecurityBenefit)
+    : Infinity;
+  const traditional = Math.min(remaining, balanceOf('Traditional'), headroom);
+
+  return socialSecurityBenefit + gain + traditional;
 }

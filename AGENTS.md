@@ -24,9 +24,11 @@ or local (Web Worker).
 - Generation counters prevent stale simulation results from overwriting newer ones
 
 ### Simulation
-- **Two engines, one set of semantics**: scenario sweeps, seeds, and the
-  historical dataset are defined once (`services/simulation.ts`,
-  `data/market-history-annual.ts`) and shared by both engines
+- **One projection, two hosts**: `projection.rs` is the only projection. The
+  native service runs it directly and the browser runs the same code compiled
+  to WebAssembly, so there is no second implementation to keep in step. Scenario
+  sweeps, seeds, and the historical dataset are defined once
+  (`services/simulation.ts`, `data/market-history-annual.ts`)
 - **One root seed**: every plan has a seed (default `42`); main and sensitivity
   path `i` both use `seed + pathIndex`. There is no random-per-run mode.
 - **Canonical dataset**: `data/market-history-annual.ts` (1928–2025, Damodaran
@@ -49,14 +51,15 @@ or local (Web Worker).
   same type cannot change a projection
 - **Success/risk-of-ruin**: a path fails if any modeled year — working or
   retirement — cannot be funded even after drawing down the portfolio, not just
-  on terminal wealth. Both engines use this definition
+  on terminal wealth
 
 ### Key Files
 - `apps/web/src/state/usePlan.ts` — Zustand store, data modes, simulation orchestration
-- `apps/web/src/engine/projection.ts` — Single-path retirement projection (TS)
-- `apps/web/src/workers/mc.worker.ts` — Client Monte Carlo engine + aggregation
+- `apps/web/src/engine/mc.ts` — Comlink loader for the Worker
+- `apps/web/src/workers/mc.worker.ts` — Worker host; calls into the Wasm build
+- `apps/web/src/domain/healthcare.ts` — Profile-page preview only, not the engine
 - `apps/web/src/services/simulation.ts` — Shared scenario builders, engine routing
-- `rust-simulation-service/src/simulation/projection.rs` — Rust projection engine
+- `rust-simulation-service/src/simulation/projection.rs` — The projection engine
 
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.

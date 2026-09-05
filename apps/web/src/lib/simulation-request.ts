@@ -46,7 +46,12 @@ const legacySimulationPlanSchema = z
     profile: legacySimulationProfileSchema,
     accounts: z.array(simulationAccountSchema),
     socialSecurity: socialSecuritySettingsSchema,
-    assumptions: projectionSettingsSchema,
+    // An older bundle sends no MAGI-aware flag, and defaulting it on would
+    // hand that bundle behavior it was not built against. Below schema 8 the
+    // engine leaves the premium estimate off too, so the pair stays coherent.
+    assumptions: projectionSettingsSchema.extend({
+      magiAwareWithdrawals: z.boolean().default(false),
+    }),
   })
   .transform((plan) => ({
     ...plan,

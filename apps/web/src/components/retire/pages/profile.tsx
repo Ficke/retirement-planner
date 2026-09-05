@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 
 import { usePlan } from "@/state/usePlan";
 import { ageOn, retirementSpendingOf } from "@/domain/age";
-import { healthcareCostFor } from "@/domain/healthcare";
+import { estimatedFirstRetirementYearMagi, healthcareCostFor } from "@/domain/healthcare";
 import type { FilingStatus, State } from "@/domain/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,10 +68,34 @@ export function PageProfile() {
   // An already-retired plan's first modeled year is the as-of year, so it is
   // priced at today's age rather than at the retirement age it passed already.
   const firstRetirementAge = Math.max(age, p.retirementAge);
+  const yearsToRetirement = Math.max(0, p.retirementAge - age);
+  // The engine prices the first retirement year on an estimate of that year's
+  // own income rather than on the salary that stopped, so the preview does too
+  // — otherwise it promises a premium the projection will not charge.
+  //
+  // A plan already past its retirement age is the exception. Its first modeled
+  // year is the as-of year, which has no prior year for the engine to build an
+  // estimate from, so the engine charges the list premium and the preview has
+  // to say the same.
+  const firstYearGrowth = (1 + p.retirementHealthcare.realGrowthRate) ** yearsToRetirement;
+  const firstYearIncomeTest = age >= p.retirementAge ? undefined : {
+    priorYearMagi: estimatedFirstRetirementYearMagi(
+      firstRetirementAge,
+      p.filingStatus,
+      retirementSpending + p.retirementHealthcare.outOfPocket * firstYearGrowth,
+      0,
+      plan.accounts,
+      plan.assumptions.taxableGainRatio,
+      plan.assumptions.magiAwareWithdrawals,
+    ),
+    filingStatus: p.filingStatus,
+    householdSize: 1,
+  };
   const firstYearHealthcare = healthcareCostFor(
     p.retirementHealthcare,
     firstRetirementAge,
-    Math.max(0, p.retirementAge - age),
+    yearsToRetirement,
+    firstYearIncomeTest,
   ).total;
   // The engine funds healthcare on top of the spending target, so a preview
   // that showed the target alone would understate what the plan has to cover.
