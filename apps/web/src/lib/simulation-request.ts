@@ -107,9 +107,9 @@ export const SIMULATION_RATE_LIMIT = {
 
 /** Per-instance backstop, exact only within one Cloud Run container. */
 export const SIMULATION_PATH_RATE_LIMIT = {
-  // A complete Plan refresh costs at most 36,000 paths: 5,000 main paths plus
-  // the widest sweep the levers can produce, 31 scenarios at 1,000 paths each.
-  // This budget permits 55 complete refreshes per minute, leaving headroom for
+  // A complete Plan refresh costs at most 35,000 paths: 5,000 main paths plus
+  // the widest sweep the levers can produce, 30 scenarios at 1,000 paths each.
+  // This budget permits 57 complete refreshes per minute, leaving headroom for
   // debounced edits while bounding sustained automation.
   limit: 2_000_000,
   windowMs: 60 * 1000,

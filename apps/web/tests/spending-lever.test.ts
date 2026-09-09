@@ -40,7 +40,7 @@ function drag(spending: number, fraction: number): number {
 
 describe('Spending lever range', () => {
   it('does not move when spending does, so one track position means one number', () => {
-    const ranges = [0, 40_000, 80_000, 200_000, 260_000].map(
+    const ranges = [80_000, 100_000, 160_000, 200_000, 260_000].map(
       (spending) => leverRange('spending', plan({ spending })),
     );
     ranges.forEach((range) => {
@@ -50,9 +50,10 @@ describe('Spending lever range', () => {
 
   it('sizes itself from income and balances', () => {
     // 150k salary + 4% of 500k, half again over: the axis runs to 260k.
-    expect(leverRange('spending', plan({ spending: 80_000 })).max).toBe(260_000);
-    expect(leverRange('spending', plan({ spending: 80_000, balance: 2_000_000 })).max)
-      .toBe(360_000);
+    expect(leverRange('spending', plan({ spending: 80_000 })))
+      .toMatchObject({ min: 80_000, max: 260_000 });
+    expect(leverRange('spending', plan({ spending: 140_000, balance: 2_000_000 })))
+      .toMatchObject({ min: 120_000, max: 360_000 });
   });
 
   it('settles after one move rather than climbing with each repeat', () => {
@@ -88,7 +89,8 @@ describe('Spending lever range', () => {
     expect(moved).not.toBe(start);
     expect(leverRange('spending', plan({ spending: moved })).max)
       .toBe(leverRange('spending', plan({ spending: start })).max);
-    expect(drag(moved, start / leverRange('spending', plan({ spending: moved })).max))
+    const { min, max } = leverRange('spending', plan({ spending: moved }));
+    expect(drag(moved, (start - min) / (max - min)))
       .toBe(start);
   });
 
@@ -98,9 +100,9 @@ describe('Spending lever range', () => {
     expect(spending).toBe(520_000);
   });
 
-  it('keeps a frugal plan off the left edge', () => {
+  it('expands to include a frugal plan without adding zero', () => {
     const { min, max } = leverRange('spending', plan({ spending: 30_000 }));
-    expect(min).toBe(0);
+    expect(min).toBe(20_000);
     expect(30_000).toBeGreaterThan(min);
     expect(30_000).toBeLessThan(max);
   });
@@ -110,10 +112,41 @@ describe('Spending lever range', () => {
     expect(max).toBeGreaterThan(min);
   });
 
-  it('sweeps the axis it plots, including the plan\'s own spending', () => {
+  it('keeps the plotted samples fixed when the selected spending changes', () => {
+    const first = leverRange('spending', plan({
+      spending: 58_000,
+      salary: 75_000,
+      balance: 150_000,
+    }));
+    const second = leverRange('spending', plan({
+      spending: 66_000,
+      salary: 75_000,
+      balance: 150_000,
+    }));
+
+    expect(first.sweepValues).toEqual(second.sweepValues);
+    expect(first.sweepValues).not.toContain(58_000);
+    expect(second.sweepValues).not.toContain(66_000);
+  });
+
+  it('uses the full ten-thousand-dollar resolution for a typical salary band', () => {
+    const range = leverRange('spending', plan({
+      spending: 58_000,
+      salary: 75_000,
+      balance: 150_000,
+    }));
+
+    expect([range.min, range.max]).toEqual([40_000, 140_000]);
+    expect(range.sweepValues).toEqual([
+      40_000, 50_000, 60_000, 70_000, 80_000,
+      90_000, 100_000, 110_000, 120_000, 130_000, 140_000,
+    ]);
+  });
+
+  it('sweeps the full visible spending axis', () => {
     const { min, max, sweepValues } = leverRange('spending', plan({ spending: 80_000 }));
     expect(sweepValues[0]).toBe(min);
+    expect(sweepValues.at(-1)).toBe(max);
     expect(sweepValues.every((value) => value >= min && value <= max)).toBe(true);
-    expect(sweepValues).toContain(80_000);
   });
 });

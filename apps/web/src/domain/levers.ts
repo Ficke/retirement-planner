@@ -71,27 +71,27 @@ interface LeverSpec {
   maxTicks: number;
   maxSweepValues: number;
   value: (plan: RetirementPlan) => number;
+  /** Whether the selected value is also part of the plotted line. */
+  includeCurrentInSweep?: boolean;
   /** Hard limits the range may never grow past, however extreme the plan value. */
   bounds: (plan: RetirementPlan) => [number, number];
 }
 
 /**
- * What a household with no income and no savings falls back to, so an empty
- * plan still gets a band rather than a point. Deliberately small: every plan
- * with real income or savings sizes its own, and a floor above that only widens
- * the axis into territory the household will never reach.
+ * The fallback scale for a household with no income or savings. Real plans use
+ * salary and balances to place both ends of their comparison window.
  */
 const MIN_SPENDING_BAND = 20_000;
 
 const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) * tick;
 
 /**
- * The top of the spending axis. One band is half again what the household could
- * spend today -- everything it earns, plus a safe draw on what it holds -- and
- * the axis runs in whole bands, taking as many as it needs to reach a plan that
- * already spends more.
+ * The spending comparison window. It runs from roughly half to half again what
+ * the household could spend today -- everything it earns, plus a safe draw on
+ * what it holds. The upper edge uses whole bands when it needs to reach a plan
+ * that already spends more.
  *
- * The band itself never reads spending, and the count of them is a step
+ * The base band never reads spending, and the count of upper bands is a step
  * function of it, so the axis holds still while the lever moves. That is the
  * whole point: an axis sized from spending directly re-centers on every move,
  * so one screen position maps to a larger number each time and the lever walks
@@ -99,11 +99,17 @@ const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) *
  * whole band has the mirror defect -- the track shrinks under every leftward
  * drag, and a value the lever just left falls off the end.
  */
-function spendingAxisTop(plan: RetirementPlan): number {
+function spendingAxisRange(plan: RetirementPlan): [number, number] {
   const balances = plan.accounts.reduce((total, account) => total + account.balance, 0);
   const affordable = plan.profile.currentSalary + 0.04 * balances;
-  const band = roundUpToTick(Math.max(affordable, MIN_SPENDING_BAND) * 1.5, 20_000);
-  return band * Math.max(1, Math.ceil(plan.profile.currentSpending / band));
+  const anchor = Math.max(affordable, MIN_SPENDING_BAND);
+  const bottom = Math.max(
+    MIN_SPENDING_BAND,
+    Math.round((anchor * 0.5) / 20_000) * 20_000,
+  );
+  const bandTop = roundUpToTick(anchor * 1.5, 20_000);
+  const top = bandTop * Math.max(1, Math.ceil(plan.profile.currentSpending / bandTop));
+  return [bottom, top];
 }
 
 const SPECS: Record<LeverKey, LeverSpec> = {
@@ -119,9 +125,7 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     bounds: (plan) => [MIN_RETIREMENT_AGE, Math.min(100, plan.profile.lifeExpectancy - 1)],
   },
   spending: {
-    // From zero, so a frugal household's handle has somewhere to sit without
-    // the band having to follow it down.
-    base: (plan) => [0, spendingAxisTop(plan)],
+    base: spendingAxisRange,
     step: 1_000,
     tickStep: 20_000,
     sweepStep: 10_000,
@@ -133,6 +137,10 @@ const SPECS: Record<LeverKey, LeverSpec> = {
     // `simulation-service` holds that bound.
     maxSweepValues: 14,
     value: (plan) => plan.profile.currentSpending,
+    // The selected plan is rendered separately from the headline result. If it
+    // joined the line, every drag would replace one sample and change the
+    // piecewise-linear curve even though its fixed comparison points did not.
+    includeCurrentInSweep: false,
     // Every sweep value is validated against the plan schema, so the axis may
     // never resolve past what that schema accepts. The band above is what
     // sizes it.
@@ -175,8 +183,8 @@ export function leverRange(key: LeverKey, plan: RetirementPlan): LeverRange {
   const [baseLow, baseHigh] = spec.base(plan);
   const current = spec.value(plan);
 
-  // A plan value outside the standard band still needs a marker on the curve,
-  // so the range grows to a round multiple that contains it.
+  // A plan value outside the standard band still needs to remain reachable, so
+  // the range grows to a round multiple that contains it.
   const min = Math.max(
     lowBound,
     Math.min(baseLow, Math.floor(current / spec.tickStep) * spec.tickStep),
@@ -187,7 +195,9 @@ export function leverRange(key: LeverKey, plan: RetirementPlan): LeverRange {
   ));
 
   const sweepValues = multiplesWithin(min, max, spec.sweepStep, spec.maxSweepValues);
-  if (current >= min && current <= max) sweepValues.push(current);
+  if (spec.includeCurrentInSweep !== false && current >= min && current <= max) {
+    sweepValues.push(current);
+  }
 
   return {
     min,
