@@ -63,7 +63,6 @@ function LeverCard({
   xTooltipFormat,
   note,
   isCalculating,
-  exactMarkerY,
 }: {
   lever: LeverKey;
   label: string;
@@ -75,26 +74,11 @@ function LeverCard({
   xTooltipFormat: (v: number) => string;
   note?: string;
   isCalculating?: boolean;
-  exactMarkerY?: number;
 }) {
   const plan = usePlan((s) => s.plan);
   const { min, max, step, ticks } = leverRange(lever, plan);
   const xDomain: [number, number] = [min, max];
   const inRange = points.length > 0 && value >= min && value <= max;
-
-  let markerY: number | null = exactMarkerY ?? null;
-  if (inRange && markerY == null) {
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i];
-      const b = points[i + 1];
-      if (value >= a.x && value <= b.x) {
-        const t = (value - a.x) / (b.x - a.x || 1);
-        markerY = a.y + t * (b.y - a.y);
-        break;
-      }
-    }
-    if (markerY == null) markerY = points[points.length - 1].y;
-  }
 
   return (
     <div className="border-border/70 flex flex-col gap-3 rounded-lg border p-4">
@@ -120,7 +104,7 @@ function LeverCard({
         )}>
           <SensitivityChart
             points={points}
-            marker={inRange && markerY != null ? { x: value, y: markerY } : undefined}
+            markerX={inRange ? value : undefined}
             xLabel={label}
             xDomain={xDomain}
             xTicks={ticks}
@@ -234,7 +218,6 @@ export function PagePlan() {
           onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
           points={spendPts}
           isCalculating={sensitivityPending}
-          exactMarkerY={resultPlan === plan ? result?.successProbability : undefined}
           xFormat={(v) => fmtCurrency(v, true)}
           xTooltipFormat={(v) => `Annual spending: ${fmtCurrency(v)}`}
         />
