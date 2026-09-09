@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { interpolateSensitivityY } from '@/components/ui/charts/sensitivity-chart';
 import { leverRange } from '@/domain/levers';
 import { createTestProjectionSettings } from './test-helpers';
 import type { Account, RetirementPlan } from '@/domain/types';
@@ -39,6 +40,15 @@ function drag(spending: number, fraction: number): number {
 }
 
 describe('Spending lever range', () => {
+  it('places the current-value marker on the displayed sensitivity line', () => {
+    const points = [
+      { x: 60_000, y: 0.45 },
+      { x: 70_000, y: 0.04 },
+    ];
+
+    expect(interpolateSensitivityY(points, 64_000)).toBeCloseTo(0.286);
+  });
+
   it('does not move when spending does, so one track position means one number', () => {
     const ranges = [80_000, 100_000, 160_000, 200_000, 260_000].map(
       (spending) => leverRange('spending', plan({ spending })),

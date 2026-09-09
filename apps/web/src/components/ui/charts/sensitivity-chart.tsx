@@ -22,9 +22,26 @@ const config = {
   y: { label: "Success", color: "var(--color-success)" },
 } as const;
 
+export function interpolateSensitivityY(
+  points: { x: number; y: number }[],
+  x: number,
+): number | null {
+  for (let i = 0; i < points.length - 1; i++) {
+    const start = points[i];
+    const end = points[i + 1];
+    if (x >= start.x && x <= end.x) {
+      const position = (x - start.x) / (end.x - start.x || 1);
+      return start.y + position * (end.y - start.y);
+    }
+  }
+
+  const lastPoint = points.at(-1);
+  return lastPoint?.x === x ? lastPoint.y : null;
+}
+
 export function SensitivityChart({
   points,
-  marker,
+  markerX,
   xLabel,
   xDomain,
   xTicks,
@@ -33,7 +50,7 @@ export function SensitivityChart({
   height = 200,
 }: {
   points: { x: number; y: number }[];
-  marker?: { x: number; y: number };
+  markerX?: number;
   xLabel?: string;
   xDomain: [number, number];
   xTicks: number[];
@@ -52,6 +69,9 @@ export function SensitivityChart({
       .map((point) => ({ ...point, y: Math.max(0, Math.min(1, point.y)) })),
     [points, xDomain],
   );
+  const markerY = markerX == null
+    ? null
+    : interpolateSensitivityY(visiblePoints, markerX);
 
   if (visiblePoints.length === 0) {
     return (
@@ -117,10 +137,10 @@ export function SensitivityChart({
           }}
           isAnimationActive={false}
         />
-        {marker && (
+        {markerX != null && markerY != null && (
           <ReferenceDot
-            x={marker.x}
-            y={marker.y}
+            x={markerX}
+            y={markerY}
             r={5}
             fill="var(--color-success)"
             stroke="var(--color-card)"
