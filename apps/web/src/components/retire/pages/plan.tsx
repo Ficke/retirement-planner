@@ -63,7 +63,6 @@ function LeverCard({
   xTooltipFormat,
   note,
   isCalculating,
-  exactMarkerY,
 }: {
   lever: LeverKey;
   label: string;
@@ -75,15 +74,14 @@ function LeverCard({
   xTooltipFormat: (v: number) => string;
   note?: string;
   isCalculating?: boolean;
-  exactMarkerY?: number;
 }) {
   const plan = usePlan((s) => s.plan);
   const { min, max, step, ticks } = leverRange(lever, plan);
   const xDomain: [number, number] = [min, max];
   const inRange = points.length > 0 && value >= min && value <= max;
 
-  let markerY: number | null = exactMarkerY ?? null;
-  if (inRange && markerY == null) {
+  let markerY: number | null = null;
+  if (inRange) {
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
@@ -234,7 +232,6 @@ export function PagePlan() {
           onChange={(v) => updatePlan({ profile: { currentSpending: v } })}
           points={spendPts}
           isCalculating={sensitivityPending}
-          exactMarkerY={resultPlan === plan ? result?.successProbability : undefined}
           xFormat={(v) => fmtCurrency(v, true)}
           xTooltipFormat={(v) => `Annual spending: ${fmtCurrency(v)}`}
         />
