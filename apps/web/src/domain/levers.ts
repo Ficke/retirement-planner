@@ -77,19 +77,15 @@ interface LeverSpec {
   bounds: (plan: RetirementPlan) => [number, number];
 }
 
-/**
- * The fallback scale for a household with no income or savings. Real plans use
- * salary and balances to place both ends of their comparison window.
- */
 const MIN_SPENDING_BAND = 20_000;
 
 const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) * tick;
 
 /**
- * The spending comparison window. It runs from roughly half to half again what
- * the household could spend today -- everything it earns, plus a safe draw on
- * what it holds. The upper edge uses whole bands when it needs to reach a plan
- * that already spends more.
+ * The spending comparison window runs from roughly one quarter to four fifths
+ * of gross salary. That leaves room for taxes and saving while showing both a
+ * lean and a generous lifestyle at every income level. A minimum band keeps
+ * the slider useful for households with little or no salary.
  *
  * The base band never reads spending, and the count of upper bands is a step
  * function of it, so the axis holds still while the lever moves. That is the
@@ -100,14 +96,15 @@ const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) *
  * drag, and a value the lever just left falls off the end.
  */
 function spendingAxisRange(plan: RetirementPlan): [number, number] {
-  const balances = plan.accounts.reduce((total, account) => total + account.balance, 0);
-  const affordable = plan.profile.currentSalary + 0.04 * balances;
-  const anchor = Math.max(affordable, MIN_SPENDING_BAND);
+  const salary = Math.max(plan.profile.currentSalary, MIN_SPENDING_BAND);
   const bottom = Math.max(
     MIN_SPENDING_BAND,
-    Math.round((anchor * 0.5) / 20_000) * 20_000,
+    Math.round((salary * 0.25) / 20_000) * 20_000,
   );
-  const bandTop = roundUpToTick(anchor * 1.5, 20_000);
+  const bandTop = Math.max(
+    bottom + MIN_SPENDING_BAND,
+    roundUpToTick(salary * 0.8, 20_000),
+  );
   const top = bandTop * Math.max(1, Math.ceil(plan.profile.currentSpending / bandTop));
   return [bottom, top];
 }
