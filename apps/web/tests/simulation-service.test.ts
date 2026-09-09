@@ -117,14 +117,11 @@ describe('SimulationService (Pure)', () => {
   });
 
   it('sweeps the same spending levels whatever the plan spends', async () => {
-    // The band comes from income and balances, so moving the spending lever
-    // cannot move the axis it is plotted against.
-    const grid = [
-      40_000, 50_000, 60_000,
-      70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
-    ];
+    // The band comes from salary, so moving within it cannot move the axis the
+    // spending lever is plotted against.
+    const grid = [20_000, 30_000, 40_000, 50_000, 60_000];
 
-    for (const currentSpending of [20_000, 50_000, 100_000]) {
+    for (const currentSpending of [20_000, 40_000, 60_000]) {
       const result = await service.runSpendingAnalysis({
         ...mockPlan,
         profile: { ...mockPlan.profile, currentSpending },
@@ -143,19 +140,18 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      40_000, 50_000, 60_000, 70_000, 80_000, 90_000,
-      100_000, 110_000, 120_000,
+      20_000, 30_000, 40_000, 50_000, 60_000, 70_000,
+      80_000, 90_000, 100_000, 110_000, 120_000,
     ]);
   });
 
   it('stops the sweep short of what a household could never outspend', async () => {
-    // A $75k salary and no balances cannot fund much past its own income, so
-    // the band stops rather than plotting a shelf of guaranteed failures. The
-    // ceiling lands on the next $20k tick above half again that income.
+    // The normal ceiling is 80% of salary, rounded to the next $20k tick, so
+    // the chart does not plot a shelf of implausible spending levels.
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(Math.max(...result.map((r) => r.annualSpending))).toBeLessThanOrEqual(
-      mockPlan.profile.currentSalary * 1.5 + 20_000,
+      mockPlan.profile.currentSalary * 0.8 + 20_000,
     );
   });
 
@@ -262,7 +258,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(5);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'
@@ -288,9 +284,7 @@ describe('SimulationService (Pure)', () => {
       profile: {
         ...mockPlan.profile,
         retirementAge: 76,
-        // A $170k income puts the spending axis at its widest: a $260k ceiling
-        // is exactly fourteen $20k steps, and $65.5k sits off that grid and
-        // adds itself as a fifteenth.
+        // A $170k salary yields an eleven-point $40k–$140k spending grid.
         currentSalary: 170_000,
         currentSpending: 65_500,
       },

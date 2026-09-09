@@ -50,7 +50,7 @@ describe('Spending lever range', () => {
   });
 
   it('does not move when spending does, so one track position means one number', () => {
-    const ranges = [80_000, 100_000, 160_000, 200_000, 260_000].map(
+    const ranges = [40_000, 60_000, 80_000, 100_000, 120_000].map(
       (spending) => leverRange('spending', plan({ spending })),
     );
     ranges.forEach((range) => {
@@ -58,12 +58,20 @@ describe('Spending lever range', () => {
     });
   });
 
-  it('sizes itself from income and balances', () => {
-    // 150k salary + 4% of 500k, half again over: the axis runs to 260k.
+  it('sizes itself from salary across income levels', () => {
     expect(leverRange('spending', plan({ spending: 80_000 })))
-      .toMatchObject({ min: 80_000, max: 260_000 });
-    expect(leverRange('spending', plan({ spending: 140_000, balance: 2_000_000 })))
-      .toMatchObject({ min: 120_000, max: 360_000 });
+      .toMatchObject({ min: 40_000, max: 120_000 });
+    expect(leverRange('spending', plan({ spending: 30_000, salary: 40_000 })))
+      .toMatchObject({ min: 20_000, max: 40_000 });
+    expect(leverRange('spending', plan({ spending: 250_000, salary: 500_000 })))
+      .toMatchObject({ min: 120_000, max: 400_000 });
+  });
+
+  it('does not widen the spending range for a larger portfolio', () => {
+    const base = leverRange('spending', plan({ spending: 80_000, balance: 0 }));
+    const wealthy = leverRange('spending', plan({ spending: 80_000, balance: 2_000_000 }));
+
+    expect([wealthy.min, wealthy.max]).toEqual([base.min, base.max]);
   });
 
   it('settles after one move rather than climbing with each repeat', () => {
@@ -79,15 +87,15 @@ describe('Spending lever range', () => {
   it('caps a handle dragged to the far right instead of pushing the ceiling up', () => {
     let spending = 80_000;
     for (let i = 0; i < 20; i++) spending = drag(spending, 1);
-    expect(spending).toBe(260_000);
+    expect(spending).toBe(120_000);
   });
 
   it('reaches a plan spending past the ceiling, in whole multiples of it', () => {
-    // The ceiling is 260k, so a 400k plan gets two bands rather than an axis
+    // The ceiling is 120k, so a 400k plan gets four bands rather than an axis
     // that stops on the handle.
-    expect(leverRange('spending', plan({ spending: 400_000 })).max).toBe(520_000);
-    expect(leverRange('spending', plan({ spending: 520_000 })).max).toBe(520_000);
-    expect(leverRange('spending', plan({ spending: 600_000 })).max).toBe(780_000);
+    expect(leverRange('spending', plan({ spending: 400_000 })).max).toBe(480_000);
+    expect(leverRange('spending', plan({ spending: 480_000 })).max).toBe(480_000);
+    expect(leverRange('spending', plan({ spending: 600_000 })).max).toBe(600_000);
   });
 
   it('lets an over-ceiling plan return to a value the lever just left', () => {
@@ -107,7 +115,7 @@ describe('Spending lever range', () => {
   it('stops climbing at the top of an over-ceiling band', () => {
     let spending = 400_000;
     for (let i = 0; i < 20; i++) spending = drag(spending, 1);
-    expect(spending).toBe(520_000);
+    expect(spending).toBe(480_000);
   });
 
   it('expands to include a frugal plan without adding zero', () => {
@@ -129,14 +137,14 @@ describe('Spending lever range', () => {
       balance: 150_000,
     }));
     const second = leverRange('spending', plan({
-      spending: 66_000,
+      spending: 48_000,
       salary: 75_000,
       balance: 150_000,
     }));
 
     expect(first.sweepValues).toEqual(second.sweepValues);
     expect(first.sweepValues).not.toContain(58_000);
-    expect(second.sweepValues).not.toContain(66_000);
+    expect(second.sweepValues).not.toContain(48_000);
   });
 
   it('uses the full ten-thousand-dollar resolution for a typical salary band', () => {
@@ -146,10 +154,9 @@ describe('Spending lever range', () => {
       balance: 150_000,
     }));
 
-    expect([range.min, range.max]).toEqual([40_000, 140_000]);
+    expect([range.min, range.max]).toEqual([20_000, 60_000]);
     expect(range.sweepValues).toEqual([
-      40_000, 50_000, 60_000, 70_000, 80_000,
-      90_000, 100_000, 110_000, 120_000, 130_000, 140_000,
+      20_000, 30_000, 40_000, 50_000, 60_000,
     ]);
   });
 
