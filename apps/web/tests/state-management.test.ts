@@ -200,6 +200,90 @@ describe('cloud compute gating', () => {
   });
 });
 
+describe('signed-out account persistence', () => {
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: (key) => values.get(key) ?? null,
+      key: (index) => [...values.keys()][index] ?? null,
+      removeItem: (key) => { values.delete(key); },
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: storage });
+    usePlan.setState({
+      authUser: null,
+      cloudAccountReady: false,
+      cloudAvailable: false,
+      cloudSyncEnabled: true,
+      localPlanOrigin: 'starter',
+      localPersistenceAvailable: true,
+      error: null,
+    });
+  });
+
+  it('materializes the starter plan and edits it from the in-memory source of truth', async () => {
+    await usePlan.getState().bootstrap(null, false);
+
+    const storedStarter = JSON.parse(
+      window.localStorage.getItem('retireplan:accounts:anonymous')!,
+    );
+    expect(storedStarter.origin).toBe('starter');
+    expect(storedStarter.accounts).toHaveLength(3);
+
+    await usePlan.getState().updateAccount('starter-brokerage', { balance: 125_000 });
+
+    expect(usePlan.getState().plan.accounts).toHaveLength(3);
+    expect(usePlan.getState().plan.accounts.find(({ id }) => id === 'starter-brokerage')?.balance)
+      .toBe(125_000);
+    expect(usePlan.getState().localPlanOrigin).toBe('user');
+
+    await usePlan.getState().bootstrap(null, false);
+    expect(usePlan.getState().plan.accounts).toHaveLength(3);
+    expect(usePlan.getState().plan.accounts.find(({ id }) => id === 'starter-brokerage')?.balance)
+      .toBe(125_000);
+  });
+
+  it('adds to the current guest plan and preserves an intentionally empty plan', async () => {
+    await usePlan.getState().bootstrap(null, false);
+    await usePlan.getState().createAccount({
+      name: 'HSA',
+      institution: '',
+      type: 'HSA',
+      balance: 10_000,
+      stocksPct: 0.8,
+      bondsPct: 0.2,
+    });
+    expect(usePlan.getState().plan.accounts).toHaveLength(4);
+
+    for (const account of [...usePlan.getState().plan.accounts]) {
+      await usePlan.getState().deleteAccount(account.id);
+    }
+    expect(usePlan.getState().plan.accounts).toEqual([]);
+
+    await usePlan.getState().bootstrap(null, false);
+    expect(usePlan.getState().plan.accounts).toEqual([]);
+    expect(usePlan.getState().localPlanOrigin).toBe('user');
+  });
+
+  it('keeps guest edits in memory when browser storage is unavailable', async () => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => { throw new Error('Storage blocked'); },
+    });
+
+    await usePlan.getState().bootstrap(null, false);
+    await usePlan.getState().updateAccount('starter-brokerage', { balance: 200_000 });
+
+    expect(usePlan.getState().plan.accounts).toHaveLength(3);
+    expect(usePlan.getState().plan.accounts.find(({ id }) => id === 'starter-brokerage')?.balance)
+      .toBe(200_000);
+    expect(usePlan.getState().localPersistenceAvailable).toBe(false);
+    expect(usePlan.getState().error).toContain('Changes will last only until this tab is closed');
+  });
+});
+
 describe('sensitivity scheduling', () => {
   const plan = usePlan.getState().plan;
   const readyState = {

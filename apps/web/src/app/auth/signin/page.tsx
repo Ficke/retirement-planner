@@ -57,7 +57,7 @@ export default function SignInPage() {
         <CardHeader>
           <CardTitle>Sign in</CardTitle>
           <CardDescription>
-            Sign in to sync your plan to your account and use it across devices
+            Use your synced account plan across devices. Your browser-only plan stays on this device.
           </CardDescription>
         </CardHeader>
         <CardContent>

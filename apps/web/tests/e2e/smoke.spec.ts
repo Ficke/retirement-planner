@@ -231,9 +231,31 @@ test('an account can be added locally and Plan remains reachable', async ({ page
   await page.getByRole('button', { name: 'Create account' }).click();
 
   await expect(page.getByText('Test Brokerage')).toBeVisible();
+  await expect(page.getByText('401(k)', { exact: true })).toBeVisible();
+  await expect(page.getByText('Roth IRA', { exact: true })).toBeVisible();
+  await expect(page.getByText('Brokerage', { exact: true })).toBeVisible();
 
   await navItem(page, 'Plan').click();
   await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible();
+});
+
+test('a starter account can be edited locally and survives reload', async ({ page }) => {
+  await gotoApp(page);
+  await navItem(page, 'Accounts').click();
+
+  await expect(page.getByText('Example accounts.', { exact: true })).toBeVisible();
+  const brokerageRow = page.getByRole('row').filter({ hasText: 'Brokerage' });
+  await brokerageRow.click();
+  await page.getByLabel('Balance').fill('125000');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+
+  await expect(page.getByText('Example accounts.', { exact: true })).toHaveCount(0);
+  await expect(brokerageRow).toContainText('$125,000');
+  await expect(page.getByText('401(k)', { exact: true })).toBeVisible();
+  await expect(page.getByText('Roth IRA', { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('row').filter({ hasText: 'Brokerage' })).toContainText('$125,000');
 });
 
 test('accounts survive a reload in local mode', async ({ page }) => {
