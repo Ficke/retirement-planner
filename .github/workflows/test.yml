@@ -142,6 +142,9 @@ jobs:
   e2e:
     name: E2E Smoke Tests
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --user 1001
     timeout-minutes: 20
 
     steps:
@@ -158,19 +161,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # Playwright downloads its own Chromium build. The runner's unrelated
-      # Chrome repository can be caught mid-publish and make apt reject its
-      # package index before Playwright installs the Ubuntu system libraries.
-      - name: Disable Google Chrome apt repository
-        run: |
-          chrome_source=/etc/apt/sources.list.d/google-chrome.list
-          if [[ -f "$chrome_source" ]]; then
-            sudo mv "$chrome_source" "$RUNNER_TEMP/google-chrome.list"
-          fi
-
-      - name: Install Playwright Chromium
-        run: pnpm -C apps/web exec playwright install --with-deps chromium
 
       - name: Run e2e tests
         run: pnpm -C apps/web exec playwright test --project=chromium
