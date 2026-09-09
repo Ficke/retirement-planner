@@ -119,7 +119,7 @@ describe('SimulationService (Pure)', () => {
   it('sweeps the same spending levels whatever the plan spends', async () => {
     // The band comes from salary, so moving within it cannot move the axis the
     // spending lever is plotted against.
-    const grid = [20_000, 30_000, 40_000, 50_000, 60_000];
+    const grid = [20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000];
 
     for (const currentSpending of [20_000, 40_000, 60_000]) {
       const result = await service.runSpendingAnalysis({
@@ -140,18 +140,18 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      20_000, 30_000, 40_000, 50_000, 60_000, 70_000,
-      80_000, 90_000, 100_000, 110_000, 120_000,
+      20_000, 40_000, 60_000, 80_000,
+      100_000, 120_000, 140_000, 160_000,
     ]);
   });
 
   it('stops the sweep short of what a household could never outspend', async () => {
-    // The normal ceiling is 80% of salary, rounded to the next $20k tick, so
-    // the chart does not plot a shelf of implausible spending levels.
+    // The normal ceiling is salary, rounded to the next $20k tick, so the
+    // chart reaches break-even spending without extending far beyond income.
     const result = await service.runSpendingAnalysis(mockPlan, false);
 
     expect(Math.max(...result.map((r) => r.annualSpending))).toBeLessThanOrEqual(
-      mockPlan.profile.currentSalary * 0.8 + 20_000,
+      mockPlan.profile.currentSalary + 20_000,
     );
   });
 
@@ -258,7 +258,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(7);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'
@@ -284,7 +284,7 @@ describe('SimulationService (Pure)', () => {
       profile: {
         ...mockPlan.profile,
         retirementAge: 76,
-        // A $170k salary yields an eleven-point $40k–$140k spending grid.
+        // A $170k salary yields an eight-point $40k–$180k spending grid.
         currentSalary: 170_000,
         currentSpending: 65_500,
       },
@@ -304,10 +304,10 @@ describe('SimulationService (Pure)', () => {
 
     // The spending curve stays on its fixed grid; the other three levers still
     // share the unchanged plan and are dispatched once.
-    expect(curvePoints).toBe(32);
-    expect(simulations).toHaveLength(30);
+    expect(curvePoints).toBe(29);
+    expect(simulations).toHaveLength(27);
     expect(simulations.length).toBeLessThanOrEqual(MAX_BATCH_SIMULATIONS);
-    expect(totalPaths).toBe(30_000);
+    expect(totalPaths).toBe(27_000);
     expect(totalPaths).toBeLessThanOrEqual(MAX_BATCH_TOTAL_PATHS);
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
   });

@@ -191,7 +191,7 @@ const defaultPlan: RetirementPlan = {
     filingStatus: 'Single',
     retirementAge: 65,
     currentSalary: 100_000,
-    salaryGrowthRate: 0.01,
+    salaryGrowthRate: 0.02,
     currentSpending: 60_000,
     workingSpendingGrowthRate: 0.0,
     retirementSpendingMultiplier: 1,
@@ -547,6 +547,15 @@ export const usePlan = create<PlanState>((set, get) => ({
       localLoadError = error instanceof Error ? error.message : 'Browser plan data is invalid';
     }
 
+    const hydrateLocalPlan = () => localAccountState?.origin === 'starter'
+      ? retirementPlanSchema.parse(defaultPlan)
+      : hydratePlan(
+          localProfile?.profile,
+          localProfile?.socialSecurity,
+          localProfile?.assumptions,
+          localAccountState?.accounts ?? null,
+        );
+
     let plan: RetirementPlan;
     if (cloudAvailable) {
       try {
@@ -571,12 +580,7 @@ export const usePlan = create<PlanState>((set, get) => ({
           plan = retirementPlanSchema.parse(defaultPlan);
         } else {
           try {
-            plan = hydratePlan(
-              localProfile?.profile,
-              localProfile?.socialSecurity,
-              localProfile?.assumptions,
-              localAccountState?.accounts ?? null,
-            );
+            plan = hydrateLocalPlan();
           } catch (localError) {
             localHydrationFailed = true;
             hydrationError += ` Browser fallback is also invalid: ${localError instanceof Error ? localError.message : 'unknown validation error'}`;
@@ -591,12 +595,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         plan = retirementPlanSchema.parse(defaultPlan);
       } else {
         try {
-          plan = hydratePlan(
-            localProfile?.profile,
-            localProfile?.socialSecurity,
-            localProfile?.assumptions,
-            localAccountState?.accounts ?? null,
-          );
+          plan = hydrateLocalPlan();
         } catch (error) {
           localHydrationFailed = true;
           hydrationError = `Browser plan data is invalid: ${error instanceof Error ? error.message : 'unknown validation error'}`;

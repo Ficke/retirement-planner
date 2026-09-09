@@ -82,10 +82,10 @@ const MIN_SPENDING_BAND = 20_000;
 const roundUpToTick = (value: number, tick: number) => Math.ceil(value / tick) * tick;
 
 /**
- * The spending comparison window runs from roughly one quarter to four fifths
- * of gross salary. That leaves room for taxes and saving while showing both a
- * lean and a generous lifestyle at every income level. A minimum band keeps
- * the slider useful for households with little or no salary.
+ * The spending comparison window runs from roughly one quarter to all of gross
+ * salary, showing both a lean lifestyle and the break-even point before taxes
+ * at every income level. A minimum band keeps the slider useful for households
+ * with little or no salary.
  *
  * The base band never reads spending, and the count of upper bands is a step
  * function of it, so the axis holds still while the lever moves. That is the
@@ -103,7 +103,7 @@ function spendingAxisRange(plan: RetirementPlan): [number, number] {
   );
   const bandTop = Math.max(
     bottom + MIN_SPENDING_BAND,
-    roundUpToTick(salary * 0.8, 20_000),
+    roundUpToTick(salary, 20_000),
   );
   const top = bandTop * Math.max(1, Math.ceil(plan.profile.currentSpending / bandTop));
   return [bottom, top];

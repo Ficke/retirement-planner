@@ -60,11 +60,11 @@ describe('Spending lever range', () => {
 
   it('sizes itself from salary across income levels', () => {
     expect(leverRange('spending', plan({ spending: 80_000 })))
-      .toMatchObject({ min: 40_000, max: 120_000 });
+      .toMatchObject({ min: 40_000, max: 160_000 });
     expect(leverRange('spending', plan({ spending: 30_000, salary: 40_000 })))
       .toMatchObject({ min: 20_000, max: 40_000 });
     expect(leverRange('spending', plan({ spending: 250_000, salary: 500_000 })))
-      .toMatchObject({ min: 120_000, max: 400_000 });
+      .toMatchObject({ min: 120_000, max: 500_000 });
   });
 
   it('does not widen the spending range for a larger portfolio', () => {
@@ -87,7 +87,7 @@ describe('Spending lever range', () => {
   it('caps a handle dragged to the far right instead of pushing the ceiling up', () => {
     let spending = 80_000;
     for (let i = 0; i < 20; i++) spending = drag(spending, 1);
-    expect(spending).toBe(120_000);
+    expect(spending).toBe(160_000);
   });
 
   it('reaches a plan spending past the ceiling, in whole multiples of it', () => {
@@ -95,7 +95,7 @@ describe('Spending lever range', () => {
     // that stops on the handle.
     expect(leverRange('spending', plan({ spending: 400_000 })).max).toBe(480_000);
     expect(leverRange('spending', plan({ spending: 480_000 })).max).toBe(480_000);
-    expect(leverRange('spending', plan({ spending: 600_000 })).max).toBe(600_000);
+    expect(leverRange('spending', plan({ spending: 600_000 })).max).toBe(640_000);
   });
 
   it('lets an over-ceiling plan return to a value the lever just left', () => {
@@ -154,9 +154,9 @@ describe('Spending lever range', () => {
       balance: 150_000,
     }));
 
-    expect([range.min, range.max]).toEqual([20_000, 60_000]);
+    expect([range.min, range.max]).toEqual([20_000, 80_000]);
     expect(range.sweepValues).toEqual([
-      20_000, 30_000, 40_000, 50_000, 60_000,
+      20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000,
     ]);
   });
 

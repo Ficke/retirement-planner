@@ -167,6 +167,11 @@ describe('State Management - Simple Invalidation Logic', () => {
 
   it('seeds starter balances for a plan that was never stored, but not for a cleared one', () => {
     const fresh = hydratePlan(null, null, null, null);
+    expect(fresh.profile).toMatchObject({
+      currentSalary: 100_000,
+      salaryGrowthRate: 0.02,
+      currentSpending: 60_000,
+    });
     // The projection routes savings into these buckets whichever ones a
     // household lists, so the starter balance sheet names them all.
     expect(fresh.accounts.map((account) => account.type))
@@ -243,6 +248,42 @@ describe('signed-out account persistence', () => {
     expect(usePlan.getState().plan.accounts).toHaveLength(3);
     expect(usePlan.getState().plan.accounts.find(({ id }) => id === 'starter-brokerage')?.balance)
       .toBe(125_000);
+  });
+
+  it('refreshes an untouched stored starter plan to the current defaults', async () => {
+    window.localStorage.setItem('retireplan:profile:anonymous', JSON.stringify({
+      schemaVersion: 8,
+      profile: {
+        currentSalary: 150_000,
+        salaryGrowthRate: 0.01,
+        currentSpending: 80_000,
+      },
+    }));
+    window.localStorage.setItem('retireplan:accounts:anonymous', JSON.stringify({
+      schemaVersion: 8,
+      accounts: [],
+      origin: 'starter',
+    }));
+
+    await usePlan.getState().bootstrap(null, false);
+
+    expect(usePlan.getState().plan.profile).toMatchObject({
+      currentSalary: 100_000,
+      salaryGrowthRate: 0.02,
+      currentSpending: 60_000,
+    });
+    expect(usePlan.getState().plan.accounts).toHaveLength(3);
+    expect(usePlan.getState().localPlanOrigin).toBe('starter');
+  });
+
+  it('preserves a stored plan after the user edits its profile', async () => {
+    await usePlan.getState().bootstrap(null, false);
+    usePlan.getState().updatePlan({ profile: { currentSalary: 135_000 } });
+
+    await usePlan.getState().bootstrap(null, false);
+
+    expect(usePlan.getState().plan.profile.currentSalary).toBe(135_000);
+    expect(usePlan.getState().localPlanOrigin).toBe('user');
   });
 
   it('adds to the current guest plan and preserves an intentionally empty plan', async () => {
