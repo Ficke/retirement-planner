@@ -105,9 +105,9 @@ export function loadLocalProfile(ownerId: string | null): LocalProfileData | nul
   }
 }
 
-export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): void {
+export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): boolean {
   const storage = browserStorage();
-  if (!storage) return;
+  if (!storage) return false;
   try {
     const data: LocalProfileData = {
       schemaVersion: LOCAL_DATA_SCHEMA_VERSION,
@@ -116,19 +116,28 @@ export function saveLocalProfile(plan: RetirementPlan, ownerId: string | null): 
       assumptions: plan.assumptions,
     };
     storage.setItem(ownerKey(STORAGE_KEYS.LOCAL_PROFILE, ownerId), JSON.stringify(data));
+    return true;
   } catch {
-    // localStorage full or unavailable — non-fatal
+    return false;
   }
 }
 
 // --- Accounts (local mode) ---
 
+export type LocalPlanOrigin = 'starter' | 'user';
+
 interface StoredAccounts {
   schemaVersion: number;
   accounts: unknown[];
+  origin?: LocalPlanOrigin;
 }
 
-export function loadLocalAccounts(ownerId: string | null): Account[] | null {
+export interface LocalAccountState {
+  accounts: Account[];
+  origin: LocalPlanOrigin;
+}
+
+export function loadLocalAccountState(ownerId: string | null): LocalAccountState | null {
   const storage = browserStorage();
   if (!storage) return null;
   try {
@@ -147,7 +156,7 @@ export function loadLocalAccounts(ownerId: string | null): Account[] | null {
     ) {
       throw new Error('Browser account data was saved by a newer app version');
     }
-    return payload.map((account, index) => {
+    const accounts = payload.map((account, index) => {
       const result = accountSchema.safeParse(account);
       if (!result.success) {
         throw new Error(`Account ${index + 1} is invalid: ${result.error.issues[0]?.message}`);
@@ -156,22 +165,37 @@ export function loadLocalAccounts(ownerId: string | null): Account[] | null {
       // taxability, and per-account valuation dates are intentionally stripped.
       return result.data;
     });
+    const origin = !Array.isArray(parsed) && (parsed as StoredAccounts).origin === 'starter'
+      ? 'starter'
+      : 'user';
+    return { accounts, origin };
   } catch (error) {
     throw new Error('Browser account data could not be loaded', { cause: error });
   }
 }
 
-export function saveLocalAccounts(accounts: Account[], ownerId: string | null): void {
+export function loadLocalAccounts(ownerId: string | null): Account[] | null {
+  return loadLocalAccountState(ownerId)?.accounts ?? null;
+}
+
+export function saveLocalAccounts(
+  accounts: Account[],
+  ownerId: string | null,
+  origin: LocalPlanOrigin = 'user',
+): boolean {
   const storage = browserStorage();
-  if (!storage) return;
+  if (!storage) return false;
   try {
     const data: StoredAccounts = {
       schemaVersion: LOCAL_DATA_SCHEMA_VERSION,
       accounts,
+      origin,
     };
     storage.setItem(ownerKey(STORAGE_KEYS.LOCAL_ACCOUNTS, ownerId), JSON.stringify(data));
+    return true;
   } catch (error) {
     console.error('Failed to save local accounts:', error);
+    return false;
   }
 }
 

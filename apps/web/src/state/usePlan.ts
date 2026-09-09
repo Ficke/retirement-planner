@@ -24,11 +24,12 @@ import { MAX_PLAN_ACCOUNTS, PLAN_SCHEMA_VERSION } from '@/domain/constants';
 import {
   loadUserPreferences,
   saveUserPreferences,
-  loadLocalAccounts,
+  loadLocalAccountState,
   saveLocalAccounts,
   loadLocalProfile,
   saveLocalProfile,
   clearLegacyLocalData,
+  type LocalPlanOrigin,
 } from '@/lib/persistence';
 
 /**
@@ -53,6 +54,7 @@ import {
 // sweeps are lazy and run only while the Plan page consumes them.
 const SIMULATION_DELAY_MS = 300;
 const CLOUD_PROFILE_SCHEMA_VERSION = PLAN_SCHEMA_VERSION;
+const LOCAL_PERSISTENCE_ERROR = 'Browser storage is unavailable. Changes will last only until this tab is closed.';
 let simulationTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 // Generation counters let stale async results be discarded
@@ -339,6 +341,8 @@ interface PlanState {
   cloudSyncEnabled: boolean;
   useServerSideCalculations: boolean;
   profileRevision: number | null;
+  localPlanOrigin: LocalPlanOrigin;
+  localPersistenceAvailable: boolean;
   dataMode: () => DataMode;
 
   /** The last completed run. Kept while a new one computes. */
@@ -392,6 +396,16 @@ function persistPreferences(get: () => PlanState) {
 
 function cacheOwner(state: Pick<PlanState, 'authUser'>): string | null {
   return state.authUser?.id ?? null;
+}
+
+function saveLocalPlan(
+  plan: RetirementPlan,
+  ownerId: string | null,
+  origin: LocalPlanOrigin,
+): boolean {
+  const profileSaved = saveLocalProfile(plan, ownerId);
+  const accountsSaved = saveLocalAccounts(plan.accounts, ownerId, origin);
+  return profileSaved && accountsSaved;
 }
 
 /**
@@ -456,6 +470,8 @@ export const usePlan = create<PlanState>((set, get) => ({
   cloudAvailable: false,
   ...getInitialPreferences(),
   profileRevision: null,
+  localPlanOrigin: 'starter',
+  localPersistenceAvailable: true,
   dataMode: () => (
     get().authUser
     && get().cloudAccountReady
@@ -520,13 +536,13 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
     }
     let localProfile: ReturnType<typeof loadLocalProfile> = null;
-    let localAccounts: Account[] | null = null;
+    let localAccountState: ReturnType<typeof loadLocalAccountState> = null;
     let hydrationError: string | null = null;
     let localHydrationFailed = false;
     let localLoadError: string | null = null;
     try {
       localProfile = loadLocalProfile(ownerId);
-      localAccounts = loadLocalAccounts(ownerId);
+      localAccountState = loadLocalAccountState(ownerId);
     } catch (error) {
       localLoadError = error instanceof Error ? error.message : 'Browser plan data is invalid';
     }
@@ -559,7 +575,7 @@ export const usePlan = create<PlanState>((set, get) => ({
               localProfile?.profile,
               localProfile?.socialSecurity,
               localProfile?.assumptions,
-              localAccounts,
+              localAccountState?.accounts ?? null,
             );
           } catch (localError) {
             localHydrationFailed = true;
@@ -579,7 +595,7 @@ export const usePlan = create<PlanState>((set, get) => ({
             localProfile?.profile,
             localProfile?.socialSecurity,
             localProfile?.assumptions,
-            localAccounts,
+            localAccountState?.accounts ?? null,
           );
         } catch (error) {
           localHydrationFailed = true;
@@ -593,18 +609,34 @@ export const usePlan = create<PlanState>((set, get) => ({
     // bootstrap overwrite the newer user's owner-scoped state.
     if (generation !== bootstrapGeneration) return;
 
+    const localPlanOrigin: LocalPlanOrigin = cloudAvailable
+      ? 'user'
+      : localAccountState?.origin ?? 'starter';
+    let localPersistenceAvailable = true;
+    if (!localHydrationFailed) {
+      if (cloudAvailable) {
+        saveLocalProfile(plan, ownerId);
+        saveLocalAccounts(plan.accounts, ownerId);
+      } else {
+        localPersistenceAvailable = saveLocalPlan(plan, ownerId, localPlanOrigin);
+      }
+    }
+
     set({
       plan,
       cloudAvailable,
       profileRevision: cloudAvailable ? dbProfile?.revision ?? null : null,
+      localPlanOrigin,
+      localPersistenceAvailable,
       bootstrapped: true,
-      error: hydrationError ?? (cloudRequested && !cloudAvailable
-        ? 'Cloud data is temporarily unavailable. Browser edits remain local; retrying reloads the cloud copy.'
-        : null),
+      error: hydrationError
+        ?? (!cloudAvailable && !localPersistenceAvailable
+          ? LOCAL_PERSISTENCE_ERROR
+          : cloudRequested && !cloudAvailable
+            ? 'Cloud data is temporarily unavailable. Browser edits remain local; retrying reloads the cloud copy.'
+            : null),
       ...invalidateResults(get, set),
     });
-    if (cloudAvailable) saveLocalAccounts(plan.accounts, ownerId);
-    if (!localHydrationFailed) saveLocalProfile(plan, ownerId);
     if (cloudAvailable && dbProfile && dbProfile.schemaVersion < CLOUD_PROFILE_SCHEMA_VERSION) {
       profileDirty = true;
     }
@@ -637,10 +669,20 @@ export const usePlan = create<PlanState>((set, get) => ({
       }
       const plan = validation.data;
 
-      saveLocalProfile(plan, cacheOwner(state));
+      const localMode = state.dataMode() === 'local';
+      const localPersistenceAvailable = localMode
+        ? saveLocalPlan(plan, cacheOwner(state), 'user')
+        : true;
+      if (!localMode) saveLocalProfile(plan, cacheOwner(state));
       profileDirty = true;
 
-      return { plan, error: null, ...invalidateResults(get, set) };
+      return {
+        plan,
+        localPlanOrigin: localMode ? 'user' : state.localPlanOrigin,
+        localPersistenceAvailable,
+        error: localPersistenceAvailable ? null : LOCAL_PERSISTENCE_ERROR,
+        ...invalidateResults(get, set),
+      };
     }),
 
   createAccount: async (data) => {
@@ -651,6 +693,7 @@ export const usePlan = create<PlanState>((set, get) => ({
         throw new Error(`A plan may contain at most ${MAX_PLAN_ACCOUNTS} accounts`);
       }
       let accounts: Account[];
+      let localPersistenceAvailable = true;
       if (get().dataMode() === 'cloud') {
         const ownerId = initiatingOwnerId!;
         await getAccountsClient().createAccount(data, ownerId);
@@ -660,10 +703,23 @@ export const usePlan = create<PlanState>((set, get) => ({
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
-        accounts = [...(loadLocalAccounts(ownerId) ?? []), newLocalAccount(data)];
-        saveLocalAccounts(accounts, ownerId);
+        accounts = retirementPlanSchema.parse({
+          ...get().plan,
+          accounts: [...get().plan.accounts, newLocalAccount(data)],
+        }).accounts;
+        localPersistenceAvailable = saveLocalPlan(
+          { ...get().plan, accounts },
+          ownerId,
+          'user',
+        );
       }
-      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get, set) }));
+      set((state) => ({
+        plan: { ...state.plan, accounts },
+        localPlanOrigin: 'user',
+        localPersistenceAvailable,
+        error: localPersistenceAvailable ? null : LOCAL_PERSISTENCE_ERROR,
+        ...invalidateResults(get, set),
+      }));
     } catch (error) {
       if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to create account' });
@@ -676,6 +732,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     const initiatingOwnerId = cacheOwner(get());
     try {
       let accounts: Account[];
+      let localPersistenceAvailable = true;
       if (get().dataMode() === 'cloud') {
         const ownerId = initiatingOwnerId!;
         await getAccountsClient().updateAccount(id, updates, ownerId);
@@ -685,17 +742,25 @@ export const usePlan = create<PlanState>((set, get) => ({
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
-        accounts = (loadLocalAccounts(ownerId) ?? []).map((a) =>
-          a.id === id
-            ? {
-                ...a,
-                ...updates,
-              }
-            : a,
+        accounts = retirementPlanSchema.parse({
+          ...get().plan,
+          accounts: get().plan.accounts.map((account) =>
+            account.id === id ? { ...account, ...updates } : account,
+          ),
+        }).accounts;
+        localPersistenceAvailable = saveLocalPlan(
+          { ...get().plan, accounts },
+          ownerId,
+          'user',
         );
-        saveLocalAccounts(accounts, ownerId);
       }
-      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get, set) }));
+      set((state) => ({
+        plan: { ...state.plan, accounts },
+        localPlanOrigin: 'user',
+        localPersistenceAvailable,
+        error: localPersistenceAvailable ? null : LOCAL_PERSISTENCE_ERROR,
+        ...invalidateResults(get, set),
+      }));
     } catch (error) {
       if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to update account' });
@@ -708,6 +773,7 @@ export const usePlan = create<PlanState>((set, get) => ({
     const initiatingOwnerId = cacheOwner(get());
     try {
       let accounts: Account[];
+      let localPersistenceAvailable = true;
       if (get().dataMode() === 'cloud') {
         const ownerId = initiatingOwnerId!;
         await getAccountsClient().deleteAccount(id, ownerId);
@@ -717,10 +783,20 @@ export const usePlan = create<PlanState>((set, get) => ({
         saveLocalAccounts(accounts, cacheOwner(get()));
       } else {
         const ownerId = cacheOwner(get());
-        accounts = (loadLocalAccounts(ownerId) ?? []).filter((a) => a.id !== id);
-        saveLocalAccounts(accounts, ownerId);
+        accounts = get().plan.accounts.filter((account) => account.id !== id);
+        localPersistenceAvailable = saveLocalPlan(
+          { ...get().plan, accounts },
+          ownerId,
+          'user',
+        );
       }
-      set((state) => ({ plan: { ...state.plan, accounts }, ...invalidateResults(get, set) }));
+      set((state) => ({
+        plan: { ...state.plan, accounts },
+        localPlanOrigin: 'user',
+        localPersistenceAvailable,
+        error: localPersistenceAvailable ? null : LOCAL_PERSISTENCE_ERROR,
+        ...invalidateResults(get, set),
+      }));
     } catch (error) {
       if (cacheOwner(get()) !== initiatingOwnerId) return;
       set({ error: error instanceof Error ? error.message : 'Failed to delete account' });
@@ -741,8 +817,21 @@ export const usePlan = create<PlanState>((set, get) => ({
   setCloudSyncEnabled: async (enabled) => {
     if (get().cloudSyncEnabled === enabled) return;
     if (!enabled) {
-      saveLocalAccounts(get().plan.accounts, cacheOwner(get()));
-      saveLocalProfile(get().plan, cacheOwner(get()));
+      const localPersistenceAvailable = saveLocalPlan(
+        get().plan,
+        cacheOwner(get()),
+        'user',
+      );
+      if (!localPersistenceAvailable) {
+        set({
+          cloudSyncEnabled: false,
+          localPlanOrigin: 'user',
+          localPersistenceAvailable: false,
+          error: LOCAL_PERSISTENCE_ERROR,
+        });
+        persistPreferences(get);
+        return;
+      }
     }
     set({ cloudSyncEnabled: enabled });
     persistPreferences(get);

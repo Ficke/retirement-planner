@@ -57,6 +57,7 @@ export function PageSettings() {
     setUseServerSideCalculations,
     cloudSyncEnabled,
     cloudAvailable,
+    localPersistenceAvailable,
     setCloudSyncEnabled,
     authUser,
     bootstrap,
@@ -94,11 +95,13 @@ export function PageSettings() {
           <Setting
             label="Storage"
             helper={
-              signedIn
+              !localPersistenceAvailable && dataMode === "local"
+                ? "Browser storage is unavailable. Changes work in this tab but will be lost when it closes."
+                : signedIn
                 ? cloudReady
                   ? "Cloud syncs across devices. Browser-only mode copies the current plan but never uploads later edits; switching back reloads the cloud copy. Browser-only data is lost if you clear this browser."
                   : "Your identity is signed in, but its cloud data record is unavailable. This account remains isolated in browser-only storage until cloud setup succeeds."
-                : "You're not signed in, so your profile and accounts exist only in this browser. Nothing is stored in the cloud. Sign in to keep your plan and use it across devices."
+                : "You're not signed in, so your profile and accounts exist only in this browser. Nothing is stored in the cloud. Signing in loads that account's synced plan; this browser plan is not uploaded automatically."
             }
             badge={
               <Badge variant="secondary" className="bg-info/15 text-info gap-1.5">

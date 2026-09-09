@@ -67,6 +67,7 @@ describe('Domain Schemas', () => {
     expect(JSON.parse(window.localStorage.getItem('retireplan:accounts:anonymous')!)).toEqual({
       schemaVersion: PLAN_SCHEMA_VERSION,
       accounts: [account],
+      origin: 'user',
     });
   });
 

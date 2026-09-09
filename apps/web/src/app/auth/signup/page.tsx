@@ -110,7 +110,7 @@ export default function SignUpPage() {
         <CardHeader>
           <CardTitle>Create account</CardTitle>
           <CardDescription>
-            Accounts are invite-only. Your plan syncs across devices
+            Accounts are invite-only. Account plans sync across devices; this browser-only plan is not uploaded automatically.
           </CardDescription>
         </CardHeader>
         <CardContent>

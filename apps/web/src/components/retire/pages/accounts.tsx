@@ -63,6 +63,9 @@ export function PageAccounts() {
   const { createAccount, deleteAccount, updateAccount } = usePlan();
   const accounts = usePlan((s) => s.plan.accounts);
   const bootstrapped = usePlan((s) => s.bootstrapped);
+  const showStarterNotice = usePlan(
+    (s) => s.authUser == null && s.localPlanOrigin === "starter",
+  );
 
   const [filter, setFilter] = useState<"all" | AccountType>("all");
   const [editor, setEditor] = useState<EditorMode | null>(null);
@@ -150,6 +153,14 @@ export function PageAccounts() {
           </Button>
         }
       />
+
+      {showStarterNotice && (
+        <div className="border-info/30 bg-info/10 text-foreground rounded-lg border px-4 py-3 text-sm">
+          <span className="font-medium">Example accounts.</span>{" "}
+          Replace these starter balances with your own, or add and delete accounts as needed.
+          Your changes are saved only in this browser.
+        </div>
+      )}
 
       <div
         className="grid gap-3"
