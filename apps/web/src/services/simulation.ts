@@ -267,10 +267,9 @@ async function runOnClient(
 /**
  * Scenarios that would compute the same answer, keyed by what the engine reads.
  *
- * Every lever's sweep includes the plan's current value, so a four-lever
- * refresh dispatches the unchanged plan four times. Identical inputs at the
- * same paths and seed give an identical result — path `i` is path `i` — so the
- * duplicates are dispatched once and the answer is copied to each id.
+ * Several lever sweeps include the plan's current value. Identical inputs at
+ * the same paths and seed give an identical result — path `i` is path `i` — so
+ * duplicate scenarios are dispatched once and the answer is copied to each id.
  */
 function distinctScenarios(scenarios: Scenario[]): Map<string, Scenario[]> {
   const groups = new Map<string, Scenario[]>();

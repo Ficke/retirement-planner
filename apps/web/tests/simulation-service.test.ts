@@ -120,7 +120,7 @@ describe('SimulationService (Pure)', () => {
     // The band comes from income and balances, so moving the spending lever
     // cannot move the axis it is plotted against.
     const grid = [
-      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000,
+      40_000, 50_000, 60_000,
       70_000, 80_000, 90_000, 100_000, 110_000, 120_000,
     ];
 
@@ -136,15 +136,15 @@ describe('SimulationService (Pure)', () => {
     }
   });
 
-  it('adds an exact in-range plan spending value to the standard range', async () => {
+  it('does not add an off-grid plan spending value to the plotted line', async () => {
     const result = await service.runSpendingAnalysis({
       ...mockPlan,
       profile: { ...mockPlan.profile, currentSpending: 94_500 },
     }, false);
 
     expect(result.map((r) => r.annualSpending)).toEqual([
-      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000, 90_000,
-      94_500, 100_000, 110_000, 120_000,
+      40_000, 50_000, 60_000, 70_000, 80_000, 90_000,
+      100_000, 110_000, 120_000,
     ]);
   });
 
@@ -166,9 +166,7 @@ describe('SimulationService (Pure)', () => {
     }, false);
 
     const levels = result.map((r) => r.annualSpending);
-    // The lever's fourteen sweep steps, plus the plan's own value when it falls
-    // off their grid.
-    expect(levels.length).toBeLessThanOrEqual(15);
+    expect(levels.length).toBeLessThanOrEqual(14);
     expect(levels.every((level) => level >= 0 && level <= MAX_PLAN_DOLLARS)).toBe(true);
     // The schema each scenario is validated against is the real ceiling.
     for (const level of levels) {
@@ -264,7 +262,7 @@ describe('SimulationService (Pure)', () => {
     const results = await service.runSpendingAnalysis(mockPlan, true);
 
     expect((requestBody as { responseMode: string }).responseMode).toBe('summary');
-    expect(results).toHaveLength(13);
+    expect(results).toHaveLength(9);
     expect(results.every(({ result }) => (
       result.successProbability === 0.8
       && result.source === 'server'
@@ -310,12 +308,12 @@ describe('SimulationService (Pure)', () => {
       + results.retirementAge.length
       + results.rothConversion.length;
 
-    // Every lever's sweep includes the plan's current value, so four of the 36
-    // curve points are the unchanged plan. They are dispatched once.
-    expect(curvePoints).toBe(36);
-    expect(simulations).toHaveLength(33);
+    // The spending curve stays on its fixed grid; the other three levers still
+    // share the unchanged plan and are dispatched once.
+    expect(curvePoints).toBe(32);
+    expect(simulations).toHaveLength(30);
     expect(simulations.length).toBeLessThanOrEqual(MAX_BATCH_SIMULATIONS);
-    expect(totalPaths).toBe(33_000);
+    expect(totalPaths).toBe(30_000);
     expect(totalPaths).toBeLessThanOrEqual(MAX_BATCH_TOTAL_PATHS);
     expect(batchRequestSchema.safeParse(requestBody).success).toBe(true);
   });
