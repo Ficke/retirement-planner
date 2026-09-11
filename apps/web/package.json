@@ -72,7 +72,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.0",
-    "@vitest/ui": "4.1.10",
+    "@vitest/ui": "5.0.0",
     "concurrently": "^9.2.1",
     "eslint": "^9",
     "eslint-plugin-react-hooks": "^6.0.0",
