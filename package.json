@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "typescript": "^5",
-    "wasm-pack": "0.15.0"
+    "wasm-pack": "0.15.1"
   },
   "engines": {
     "node": ">=24 <25",
